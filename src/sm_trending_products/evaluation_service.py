@@ -106,8 +106,9 @@ class EvaluationService:
         as_of: datetime,
         synthetic: bool,
         config: EvaluationConfig,
+        policy: AssessmentPolicy | None = None,
     ) -> tuple[dict[str, Any], set[str]]:
-        policy = AssessmentPolicy()
+        policy = policy or AssessmentPolicy()
         cutoff = utc(as_of)
         products = [
             product
@@ -228,6 +229,8 @@ class EvaluationService:
         as_of: datetime,
         synthetic: bool = False,
         config: dict | None = None,
+        *,
+        policy: AssessmentPolicy | None = None,
     ) -> dict:
         cutoff = utc(as_of)
         configuration = EvaluationConfig.model_validate(config or {})
@@ -243,6 +246,7 @@ class EvaluationService:
                 timestamp,
                 synthetic,
                 configuration,
+                policy=policy,
             )
             report, outcome_dependencies = self._maturation_payload(snapshot, cutoff, dependencies)
             snapshots.append(snapshot)
@@ -259,7 +263,14 @@ class EvaluationService:
             "result": payload,
         }
 
-    def freeze(self, as_of: datetime, synthetic: bool = False, config: dict | None = None) -> dict:
+    def freeze(
+        self,
+        as_of: datetime,
+        synthetic: bool = False,
+        config: dict | None = None,
+        *,
+        policy: AssessmentPolicy | None = None,
+    ) -> dict:
         cutoff = utc(as_of)
         if not synthetic and cutoff < now() - timedelta(minutes=5):
             raise ValueError("A live forward decision cannot be retrospectively backdated")
@@ -270,6 +281,7 @@ class EvaluationService:
             cutoff,
             synthetic,
             EvaluationConfig.model_validate(config or {}),
+            policy=policy,
         )
         return {
             "evaluation_id": self._save_evaluation(
