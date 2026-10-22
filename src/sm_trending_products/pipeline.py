@@ -554,13 +554,28 @@ class Pipeline:
         as_of: datetime,
         synthetic: bool = False,
         config: dict | None = None,
+        *,
+        policy: AssessmentPolicy | None = None,
     ) -> dict:
         return self._evaluation.backtest(
-            decision_times=decision_times, as_of=as_of, synthetic=synthetic, config=config
+            decision_times=decision_times,
+            as_of=as_of,
+            synthetic=synthetic,
+            config=config,
+            policy=policy,
         )
 
-    def freeze(self, as_of: datetime, synthetic: bool = False, config: dict | None = None) -> dict:
-        return self._evaluation.freeze(as_of=as_of, synthetic=synthetic, config=config)
+    def freeze(
+        self,
+        as_of: datetime,
+        synthetic: bool = False,
+        config: dict | None = None,
+        *,
+        policy: AssessmentPolicy | None = None,
+    ) -> dict:
+        return self._evaluation.freeze(
+            as_of=as_of, synthetic=synthetic, config=config, policy=policy
+        )
 
     def mature(self, evaluation_id: str, as_of: datetime) -> dict:
         return self._evaluation.mature(evaluation_id=evaluation_id, as_of=as_of)
