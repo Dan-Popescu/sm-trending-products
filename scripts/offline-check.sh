@@ -21,7 +21,7 @@ if [[ -z "${TEST_DATABASE_URL:-}" ]]; then
     postgres:17.11-bookworm >/dev/null
   ready=false
   for _attempt in $(seq 1 60); do
-    if docker exec "$test_container" pg_isready -U offline_test -d offline_test >/dev/null 2>&1; then
+    if docker exec "$test_container" pg_isready -h 127.0.0.1 -U offline_test -d offline_test >/dev/null 2>&1; then
       ready=true
       break
     fi

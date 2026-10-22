@@ -95,6 +95,7 @@ class SchedulerPolicy(BaseModel):
     max_candidate_scan: int = Field(default=10000, ge=1, le=100000)
     candidate_retry_seconds: int = Field(default=300, ge=1, le=86400)
     max_pending_tasks: int = Field(default=10000, ge=1, le=1000000)
+    request_costs: dict[str, float] = Field(default_factory=dict)
     discovery_queries: list[DiscoveryQuery] = Field(default_factory=list, max_length=1000)
 
     @model_validator(mode="after")
@@ -108,6 +109,13 @@ class SchedulerPolicy(BaseModel):
             raise ValueError("Scheduling intervals must be finite and between 0 and 8760 hours")
         if self.monitoring_threshold > self.hot_threshold:
             raise ValueError("Monitoring threshold must not exceed the hot threshold")
+        if set(self.request_costs) - SOURCES or any(
+            not math.isfinite(cost) or not 0 < cost <= 100000
+            for cost in self.request_costs.values()
+        ):
+            raise ValueError(
+                "Request-cost estimates require a supported source and finite positive units"
+            )
         identities = [query.query_id for query in self.discovery_queries]
         if len(set(identities)) != len(identities):
             raise ValueError("Duplicate discovery queries are not allowed")
@@ -324,7 +332,10 @@ class Scheduler:
                 interval = config.intervals_hours[tier]
                 overdue = max(0.0, (checked_at - entity["next_due_at"]).total_seconds() / 3600)
                 uncertainty = 1.0 if score is None else 0.0
-                priority = hint + min(100.0, overdue / interval * 10) + uncertainty * 10
+                request_cost = config.request_costs.get(source, 1.0)
+                priority = (
+                    hint + min(100.0, overdue / interval * 10) + uncertainty * 10
+                ) / request_cost
                 candidates.append(
                     {
                         "entity": entity,
@@ -339,6 +350,7 @@ class Scheduler:
                             "base_priority": base_priority,
                             "overdue_hours": overdue,
                             "uncertainty": uncertainty,
+                            "estimated_request_cost": request_cost,
                         },
                     }
                 )

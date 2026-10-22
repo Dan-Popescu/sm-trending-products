@@ -20,6 +20,12 @@ uses it only during dependency installation; it is not copied into image layers.
 Compose preserves external proxy routing and excludes its private service names
 from proxying. The isolated restore similarly excludes only its own container names.
 
+The pinned Dagster storage configuration explicitly selects `postgresql+psycopg2`.
+Its legacy notification statement is incompatible with SQLAlchemy 2.1's default
+psycopg3 server-side parameter binding. Application SQL continues using psycopg3.
+Readiness probes use TCP, which remains unavailable during the official image's
+temporary socket-only initialization server.
+
 Production S3 must provide the conditional writes, metadata, and consistency used by the storage implementation. Enable encryption and appropriate versioning/lifecycle policy, then verify the actual provider. Synthetic HTTP tests do not certify a provider's durability or IAM policy.
 
 ## Configure production

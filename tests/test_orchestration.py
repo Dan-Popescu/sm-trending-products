@@ -2,10 +2,41 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+from urllib.parse import parse_qsl, unquote, urlsplit
+
 import pytest
-from dagster import materialize
+import yaml
+from dagster import AssetKey, AssetMaterialization, DagsterInstance, materialize
+from dagster_postgres.utils import get_conn_string
 
 from sm_trending_products import orchestration
+
+
+@pytest.mark.integration
+def test_deployed_dagster_storage_records_native_asset_events(pipeline, tmp_path):
+    if os.environ.get("TEST_DATABASE_ENGINE") == "pglite":
+        pytest.skip("Dagster event storage requires native PostgreSQL notification semantics")
+    parsed = urlsplit(pipeline.settings.database_url.get_secret_value())
+    config = yaml.safe_load(Path("deploy/dagster/dagster.yaml").read_text())
+    scheme = config["storage"]["postgres"]["postgres_db"]["scheme"]
+    config["storage"]["postgres"] = {
+        "postgres_url": get_conn_string(
+            username=unquote(parsed.username or ""),
+            password=unquote(parsed.password or ""),
+            hostname=parsed.hostname or "",
+            db_name=parsed.path.lstrip("/"),
+            port=str(parsed.port or 5432),
+            params=dict(parse_qsl(parsed.query)),
+            scheme=scheme,
+        )
+    }
+    (tmp_path / "dagster.yaml").write_text(yaml.safe_dump(config))
+    with DagsterInstance.from_config(str(tmp_path)) as instance:
+        key = AssetKey("native-storage-contract")
+        instance.report_runless_asset_event(AssetMaterialization(key))
+        assert len(instance.fetch_materializations(key, limit=10).records) == 1
 
 
 @pytest.mark.parametrize("category,success", [("access_denied", False), ("quota_exhausted", True)])

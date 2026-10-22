@@ -1,6 +1,9 @@
 storage:
   postgres:
     postgres_db:
+      # SQLAlchemy 2.1 defaults to psycopg3, whose server-side binding cannot
+      # execute the NOTIFY statement used by the pinned Dagster event storage.
+      scheme: postgresql+psycopg2
       hostname:
         env: DAGSTER_POSTGRES_HOST
       username:

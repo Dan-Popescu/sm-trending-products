@@ -25,6 +25,7 @@ Separate discovery from refresh, allocate a bounded exploration budget, and refr
 
 - Candidate origins include supported source discovery, authorized-account feeds, and explicit imports. Each retains query/context, coverage, cursor, and discovery time. Only granted capabilities can issue requests.
 - Versioned policies allocate exploration, monitoring, and investigation budgets. Priority uses freshness, uncertainty, evidence growth, and observation cost; it does not silently exclude low-activity candidates forever.
+- Optional versioned `request_costs` declare estimated request units by supported source; unspecified costs equal one. Estimates adjust priority without changing actual Rust-enforced quota accounting or the protected exploration allocation. They are policy inputs, not measured provider prices.
 - Configure target intervals by tier; initial example intervals of 1, 6, and 24 hours are tunable policies, not promised source freshness. Intraday polling is useful only if quota and source update resolution support it.
 - PostgreSQL coordinates due work and shared quotas. The application scheduler chooses what to collect; Dagster starts and observes bounded batches. Do not create one orchestration run per video.
 - Record planned versus achieved intervals, skipped work, source update delay, policy version, and selection reasons. Evaluation uses the actual sampled universe and intervals.

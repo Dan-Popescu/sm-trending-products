@@ -25,11 +25,14 @@ New behavioral proofs include:
   partial manifests and no duplicate delivery. All objects verify successfully.
 - `test_scheduler.py`: A -> B -> A -> implicit selection retains A, preserves the
   definition's original availability and isolates live/synthetic activations.
+  Four concurrent planners preserve the entire due frontier without duplication;
+  versioned request-cost estimates affect persisted priorities.
 - `test_dashboard.py`: real-shaped queue/source status populates the health cards
   and follows the selected workspace.
 - `test_orchestration.py`: executed Dagster materializations distinguish fatal
   source failure from quota waiting, report actual retention counts, and fail
-  pending deletion work explicitly.
+  pending deletion work explicitly. A native-storage regression records an actual
+  Dagster PostgreSQL materialization with the checked-in module/driver configuration.
 - Source acceptance tests retain an empty authorized response as unverified with
   an explicit observation count, rather than accepting T15 without observations.
 - Benchmark tests cover failed object verification, parallel/skewed collection,
@@ -71,6 +74,9 @@ could not detect: public bind mounts and copied source files must be readable by
 unprivileged container users; internal Compose/restore hosts must be excluded from
 external proxy routing; Dagster instance class references must use the modules
 present in the locked runtime. The image/configuration/scripts address these.
+The pinned Dagster PostgreSQL event storage requires the explicit psycopg2
+SQLAlchemy dialect for its NOTIFY statement. PostgreSQL readiness uses TCP so
+the temporary initialization socket cannot prematurely satisfy restore/startup.
 
 The managed Docker daemon uses VFS. Multiple services exhausted the development
 disk while old build snapshots were retained. Only build-cache records created

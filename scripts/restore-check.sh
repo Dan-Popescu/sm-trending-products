@@ -58,7 +58,7 @@ docker run --detach --rm --name "$restore_objects" --network "$restore_network" 
 
 database_ready=false
 for _attempt in $(seq 1 60); do
-  if docker exec "$restore_database" pg_isready --username=restore --dbname=restore >/dev/null 2>&1; then
+  if docker exec "$restore_database" pg_isready --host=127.0.0.1 --username=restore --dbname=restore >/dev/null 2>&1; then
     database_ready=true
     break
   fi
