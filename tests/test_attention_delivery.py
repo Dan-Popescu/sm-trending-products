@@ -133,10 +133,20 @@ def test_published_attention_and_identity_remain_auditable_after_resets_and_reas
     published = next(row for row in shown if isinstance(row, dict) and "features" in row)
     assert published == reassigned_broad
     assert utc(published["as_of"]) == later + timedelta(seconds=1)
-    shown_alerts = next(
-        row for row in shown if isinstance(row, list) and row and "alert_id" in row[0]
+    alert_table = next(frame.value for frame in app.dataframe if "alert_id" in frame.value)
+    assert set(alert_table["alert_id"]) == {row["alert_id"] for row in frozen}
+    expected_alert = next(row for row in frozen if row["product_id"] == "broad")
+    app.selectbox(key="alert_id").select(expected_alert["alert_id"]).run(timeout=20)
+    assert not app.exception
+    shown_alert = next(
+        row
+        for element in app.json
+        if isinstance(row := json.loads(element.value), dict)
+        and row.get("alert_id") == expected_alert["alert_id"]
+        and "payload" in row
     )
-    assert next(row for row in shown_alerts if row["product_id"] == "broad")["payload"] == broad
+    assert shown_alert == json.loads(json.dumps(expected_alert, default=repr))
+    assert shown_alert["payload"] == broad
     with Pipeline(pipeline.settings) as restarted:
         assert restarted.alerts(True) == frozen
         assert stored_result(restarted) == original_bytes
