@@ -31,6 +31,11 @@ Show separately explained attention, demand, competition, and commercial-feasibi
 - Polars computes versioned features in bounded partitions. Publish reusable results for Streamlit; interactive views do not scan the entire historical store. DuckDB queries immutable dataset versions without a shared writable database file.
 - Retain each dimension and confidence separately. A configurable ranking policy may combine them, but must expose weights, missing-data treatment, minimum evidence, scope, and reasons. Do not default unknown demand to zero or call an attention-only ranking a sales ranking.
 - Alert deduplication and cooldown are explicit policies. Frozen alerts retain evidence references, coverage, availability cutoff, identity version, and scoring version.
+- Published assessment rows carry an `identity` snapshot: a deterministic hash of
+  the resolved, confidence-eligible link records and their nonempty immutable
+  decision references. It uses the shared point-in-time ownership resolver;
+  normalization does not resolve identity again. New results and alerts include
+  this additive metadata. Previously published objects and alerts remain unchanged.
 
 ## Testing Decisions
 
