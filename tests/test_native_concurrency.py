@@ -274,3 +274,267 @@ def test_claim_skips_locked_exhausted_work_and_reaches_other_due_tasks(native_ca
         ]
         == "quarantined"
     )
+
+
+def test_reconfiguration_uses_current_alias_limits_and_preserves_consumption(native_catalog):
+    for account in ("raising-a", "raising-b"):
+        native_catalog.configure_budget("tiktok_ads", account, 2, 0.000001)
+        assert native_catalog.one(
+            "SELECT * FROM reserve_request('tiktok_ads',%s,'raised-shared-token')", (account,)
+        )["allowed"]
+    native_catalog.block_budget("tiktok_ads", "raising-a", 120)
+    before = native_catalog.one(
+        "SELECT * FROM credential_budgets WHERE credential_key='raised-shared-token'"
+    )
+    native_catalog.configure_budget("tiktok_ads", "raising-a", 60, 1)
+    still_limited = native_catalog.one(
+        "SELECT * FROM credential_budgets WHERE credential_key='raised-shared-token'"
+    )
+    assert still_limited["capacity"] == 2
+    assert still_limited["refill_per_second"] == 0.000001
+    native_catalog.configure_budget("tiktok_ads", "raising-b", 60, 1)
+    raised = native_catalog.one(
+        "SELECT * FROM credential_budgets WHERE credential_key='raised-shared-token'"
+    )
+    assert raised["capacity"] == 60
+    assert raised["refill_per_second"] == 1
+    assert raised["tokens"] < 0.1
+    assert raised["request_count"] == before["request_count"] == 2
+    assert raised["blocked_until"] == before["blocked_until"]
+    assert not native_catalog.one(
+        "SELECT * FROM reserve_request('tiktok_ads','raising-b','raised-shared-token')"
+    )["allowed"]
+    native_catalog.configure_budget("tiktok_ads", "raising-a", 1, 0.000001)
+    lowered = native_catalog.one(
+        "SELECT * FROM credential_budgets WHERE credential_key='raised-shared-token'"
+    )
+    assert lowered["capacity"] == 1
+    assert lowered["refill_per_second"] == 0.000001
+    assert lowered["tokens"] <= 1
+    assert (
+        native_catalog.one(
+            "SELECT count(*) AS count FROM credential_bindings "
+            "WHERE credential_key='raised-shared-token'"
+        )["count"]
+        == 2
+    )
+
+
+def test_rate_and_capacity_increase_cannot_retroactively_mint_tokens(native_catalog):
+    native_catalog.configure_budget("tiktok_ads", "old-rate", 2, 0.001)
+    native_catalog.one("SELECT * FROM reserve_request('tiktok_ads','old-rate','old-rate-token')")
+    for table in ("request_budgets", "credential_budgets"):
+        native_catalog.execute(
+            f"UPDATE {table} SET tokens=0,updated_at=clock_timestamp()-interval '10 seconds'"
+        )
+    native_catalog.configure_budget("tiktok_ads", "old-rate", 60, 60)
+    for table in ("request_budgets", "credential_budgets"):
+        budget = native_catalog.one(f"SELECT * FROM {table}")
+        assert budget["capacity"] == 60
+        assert budget["refill_per_second"] == 60
+        assert 0.009 <= budget["tokens"] < 0.1
+
+    # An idle bucket also cannot accrue above its OLD capacity before a raise.
+    for table in ("request_budgets", "credential_budgets"):
+        native_catalog.execute(
+            f"UPDATE {table} SET capacity=2,refill_per_second=1,tokens=0,"
+            "updated_at=clock_timestamp()-interval '1 hour'"
+        )
+    native_catalog.configure_budget("tiktok_ads", "old-rate", 60, 60)
+    for table in ("request_budgets", "credential_budgets"):
+        assert native_catalog.one(f"SELECT tokens FROM {table}")["tokens"] == 2
+
+
+def test_parallel_account_reconfiguration_recomputes_shared_limits_without_reset(native_catalog):
+    accounts = ("parallel-raise-a", "parallel-raise-b")
+    for account in accounts:
+        native_catalog.configure_budget("tiktok_ads", account, 2, 0.000001)
+        native_catalog.one(
+            "SELECT * FROM reserve_request('tiktok_ads',%s,'parallel-raise-token')", (account,)
+        )
+    gate = Barrier(2, timeout=10)
+
+    def configure(account):
+        gate.wait()
+        native_catalog.configure_budget("tiktok_ads", account, 10, 0.000001)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(configure, accounts))
+    budget = native_catalog.one(
+        "SELECT * FROM credential_budgets WHERE credential_key='parallel-raise-token'"
+    )
+    assert budget["capacity"] == 10
+    assert budget["tokens"] < 0.1
+    assert budget["request_count"] == 2
+
+
+def test_reconfiguration_and_reservation_contend_without_deadlock_or_extra_tokens(native_catalog):
+    accounts = ("mixed-a", "mixed-b")
+    for account in accounts:
+        native_catalog.configure_budget("tiktok_ads", account, 5, 0.000001)
+        native_catalog.one(
+            "SELECT * FROM reserve_request('tiktok_ads',%s,'mixed-shared-token')", (account,)
+        )
+    gate = Barrier(WORKERS, timeout=15)
+
+    def operate(index):
+        gate.wait()
+        account = accounts[index % 2]
+        if index < 2:
+            native_catalog.configure_budget("tiktok_ads", account, 8, 0.000001)
+            return False
+        return native_catalog.one(
+            "SELECT * FROM reserve_request('tiktok_ads',%s,'mixed-shared-token')", (account,)
+        )["allowed"]
+
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        outcomes = list(pool.map(operate, range(WORKERS)))
+    assert sum(outcomes) == 3
+    budget = native_catalog.one(
+        "SELECT * FROM credential_budgets WHERE credential_key='mixed-shared-token'"
+    )
+    assert budget["capacity"] == 8
+    assert budget["request_count"] == 5
+    assert budget["tokens"] < 0.1
+
+
+def test_quota_reconfiguration_migration_preserves_existing_rows(native_catalog):
+    original = files("sm_trending_products").joinpath(
+        "sql", "004_credential_budgets_and_search.sql"
+    )
+    native_catalog.configure_budget("tiktok_ads", "existing-account", 2, 0.000001)
+    with native_catalog.transaction() as connection:
+        connection.execute(original.read_text())
+        connection.execute(
+            "SELECT * FROM reserve_request('tiktok_ads','existing-account','existing-token')"
+        )
+        connection.execute("DELETE FROM schema_migrations WHERE version=13")
+    native_catalog.block_budget("tiktok_ads", "existing-account", 120)
+    tables = ("request_budgets", "credential_budgets", "credential_bindings")
+    before = {table: native_catalog.all(f"SELECT * FROM {table}") for table in tables}
+    native_catalog.initialize()
+    native_catalog.initialize()
+    assert {table: native_catalog.all(f"SELECT * FROM {table}") for table in tables} == before
+    native_catalog.configure_budget("tiktok_ads", "existing-account", 60, 1)
+    assert (
+        native_catalog.one(
+            "SELECT capacity FROM credential_budgets WHERE credential_key='existing-token'"
+        )["capacity"]
+        == 60
+    )
+
+
+def test_claim_leaves_known_blocked_work_pending_and_reaches_a_healthy_account(native_catalog):
+    for account in ("empty-account", "cooldown-account", "healthy-account"):
+        native_catalog.configure_budget("tiktok_display", account, 10, 0.000001)
+    native_catalog.execute(
+        "UPDATE request_budgets SET tokens=0,updated_at=clock_timestamp() "
+        "WHERE account_id='empty-account'"
+    )
+    native_catalog.block_budget("tiktok_display", "cooldown-account", 120)
+    blocked = [
+        native_catalog.enqueue(
+            "tiktok_display", account, "query", {}, True, due_at=now(), priority=100
+        )
+        for account in ("empty-account", "cooldown-account")
+    ]
+    healthy = native_catalog.enqueue(
+        "tiktok_display", "healthy-account", "query", {}, True, due_at=now()
+    )
+    assert native_catalog.claim("healthy-worker", 300, True, 3)["task_id"] == healthy
+    assert native_catalog.claim("idle-worker", 300, True, 3) is None
+    assert native_catalog.quota_waiting(synthetic=True) == 2
+    assert native_catalog.quota_waiting(synthetic=False) == 0
+    for task_id in blocked:
+        task = native_catalog.one("SELECT * FROM collection_tasks WHERE task_id=%s", (task_id,))
+        assert task["state"] == "pending"
+        assert task["attempts"] == 0
+        assert task["lease_version"] == 0
+    native_catalog.execute("UPDATE request_budgets SET tokens=1 WHERE account_id='empty-account'")
+    assert native_catalog.claim("ready-worker", 300, True, 3)["task_id"] == blocked[0]
+    assert native_catalog.quota_waiting(synthetic=True) == 1
+
+
+def test_claim_uses_current_shared_credential_hint_but_reserves_unknown_aliases(native_catalog):
+    for account in ("blocked-origin", "known-alias", "unknown-alias"):
+        native_catalog.configure_budget("tiktok_ads", account, 10, 0.000001)
+    native_catalog.configure_budget("tiktok_display", "healthy-source", 10, 0.000001)
+    for account in ("blocked-origin", "known-alias"):
+        native_catalog.one(
+            "SELECT * FROM reserve_request('tiktok_ads',%s,'blocked-shared-credential')",
+            (account,),
+        )
+    native_catalog.block_budget("tiktok_ads", "blocked-origin", 120)
+    known = native_catalog.enqueue(
+        "tiktok_ads", "known-alias", "query", {}, False, due_at=now(), priority=100
+    )
+    unknown = native_catalog.enqueue(
+        "tiktok_ads", "unknown-alias", "query", {}, False, due_at=now(), priority=200
+    )
+    healthy = native_catalog.enqueue(
+        "tiktok_display", "healthy-source", "query", {}, False, due_at=now()
+    )
+    assert native_catalog.claim("unknown-worker", 300, False, 3)["task_id"] == unknown
+    # The prefilter is only a hint: a new alias still reaches the atomic limiter.
+    assert not native_catalog.one(
+        "SELECT * FROM reserve_request('tiktok_ads','unknown-alias','blocked-shared-credential')"
+    )["allowed"]
+    hints = {"tiktok_ads": "blocked-shared-credential"}
+    assert (
+        native_catalog.claim("healthy-worker", 300, False, 3, credential_keys=hints)["task_id"]
+        == healthy
+    )
+    assert native_catalog.claim("waiting-worker", 300, False, 3, credential_keys=hints) is None
+    assert native_catalog.quota_waiting(False, credential_keys=hints) == 1
+    assert native_catalog.quota_waiting(False) == 0
+    native_catalog.execute(
+        "UPDATE credential_budgets SET blocked_until=NULL,tokens=1 "
+        "WHERE credential_key='blocked-shared-credential'"
+    )
+    assert (
+        native_catalog.claim("resumed-worker", 300, False, 3, credential_keys=hints)["task_id"]
+        == known
+    )
+
+
+@pytest.mark.parametrize("synthetic", [False, True])
+def test_old_credential_cannot_block_rotation_or_synthetic_account_only_work(
+    native_catalog, synthetic
+):
+    native_catalog.configure_budget("tiktok_ads", "rotating-account", 10, 0.000001)
+    assert native_catalog.one(
+        "SELECT * FROM reserve_request('tiktok_ads','rotating-account','old-credential')"
+    )["allowed"]
+    native_catalog.execute(
+        "UPDATE credential_budgets SET tokens=0,blocked_until=clock_timestamp()+interval '1 hour' "
+        "WHERE credential_key='old-credential'"
+    )
+    task_id = native_catalog.enqueue(
+        "tiktok_ads", "rotating-account", "query", {}, synthetic, due_at=now()
+    )
+    old_hint = {"tiktok_ads": "old-credential"}
+    if not synthetic:
+        assert native_catalog.claim("old-worker", 300, False, 3, credential_keys=old_hint) is None
+        assert native_catalog.quota_waiting(False, credential_keys=old_hint) == 1
+        assert native_catalog.quota_waiting(False) == 0
+    hint = old_hint if synthetic else {"tiktok_ads": "new-credential"}
+    assert native_catalog.quota_waiting(synthetic, credential_keys=hint) == 0
+    claimed = native_catalog.claim("current-worker", 300, synthetic, 3, credential_keys=hint)
+    assert claimed["task_id"] == task_id
+    assert native_catalog.one(
+        "SELECT * FROM reserve_request('tiktok_ads','rotating-account',%s)",
+        (None if synthetic else "new-credential",),
+    )["allowed"]
+    assert native_catalog.one(
+        "SELECT blocked_until>clock_timestamp() AS blocked FROM credential_budgets "
+        "WHERE credential_key='old-credential'"
+    )["blocked"]
+
+
+@pytest.mark.parametrize(
+    ("capacity", "refill"),
+    [(float("nan"), 1), (float("inf"), 1), (1, float("nan")), (1, float("inf"))],
+)
+def test_budget_configuration_rejects_nonfinite_limits(native_catalog, capacity, refill):
+    with pytest.raises(ValueError, match="positive capacity and refill"):
+        native_catalog.configure_budget("tiktok_ads", "invalid-account", capacity, refill)

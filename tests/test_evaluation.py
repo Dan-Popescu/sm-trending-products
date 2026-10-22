@@ -488,7 +488,10 @@ def test_rejecting_another_product_hypothesis_preserves_the_confirmed_owner() ->
     assert snapshot["selected"] == ["p1"]
 
 
-def test_precomputed_partitions_and_lazy_outcomes_preserve_evaluation_results() -> None:
+@pytest.mark.parametrize("multiple_scenarios", [False, True])
+def test_precomputed_partitions_and_lazy_outcomes_preserve_evaluation_results(
+    multiple_scenarios: bool,
+) -> None:
     from collections import Counter, defaultdict
 
     from sm_trending_products.analytics import assess, normalize_assessments
@@ -510,7 +513,11 @@ def test_precomputed_partitions_and_lazy_outcomes_preserve_evaluation_results() 
     refs = defaultdict(list)
     for row in before:
         refs[row.entity_key].append(row.observation_id)
-    config = EvaluationConfig(top_k=1, horizon_days=(3,), launch_delay_days=(0,))
+    config = (
+        EvaluationConfig(top_k=1)
+        if multiple_scenarios
+        else EvaluationConfig(top_k=1, horizon_days=(3,), launch_delay_days=(0,))
+    )
     raw = freeze_decision(before, products, links, cutoff, config, synthetic=True)
     prepared = freeze_decision(
         [],
@@ -529,7 +536,7 @@ def test_precomputed_partitions_and_lazy_outcomes_preserve_evaluation_results() 
         observation("v1", "2026-01-05T00:00:00Z", 1700),
         observation("v2", "2026-01-05T00:00:00Z", 2000),
     ]
-    as_of = utc("2026-01-05T00:00:00Z")
+    as_of = utc("2026-01-16T00:00:00Z" if multiple_scenarios else "2026-01-05T00:00:00Z")
     loaded = []
 
     def load_product(product_id):
@@ -548,6 +555,66 @@ def test_precomputed_partitions_and_lazy_outcomes_preserve_evaluation_results() 
         verified_evidence_refs=prepared["evidence_refs"],
     )
     assert lazy == mature_decision(raw, observations, as_of)
+    assert len(loaded) == len(set(loaded))
     assert set(loaded) == set(prepared["selected"]) | {
         product for selected in prepared["baselines"].values() for product in selected
     }
+
+
+def test_capability_scope_respects_latest_denials_required_grants_and_unscoped_sources():
+    from sm_trending_products.evaluation import eligible_evidence
+
+    cutoff = utc("2026-01-02T00:00:00Z")
+    rows = [
+        observation("allowed", cutoff.isoformat(), 100, account_id="allowed"),
+        observation("denied", cutoff.isoformat(), 100, account_id="denied"),
+        observation(
+            "wrong-grant",
+            cutoff.isoformat(),
+            100,
+            account_id="allowed",
+            attributes={"required_capability": "discovery"},
+        ),
+        *[
+            observation(
+                f"malformed-{index}",
+                cutoff.isoformat(),
+                100,
+                account_id="allowed",
+                attributes={"required_capability": value},
+            )
+            for index, value in enumerate((["collect"], {"capability": "collect"}, 1))
+        ],
+        observation("future", cutoff.isoformat(), 100, source="future", account_id="allowed"),
+        observation("unscoped", cutoff.isoformat(), 100, source="unscoped"),
+    ]
+    grants = [
+        Capability(
+            source="fixture",
+            account_id=account,
+            capability="collect",
+            state=state,
+            available_at=utc(timestamp),
+        )
+        for account, state, timestamp in [
+            ("allowed", "available", "2026-01-01T00:00:00Z"),
+            ("denied", "available", "2026-01-01T00:00:00Z"),
+            ("denied", "denied", "2026-01-02T00:00:00Z"),
+            ("allowed", "denied", "2026-01-03T00:00:00Z"),
+        ]
+    ]
+    grants.append(
+        Capability(
+            source="future",
+            account_id="allowed",
+            capability="collect",
+            state="available",
+            available_at=utc("2026-01-03T00:00:00Z"),
+        )
+    )
+    assert [
+        row.entity_id for row in eligible_evidence(rows, cutoff, True, capabilities=grants)
+    ] == [
+        "allowed",
+        "unscoped",
+    ]

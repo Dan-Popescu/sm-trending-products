@@ -402,9 +402,41 @@ def test_shared_quota_stops_a_second_process_before_its_http_request(pipeline, m
             second = independent_worker.collect_batch(batch_size=1, synthetic=True)
     assert first["processed"] == 1
     assert second["processed"] == 0
-    assert second["errors"][0]["category"] == "quota_exhausted"
+    assert second["errors"] == []
+    assert pipeline.catalog.quota_waiting(synthetic=True) == 1
+    waiting = pipeline.catalog.one("SELECT * FROM collection_tasks WHERE state='pending'")
+    assert waiting["attempts"] == 0
+    assert waiting["lease_version"] == 0
     assert len(requests) == 1
     assert len(pipeline.datasets()) == 1
+
+
+def test_batched_entity_upserts_preserve_latest_time_and_delivery_order(pipeline):
+    timestamp = now()
+    records = []
+    for index in range(503):
+        record = video_observation("same-entity", timestamp, index)
+        record["attributes"]["title"] = f"delivery-{index}"
+        record["account_id"] = f"account-{index}"
+        records.append(record)
+    records.insert(501, video_observation("same-entity", timestamp - timedelta(hours=1), 1))
+    pipeline.import_records(records, synthetic=True)
+    current = pipeline.catalog.one(
+        "SELECT * FROM entities WHERE entity_key='fixture_import:video:same-entity'"
+    )
+    assert current["title"] == "delivery-502"
+    assert current["account_id"] == "account-502"
+    assert current["last_observed_at"] == timestamp
+    assert current["attributes"]["title"] == "delivery-502"
+    older = video_observation("same-entity", timestamp - timedelta(hours=2), 0)
+    older["attributes"]["title"] = "late older delivery"
+    pipeline.import_records([older], synthetic=True)
+    after = pipeline.catalog.one(
+        "SELECT * FROM entities WHERE entity_key='fixture_import:video:same-entity'"
+    )
+    assert after["title"] == current["title"]
+    assert after["account_id"] == current["account_id"]
+    assert after["attributes"] == current["attributes"]
 
 
 def test_expired_worker_cannot_publish_and_a_replacement_can_complete_the_task(
@@ -633,3 +665,191 @@ def test_commercial_verification_alias_records_discovery_without_inventing_acces
         assert {row["capability"] for row in capabilities} == {"collect", "discovery"}
         assert all(row["state"] == "unverified" for row in capabilities)
         assert all(row["details"]["verified_operation"] == "query" for row in capabilities)
+
+
+def test_grouped_display_refresh_uses_one_http_request_and_records_missing_ids(pipeline):
+    keys = [f"tiktok_display:video:batched-{index}" for index in range(3)]
+    for key in keys:
+        pipeline.catalog.execute(
+            "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type) "
+            "VALUES(%s,true,'tiktok_display',%s,'video')",
+            (key, ACCOUNT),
+        )
+    response = {
+        "data": {
+            "videos": [{"id": "batched-0", "view_count": 10}, {"id": "batched-2", "view_count": 20}]
+        },
+        "error": {"code": "ok"},
+    }
+    with controlled_source([(200, response, {})]) as (endpoint, requests):
+        # Refresh compatibility includes the endpoint context in synthetic mode.
+        origin = {
+            "request": {
+                "source": "tiktok_display",
+                "account_id": ACCOUNT,
+                "operation": "list",
+                "payload": {"endpoint_override": endpoint},
+            },
+            "observed_at": now().isoformat(),
+        }
+        dataset = pipeline.history.publish([], origin, source="tiktok_display", synthetic=True)
+        from psycopg.types.json import Jsonb
+
+        pipeline.catalog.execute("UPDATE entities SET origin=%s", (Jsonb({"dataset_id": dataset}),))
+        planned = pipeline.schedule(1, synthetic=True)
+        assert planned["scheduled"] == 1
+        assert planned["refresh_entities_scheduled"] == 3
+        collected = pipeline.collect_batch(1, synthetic=True)
+    assert collected["processed"] == 1
+    assert collected["errors"] == []
+    assert len(requests) == 1
+    assert set(requests[0]["filters"]["video_ids"]) == {"batched-0", "batched-1", "batched-2"}
+    published = pipeline.catalog.one(
+        "SELECT * FROM datasets WHERE dataset_id=%s", (collected["datasets"][0],)
+    )
+    raw = pipeline.history.raw(published)
+    assert raw["missing_entity_ids"] == ["batched-1"]
+    assert raw["requested_entity_ids"] == ["batched-0", "batched-1", "batched-2"]
+    rows = pipeline.history.read([published], as_of=now())
+    assert {row.entity_key for row in rows} == {keys[0], keys[2]}
+
+
+def test_grouped_commercial_refresh_paginates_once_and_blocks_new_members_of_active_query(pipeline):
+    from psycopg.types.json import Jsonb
+
+    first = {
+        "data": {"ads": [{"ad": {"id": "page-one"}}], "has_more": True, "search_id": "same-cycle"},
+        "error": {"code": "ok"},
+    }
+    final = {
+        "data": {"ads": [{"ad": {"id": "page-two"}}], "has_more": False, "search_id": "same-cycle"},
+        "error": {"code": "ok"},
+    }
+    with controlled_source([(200, first, {}), (200, final, {})]) as (endpoint, requests):
+        origin = {
+            "request": {
+                "source": "tiktok_ads",
+                "account_id": ACCOUNT,
+                "operation": "list",
+                "payload": {"filters": {"country_code": "FR"}, "endpoint_override": endpoint},
+            },
+            "observed_at": now().isoformat(),
+        }
+        dataset = pipeline.history.publish([], origin, source="tiktok_ads", synthetic=True)
+        for index in range(10):
+            pipeline.catalog.execute(
+                "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type,origin) "
+                "VALUES(%s,true,'tiktok_ads',%s,'ad',%s)",
+                (f"tiktok_ads:ad:member-{index}", ACCOUNT, Jsonb({"dataset_id": dataset})),
+            )
+        planned = pipeline.schedule(10, synthetic=True)
+        assert planned["scheduled"] == 1
+        assert planned["refresh_entities_scheduled"] == 10
+        first_page = pipeline.collect_batch(1, synthetic=True)
+        assert first_page["processed"] == 1
+        pipeline.catalog.execute(
+            "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type,origin) "
+            "VALUES('tiktok_ads:ad:new-member',true,'tiktok_ads',%s,'ad',%s)",
+            (ACCOUNT, Jsonb({"dataset_id": dataset})),
+        )
+        # The task's continuation gained max_count/search_id. Its physical query
+        # identity still matches a newly due entity from the same origin query.
+        during_cycle = pipeline.schedule(10, synthetic=True)
+        assert during_cycle["scheduled"] == 0
+        second_page = pipeline.collect_batch(1, synthetic=True)
+    assert second_page["processed"] == 1
+    assert second_page["errors"] == []
+    assert len(requests) == 2
+    assert "search_id" not in requests[0]
+    assert requests[1]["search_id"] == "same-cycle"
+    assert pipeline.catalog.one("SELECT count(*) AS count FROM collection_tasks")["count"] == 1
+    task = pipeline.catalog.one("SELECT state,page_index,schedule_reason FROM collection_tasks")
+    assert task["state"] == "done" and task["page_index"] == 1
+    assert len(task["schedule_reason"]["entity_keys"]) == 10
+
+
+@pytest.mark.parametrize("synthetic", [False, True])
+def test_collection_hints_current_credentials_and_reports_wait_without_spawning(
+    pipeline, monkeypatch, synthetic
+):
+    import hashlib
+
+    old_token = "old-fixture-credential"
+    rotated_token = "rotated-fixture-credential"
+    next_token = "next-fixture-credential"
+    old_key = hashlib.sha256(old_token.encode()).hexdigest()
+    current_token = old_token if synthetic else rotated_token
+    monkeypatch.setenv("TIKTOK_DISPLAY_ACCESS_TOKEN", current_token)
+    pipeline.catalog.execute(
+        "INSERT INTO credential_budgets(credential_key,capacity,refill_per_second,tokens,"
+        "blocked_until) "
+        "VALUES(%s,1000,1000,1000,clock_timestamp()+interval '1 hour')",
+        (old_key,),
+    )
+    pipeline.catalog.execute(
+        "INSERT INTO credential_bindings(source,account_id,credential_key) "
+        "VALUES('tiktok_display',%s,%s)",
+        (ACCOUNT, old_key),
+    )
+    if not synthetic:
+        pipeline.catalog.execute(
+            "INSERT INTO source_capabilities(source,account_id,capability,state) "
+            "VALUES('tiktok_display',%s,'collect','available')",
+            (ACCOUNT,),
+        )
+        pipeline.catalog.execute(
+            "INSERT INTO source_policies(source,retention_days,verified) "
+            "VALUES('tiktok_display',7,true)"
+        )
+    task_ids = [
+        pipeline.enqueue(
+            "tiktok_display",
+            ACCOUNT,
+            "query",
+            {"filters": {"video_ids": [f"quota-{index}"]}},
+            synthetic=synthetic,
+            idempotency_key=f"current-credential-{index}",
+        )
+        for index in range(2)
+    ]
+    claims, waits, requests = [], [], []
+    original_claim = pipeline.catalog.claim
+    original_wait = pipeline.catalog.quota_waiting
+
+    def claim(*args, **kwargs):
+        claims.append(kwargs["credential_keys"])
+        return original_claim(*args, **kwargs)
+
+    def waiting(*args, **kwargs):
+        waits.append(kwargs["credential_keys"])
+        return original_wait(*args, **kwargs)
+
+    def collect(request):
+        requests.append(request)
+        # A source block learned after one request must prevent launching any
+        # remaining task. The next claim also observes the newly rotated token.
+        pipeline.catalog.block_budget("tiktok_display", ACCOUNT, 60)
+        monkeypatch.setenv("TIKTOK_DISPLAY_ACCESS_TOKEN", next_token)
+        return {"records": [], "raw": {"data": {"videos": []}}, "observed_at": now().isoformat()}
+
+    monkeypatch.setattr(pipeline.catalog, "claim", claim)
+    monkeypatch.setattr(pipeline.catalog, "quota_waiting", waiting)
+    monkeypatch.setattr(pipeline.collector, "run", collect)
+    result = pipeline.collect_batch(10, synthetic=synthetic)
+    assert result["processed"] == 1
+    assert result["errors"] == []
+    assert result["quota_waiting"] == 1 and result["waiting"] is True
+    assert len(requests) == 1
+    assert len(claims) == 2 and len(waits) == 1
+    if synthetic:
+        assert claims == [{}, {}] and waits == [{}]
+    else:
+        assert claims[0]["tiktok_display"] == hashlib.sha256(rotated_token.encode()).hexdigest()
+        assert claims[1]["tiktok_display"] == hashlib.sha256(next_token.encode()).hexdigest()
+        assert waits[0] == claims[1]
+        assert claims[0]["tiktok_display"] != old_key
+    tasks = pipeline.catalog.all(
+        "SELECT state,attempts FROM collection_tasks WHERE task_id=ANY(%s)", (task_ids,)
+    )
+    assert sorted(row["state"] for row in tasks) == ["done", "pending"]
+    assert all(row["attempts"] == 0 for row in tasks)

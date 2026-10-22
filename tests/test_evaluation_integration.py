@@ -202,7 +202,12 @@ def test_evaluation_partitions_ignore_unrelated_history_under_a_small_row_budget
         product_id = f"partition-product-{product}"
         pipeline.create_product(product_id, product_id, synthetic=True)
         pipeline.review_link(product_id, f"fixture_import:video:partition-video-{product}")
+    published = pipeline.assess(cutoff, synthetic=True)
     frozen = pipeline.freeze(cutoff, synthetic=True, config=outcome_config())
+    assert len(published["rows"]) == 3
+    assert {row["product_id"]: row["score"] for row in published["rows"]} == {
+        row["product_id"]: row["score"] for row in frozen["result"]["universe"]
+    }
     assert len(frozen["result"]["universe"]) == 3
     assert frozen["result"]["selected"] == ["partition-product-2"]
     assert len(frozen["result"]["evidence_refs"]) == 120

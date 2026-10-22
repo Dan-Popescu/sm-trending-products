@@ -94,3 +94,30 @@ def test_retention_records_actual_counts_and_fails_pending_deletion(monkeypatch,
         metadata = result.asset_materializations_for_node("source_retention")[0].metadata
         assert metadata["dataset_count"].value == 2
         assert metadata["deleted_objects"].value == 5
+
+
+def test_collection_asset_reports_quota_wait_without_an_error_or_attempt(monkeypatch):
+    class ControlledPipeline:
+        @classmethod
+        def from_env(cls):
+            return cls()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def schedule(self, *args, **kwargs):
+            return {"scheduled": 0}
+
+        def collect_batch(self, *args, **kwargs):
+            return {"processed": 0, "errors": [], "quota_waiting": 3, "waiting": True}
+
+    monkeypatch.setattr(orchestration, "Pipeline", ControlledPipeline)
+    result = materialize([orchestration.collection_schedule, orchestration.observation_batch])
+    assert result.success
+    event = result.asset_materializations_for_node("observation_batch")[0]
+    assert event.metadata["outcome"].value == "waiting"
+    assert event.metadata["quota_waiting"].value == 3
+    assert event.metadata["errors"].value == 0

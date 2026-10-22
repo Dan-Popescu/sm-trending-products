@@ -19,6 +19,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from psycopg.types.json import Jsonb
 
+from .analysis_batches import RowBudgetExceeded
 from .cache import cached_path, evict_cache, file_digest, pin_cached
 from .catalog import Catalog
 from .contracts import Observation, canonical, digest, utc
@@ -316,9 +317,7 @@ class History:
                     # Pins retain the verified inode during concurrent cache eviction.
                     frame = query.head(row_budget + 1).collect(engine="streaming")
                     if frame.height > row_budget:
-                        raise ValueError(
-                            "Analysis partition exceeds row budget; narrow the input range"
-                        )
+                        raise RowBudgetExceeded(row_budget)
                     for row in frame.iter_rows(named=True):
                         row.pop("entity_key")
                         for name in ("metrics", "attributes", "missing_fields"):
@@ -333,9 +332,7 @@ class History:
                             )
                         result.setdefault(obs.observation_id, obs)
                         if len(result) > row_budget:
-                            raise ValueError(
-                                "Analysis batch exceeds row budget; reduce product batch size"
-                            )
+                            raise RowBudgetExceeded(row_budget)
         return sorted(result.values(), key=lambda obs: (obs.observed_at, obs.observation_id))
 
     def raw(self, dataset: dict) -> dict:

@@ -4,10 +4,31 @@ use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
+use std::collections::hash_map::RandomState;
+use std::hash::{BuildHasher, Hasher};
 use std::time::Duration;
 use tokio_postgres::{types::Type, NoTls};
 
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+// Full jitter keeps independent workers from retrying an outage in lockstep.
+// The source Retry-After path returns its minimum untouched; task scheduling
+// therefore cannot retry it earlier than the server requested.
+fn retry_delay_with_entropy(attempt: usize, entropy: u64) -> Duration {
+    let cap_millis = 200_u64 * (1_u64 << attempt.min(5));
+    Duration::from_millis(1 + entropy % cap_millis)
+}
+
+fn retry_delay(attempt: usize) -> Duration {
+    let mut hasher = RandomState::new().build_hasher();
+    hasher.write_u32(std::process::id());
+    hasher.write_usize(attempt);
+    retry_delay_with_entropy(attempt, hasher.finish())
+}
+
+fn deferred_retry_seconds() -> f64 {
+    5.0 + retry_delay(4).as_secs_f64()
+}
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -288,10 +309,16 @@ pub async fn fetch(request: &CollectionRequest) -> Result<FetchedPage> {
         let mut response = match response {
             Ok(value) => value,
             Err(_) if attempt < 2 => {
-                tokio::time::sleep(Duration::from_millis(200 * (1 << attempt))).await;
+                tokio::time::sleep(retry_delay(attempt)).await;
                 continue;
             }
-            Err(_) => return Err(CollectorError::retry("transport", "request_failed", 5.0)),
+            Err(_) => {
+                return Err(CollectorError::retry(
+                    "transport",
+                    "request_failed",
+                    deferred_retry_seconds(),
+                ))
+            }
         };
         let status = response.status();
         if status.as_u16() == 429 {
@@ -322,14 +349,14 @@ pub async fn fetch(request: &CollectionRequest) -> Result<FetchedPage> {
             return Err(CollectorError::new("authorization", "source_access_denied"));
         }
         if status.is_server_error() && attempt < 2 {
-            tokio::time::sleep(Duration::from_millis(200 * (1 << attempt))).await;
+            tokio::time::sleep(retry_delay(attempt)).await;
             continue;
         }
         if status.is_server_error() {
             return Err(CollectorError::retry(
                 "transport",
                 "source_unavailable",
-                5.0,
+                deferred_retry_seconds(),
             ));
         }
         if !status.is_success() {
@@ -457,5 +484,26 @@ pub fn redact(value: &mut Value, token: &str) {
             *text = text.replace(token, "[REDACTED]");
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::retry_delay_with_entropy;
+    use std::time::Duration;
+
+    #[test]
+    fn transient_backoff_has_bounded_jitter_without_sleeping() {
+        assert_eq!(retry_delay_with_entropy(0, 0), Duration::from_millis(1));
+        assert_eq!(retry_delay_with_entropy(0, 199), Duration::from_millis(200));
+        assert_eq!(retry_delay_with_entropy(1, 399), Duration::from_millis(400));
+        for entropy in [0, 1, 399, 50000, u64::MAX] {
+            assert!(retry_delay_with_entropy(1, entropy) <= Duration::from_millis(400));
+            assert!(retry_delay_with_entropy(100, entropy) <= Duration::from_millis(6400));
+        }
+        assert_ne!(
+            retry_delay_with_entropy(1, 17),
+            retry_delay_with_entropy(1, 18)
+        );
     }
 }

@@ -39,7 +39,8 @@ checks = {
     < sample["compaction"]["normalized_objects_before"],
     "quota_failure_reported": quota["ok"] is False
     and quota["checks"]["collection_completed"] is False
-    and any(error["category"] == "quota_exhausted" for error in quota["errors"]),
+    and quota["measurements"]["processed_pages"] == 1
+    and all(error["category"] == "quota_exhausted" for error in quota["errors"]),
     "quota_work_retained": states == {"pending": 3, "done": 1}
     and sum(states.values()) == quota["measurements"]["queue_initial_tasks"] == 4,
     "synthetic_boundary": all(
