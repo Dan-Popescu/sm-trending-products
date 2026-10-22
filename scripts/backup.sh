@@ -36,6 +36,7 @@ trap resume_writers EXIT
 if [[ ${#writer_services[@]} -gt 0 ]]; then
   docker compose stop "${writer_services[@]}" >/dev/null
 fi
+echo 'Verifying source objects and capturing the logical catalog.'
 docker compose run --rm --no-deps initialize sm-trends verify --json > "$backup_directory/source-verification.json"
 docker compose run --rm --no-deps -T initialize python - <<'PY' > "$backup_directory/catalog-state.json"
 from sm_trending_products.contracts import canonical
@@ -44,6 +45,7 @@ from sm_trending_products.pipeline import Pipeline
 with Pipeline.from_env() as application:
     print(canonical(application.catalog.export_state()))
 PY
+echo 'Capturing application and orchestration database dumps.'
 docker compose exec -T postgres sh -c \
   'exec pg_dump --format=custom --no-owner --username="$POSTGRES_USER" --dbname="$POSTGRES_DB"' \
   > "$backup_directory/pipeline.dump.partial"
@@ -54,6 +56,7 @@ docker compose exec -T postgres sh -c \
 mv "$backup_directory/dagster.dump.partial" "$backup_directory/dagster.dump"
 
 snapshot_arguments=(capture --output /backup/objects)
+echo 'Capturing the object inventory and requested object copies.'
 if [[ "$copy_objects" == true ]]; then snapshot_arguments+=(--copy-objects); fi
 docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
   --volume "$backup_directory:/backup" initialize \

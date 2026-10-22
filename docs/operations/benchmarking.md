@@ -42,3 +42,30 @@ Persistent queue growth under available source quota, unsafe peak memory, analyt
 Move independent collectors or analytical containers to additional hosts when measurements justify it. Keep PostgreSQL state and completed S3 manifests authoritative; no shared mutable DuckDB file is introduced. Choose distributed infrastructure only when a documented bottleneck survives these changes.
 
 No numerical operating envelope or recurring cost is claimed until the corresponding benchmark has run on the actual target configuration.
+
+## Controlled parallel workload without source credentials
+
+Install the development dependencies and build the collector first. With an
+isolated native test database, the helper creates a fresh schema and temporary
+HTTP Moto service, runs the workload, and removes its test state:
+
+```sh
+TEST_DATABASE_URL=postgresql://test_user:test_password@127.0.0.1:5432/pipeline_test \
+  uv run --locked python scripts/offline-benchmark.py \
+  --records 1000 --product-count 50 --workers 4 --source-latency-ms 10 \
+  --hot-fraction 0.6 --compact --output output/offline-benchmark.json
+```
+
+`--hot-fraction` assigns that fraction of source video identities to the first
+product; other identities retain the deterministic distribution. Each worker
+uses an independent application/catalog connection and the shared SQL queue and
+budget. `--request-capacity` and `--requests-per-second` support a deliberately
+constrained quota: incomplete collection returns a failed report with retryable
+tasks rather than an infinite wait. The wrapper also forwards these options.
+
+Mandatory check failures now set `ok: false` and a nonzero CLI exit code.
+Reports include cold/warm analysis, optional compaction duration and object counts,
+remaining queue state, cache/disk usage and aggregate worker storage traffic.
+Process CPU/RSS does not include the full PostgreSQL/object-store service stack.
+The finite workload and separate hard-crash tests do not establish sustained
+queue stability, production capacity, restoration objectives or provider prices.

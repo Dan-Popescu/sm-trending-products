@@ -155,6 +155,32 @@ def test_operator_must_explicitly_enter_synthetic_workspace() -> None:
     assert app.selectbox(key="evidence_product").value == "test-product"
 
 
+def test_health_cards_read_the_actual_status_contract_and_selected_workspace() -> None:
+    source = CONTROLLED_APP.replace(
+        'return {"queued_tasks": 2, "failed_tasks": 1, "last_observed_at": "2026-10-22T10:00:00Z"}',
+        """return {
+            "queues": [
+                {"state": "pending", "synthetic": False, "count": 7},
+                {"state": "quarantined", "synthetic": False, "count": 2},
+                {"state": "pending", "synthetic": True, "count": 30}
+            ],
+            "sources": [
+                {"synthetic": False, "last_observed_at": "2026-10-22T10:00:00Z"},
+                {"synthetic": True, "last_observed_at": "2026-10-22T11:00:00Z"}
+            ]
+        }""",
+    )
+    app = AppTest.from_string(source).run(timeout=20)
+    assert not app.exception
+    assert app.metric[0].value == "7"
+    assert app.metric[1].value == "2"
+    assert "10:00:00" in app.metric[2].value
+    app.toggle[0].set_value(True).run()
+    assert app.metric[0].value == "30"
+    assert app.metric[1].value == "0"
+    assert "11:00:00" in app.metric[2].value
+
+
 def test_missing_pipeline_configuration_is_safe_and_actionable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

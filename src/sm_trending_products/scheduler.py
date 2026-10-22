@@ -95,6 +95,7 @@ class SchedulerPolicy(BaseModel):
     max_candidate_scan: int = Field(default=10000, ge=1, le=100000)
     candidate_retry_seconds: int = Field(default=300, ge=1, le=86400)
     max_pending_tasks: int = Field(default=10000, ge=1, le=1000000)
+    request_costs: dict[str, float] = Field(default_factory=dict)
     discovery_queries: list[DiscoveryQuery] = Field(default_factory=list, max_length=1000)
 
     @model_validator(mode="after")
@@ -108,6 +109,13 @@ class SchedulerPolicy(BaseModel):
             raise ValueError("Scheduling intervals must be finite and between 0 and 8760 hours")
         if self.monitoring_threshold > self.hot_threshold:
             raise ValueError("Monitoring threshold must not exceed the hot threshold")
+        if set(self.request_costs) - SOURCES or any(
+            not math.isfinite(cost) or not 0 < cost <= 100000
+            for cost in self.request_costs.values()
+        ):
+            raise ValueError(
+                "Request-cost estimates require a supported source and finite positive units"
+            )
         identities = [query.query_id for query in self.discovery_queries]
         if len(set(identities)) != len(identities):
             raise ValueError("Duplicate discovery queries are not allowed")
@@ -132,12 +140,13 @@ class Scheduler:
             if clock is None:
                 raise RuntimeError("Database did not provide its clock")
             checked_at = clock["checked_at"]
+            prior = connection.execute(
+                "SELECT p.policy_id,p.payload FROM scheduler_policy_activations a "
+                "JOIN scheduler_policies p USING(policy_id) WHERE a.synthetic=%s "
+                "ORDER BY a.available_at DESC,a.activation_id DESC LIMIT 1",
+                (synthetic,),
+            ).fetchone()
             if supplied is None:
-                prior = connection.execute(
-                    "SELECT payload FROM scheduler_policies WHERE payload->>'synthetic'=%s "
-                    "ORDER BY available_at DESC,policy_id DESC LIMIT 1",
-                    (str(synthetic).lower(),),
-                ).fetchone()
                 supplied = SchedulerPolicy.model_validate(
                     prior["payload"]["configuration"] if prior else {}
                 )
@@ -152,6 +161,11 @@ class Scheduler:
                 "ON CONFLICT DO NOTHING",
                 (policy_id, Jsonb(policy_body)),
             )
+            if prior is None or prior["policy_id"] != policy_id:
+                connection.execute(
+                    "INSERT INTO scheduler_policy_activations(policy_id,synthetic) VALUES(%s,%s)",
+                    (policy_id, synthetic),
+                )
             capabilities = connection.execute(
                 "SELECT DISTINCT ON(source,account_id,capability) "
                 "source,account_id,capability,state "
@@ -318,7 +332,13 @@ class Scheduler:
                 interval = config.intervals_hours[tier]
                 overdue = max(0.0, (checked_at - entity["next_due_at"]).total_seconds() / 3600)
                 uncertainty = 1.0 if score is None else 0.0
-                priority = hint + min(100.0, overdue / interval * 10) + uncertainty * 10
+                request_cost = config.request_costs.get(source, 1.0)
+                # Exploration occupies the 1000+ execution band. Cost estimates
+                # must not consume its reserved share or persist infinite JSON.
+                priority = min(
+                    999.0,
+                    (hint + min(100.0, overdue / interval * 10) + uncertainty * 10) / request_cost,
+                )
                 candidates.append(
                     {
                         "entity": entity,
@@ -333,6 +353,7 @@ class Scheduler:
                             "base_priority": base_priority,
                             "overdue_hours": overdue,
                             "uncertainty": uncertainty,
+                            "estimated_request_cost": request_cost,
                         },
                     }
                 )

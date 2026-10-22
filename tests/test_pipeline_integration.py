@@ -449,6 +449,28 @@ def test_missing_credentials_cannot_promote_live_access_after_synthetic_collecti
     assert pipeline.datasets() == []
 
 
+def test_empty_authorized_response_does_not_complete_live_observation_acceptance(
+    pipeline, monkeypatch
+):
+    monkeypatch.setattr(
+        pipeline.collector,
+        "run",
+        lambda request: {
+            "raw": {"data": {"videos": []}},
+            "records": [],
+            "observed_at": now().isoformat(),
+        },
+    )
+    result = pipeline.verify_live(
+        "tiktok_display", ACCOUNT, "list", {}, evidence="controlled approval", retention_days=7
+    )
+    assert result["ok"] is False
+    assert result["state"] == "unverified"
+    assert result["details"]["endpoint_accessible"] is True
+    assert result["details"]["acceptance_observation_count"] == 0
+    assert pipeline.status()["pending_live_acceptance"] is True
+
+
 def test_top_level_schema_drift_archives_safe_evidence_without_advancing_the_task(
     pipeline, monkeypatch
 ):

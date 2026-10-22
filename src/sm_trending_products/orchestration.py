@@ -6,6 +6,7 @@ from dagster import (
     Config,
     DefaultScheduleStatus,
     Definitions,
+    Failure,
     ScheduleDefinition,
     asset,
     define_asset_job,
@@ -19,6 +20,25 @@ class BatchConfig(Config):
     synthetic: bool = False
     request_budget: int = 100
     batch_size: int = 20
+
+
+def _report_batch(context: AssetExecutionContext, result: dict, **counts: int) -> None:
+    errors = result.get("errors", [])
+    categories = sorted({error.get("category", "unknown") for error in errors})
+    expected_wait = {"rate_limited", "quota_exhausted", "lease_lost"}
+    failed = bool(set(categories) - expected_wait)
+    context.add_output_metadata(
+        {
+            **counts,
+            "errors": len(errors),
+            "outcome": "failed" if failed else "waiting" if errors else "complete",
+        }
+    )
+    if failed:
+        raise Failure(
+            description="Batch contains failed work; inspect the operational task status.",
+            metadata={"error_categories": ", ".join(categories), "failed_items": len(errors)},
+        )
 
 
 @asset
@@ -35,7 +55,7 @@ def collection_schedule(context: AssetExecutionContext, config: BatchConfig) -> 
 def observation_batch(context: AssetExecutionContext, config: BatchConfig) -> dict:
     with Pipeline.from_env() as pipeline:
         result = pipeline.collect_batch(config.batch_size, synthetic=config.synthetic)
-    context.add_output_metadata({"processed": result["processed"], "errors": len(result["errors"])})
+    _report_batch(context, result, processed=result["processed"])
     return result
 
 
@@ -62,12 +82,11 @@ def outcome_maturation(context: AssetExecutionContext, config: BatchConfig) -> d
         result = pipeline.mature_due(
             limit=config.batch_size, synthetic=config.synthetic, as_of=now()
         )
-    context.add_output_metadata(
-        {
-            "evaluated_decisions": result["processed"],
-            "completed_decisions": result["completed"],
-            "failed_decisions": len(result["errors"]),
-        }
+    _report_batch(
+        context,
+        result,
+        evaluated_decisions=result["processed"],
+        completed_decisions=result["completed"],
     )
     return result
 
@@ -76,7 +95,16 @@ def outcome_maturation(context: AssetExecutionContext, config: BatchConfig) -> d
 def source_retention(context: AssetExecutionContext) -> dict:
     with Pipeline.from_env() as pipeline:
         result = pipeline.retention(apply=True)
-    context.add_output_metadata({"deleted_datasets": len(result.get("deleted", []))})
+    context.add_output_metadata(
+        {
+            name: result.get(name, 0)
+            for name in ("dataset_count", "deleted_objects", "failed_objects", "pending_objects")
+        }
+    )
+    if result.get("failed_objects", 0) or result.get("pending_objects", 0):
+        raise Failure(
+            description="Retention has pending deletions; resolve storage failures and retry."
+        )
     return result
 
 

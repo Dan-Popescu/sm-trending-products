@@ -10,6 +10,14 @@ Repository documentation and all technical identifiers use English. The earlier 
 
 Start with the [VPS runbook](docs/operations/runbook.md), [product requirements](docs/prd/overview.md), [delivery plan](docs/planning/README.md), and [autonomous implementation decisions](docs/implementation/assumptions.md).
 
+To advance without TikTok access, install the documented Python/Rust tools and
+run `scripts/offline-check.sh`. It starts a disposable native PostgreSQL container
+unless `TEST_DATABASE_URL` already identifies an isolated test database. The suite
+uses controlled loopback HTTP sources and temporary Moto buckets, including the
+actual Dagster-to-review path and hard process-termination recovery scenarios.
+See [offline verification](docs/verification/offline-readiness.md) for evidence
+and remaining limits.
+
 The [implementation coverage](docs/implementation/coverage.md),
 [verification report](docs/verification/implementation.md), and
 [handoff instructions](docs/implementation/handoff.md) distinguish implemented

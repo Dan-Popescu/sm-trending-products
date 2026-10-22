@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import math
 import os
 import time
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 
 import psycopg
 import pytest
@@ -43,6 +45,105 @@ def test_policy_rejects_unbounded_or_unsupported_collection() -> None:
                 ]
             }
         )
+
+
+@pytest.mark.integration
+def test_reactivating_a_policy_persists_without_rewriting_its_first_availability(catalog):
+    from sm_trending_products.scheduler import Scheduler
+
+    scheduler = Scheduler(catalog)
+    first = scheduler.schedule(0, synthetic=True, policy={"version": "policy-a"})
+    original = catalog.one(
+        "SELECT available_at FROM scheduler_policies WHERE policy_id=%s", (first["policy_id"],)
+    )
+    scheduler.schedule(0, synthetic=True, policy={"version": "policy-b"})
+    scheduler.schedule(0, synthetic=True, policy={"version": "policy-a"})
+    restored = scheduler.schedule(0, synthetic=True)
+    assert restored["policy"]["version"] == "policy-a"
+    assert (
+        catalog.one(
+            "SELECT available_at FROM scheduler_policies WHERE policy_id=%s", (first["policy_id"],)
+        )
+        == original
+    )
+    assert catalog.one("SELECT count(*) AS count FROM scheduler_policy_activations")["count"] == 3
+    # Activating the live workspace cannot change the synthetic selection.
+    scheduler.schedule(0, synthetic=False, policy={"version": "live-policy"})
+    assert scheduler.schedule(0, synthetic=True)["policy"]["version"] == "policy-a"
+
+
+@pytest.mark.integration
+def test_request_cost_estimate_affects_persisted_priority(catalog):
+    from sm_trending_products.scheduler import Scheduler
+
+    catalog.configure_budget("tiktok_display", "creator", capacity=100, refill_per_second=1)
+    catalog.execute(
+        "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type,priority) "
+        "VALUES('tiktok_display:video:costed',true,'tiktok_display','creator','video',90)"
+    )
+    result = Scheduler(catalog).schedule(
+        1, synthetic=True, policy={"request_costs": {"tiktok_display": 2}}
+    )
+    reason = result["decisions"][0]
+    inputs = reason["priority_inputs"]
+    assert inputs["estimated_request_cost"] == 2
+    expected = (90 + min(100, inputs["overdue_hours"] * 10) + 10) / 2
+    assert reason["execution_priority"] == pytest.approx(expected)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("request_cost", [0.01, 5e-324])
+def test_cost_scaling_preserves_exploration_at_the_collector_claim_boundary(catalog, request_cost):
+    from sm_trending_products.scheduler import Scheduler
+
+    catalog.configure_budget("tiktok_display", "creator", capacity=100, refill_per_second=1)
+    for index in range(10):
+        catalog.execute(
+            "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type,priority) "
+            "VALUES(%s,true,'tiktok_display','creator','video',%s)",
+            (f"tiktok_display:video:cost-{index}", 90 if index < 9 else 0),
+        )
+    result = Scheduler(catalog).schedule(
+        10,
+        synthetic=True,
+        policy={
+            "request_costs": {"tiktok_display": request_cost},
+            "discovery_queries": [
+                {"source": "tiktok_display", "account_id": "creator", "operation": "list"}
+            ],
+        },
+    )
+    assert result["scheduled"] == 10
+    assert result["exploration_scheduled"] == 2
+    claims = [catalog.claim(f"cost-worker-{index}", 60, True, 3) for index in range(10)]
+    assert {task["schedule_reason"]["bucket"] for task in claims[:2]} == {
+        "exploration_query",
+        "exploration_entity",
+    }
+    assert all(task["schedule_reason"]["bucket"] == "priority_refresh" for task in claims[2:])
+    assert all(math.isfinite(task["priority"]) for task in claims)
+
+
+@pytest.mark.integration
+def test_parallel_schedulers_do_not_duplicate_or_lose_the_due_frontier(catalog):
+    if os.environ.get("TEST_DATABASE_ENGINE") == "pglite":
+        pytest.skip("Scheduler contention requires independent native PostgreSQL backends")
+    from sm_trending_products.scheduler import Scheduler
+
+    catalog.configure_budget("tiktok_display", "creator", capacity=100, refill_per_second=1)
+    for index in range(40):
+        catalog.execute(
+            "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type) "
+            "VALUES(%s,true,'tiktok_display','creator','video')",
+            (f"tiktok_display:video:parallel-{index}",),
+        )
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(
+            pool.map(lambda _: Scheduler(catalog).schedule(10, synthetic=True), range(4))
+        )
+    task_ids = [task for result in results for task in result["task_ids"]]
+    assert len(task_ids) == len(set(task_ids)) == 40
+    assert all(result["scheduled"] == 10 for result in results)
 
 
 @pytest.fixture

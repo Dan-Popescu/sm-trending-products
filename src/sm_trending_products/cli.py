@@ -139,6 +139,12 @@ def parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--records", type=int, default=1000)
     benchmark.add_argument("--output", type=Path, required=True)
     benchmark.add_argument("--product-count", type=int, default=100)
+    benchmark.add_argument("--workers", type=int, default=1)
+    benchmark.add_argument("--source-latency-ms", type=float, default=0)
+    benchmark.add_argument("--hot-fraction", type=float, default=0)
+    benchmark.add_argument("--compact", action="store_true")
+    benchmark.add_argument("--request-capacity", type=float, default=10000)
+    benchmark.add_argument("--requests-per-second", type=float, default=10000)
     query = command(
         "query", "Run a bounded read-only DuckDB query on completed history", synthetic=True
     )
@@ -284,7 +290,18 @@ def dispatch(pipeline, args):
         case "benchmark":
             from .benchmark import benchmark
 
-            return benchmark(pipeline, args.records, args.output, product_count=args.product_count)
+            return benchmark(
+                pipeline,
+                args.records,
+                args.output,
+                product_count=args.product_count,
+                workers=args.workers,
+                source_latency_ms=args.source_latency_ms,
+                hot_fraction=args.hot_fraction,
+                compaction=args.compact,
+                request_capacity=args.request_capacity,
+                requests_per_second=args.requests_per_second,
+            )
         case "query":
             return pipeline.explore(
                 args.sql_file.read_text(),
