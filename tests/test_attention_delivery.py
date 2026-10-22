@@ -21,11 +21,14 @@ def test_published_attention_and_identity_remain_auditable_after_resets_and_reas
 ):
     baseline = now()
     records = []
-    for entity in ("broad-a", "broad-b", "solo"):
+    for entity in ("broad-a", "broad-b", "solo", "older"):
         counts = (100, 200, 500) if entity.startswith("broad") else (100, 300, 900)
         for hour, count in zip((3, 2, 1), counts, strict=True):
             row = video_observation(entity, baseline - timedelta(hours=hour), count)
-            row["published_at"] = (baseline - timedelta(hours=12)).isoformat()
+            age = timedelta(days=12) if entity == "older" else timedelta(hours=12)
+            row["published_at"] = (baseline - age).isoformat()
+            if entity == "older":
+                row["metrics"]["view_count"] = {"lower": 100 * count, "upper": 100 * count}
             row["attributes"]["creator_id"] = entity
             records.append(row)
     records.extend(
@@ -38,13 +41,13 @@ def test_published_attention_and_identity_remain_auditable_after_resets_and_reas
     missing["missing_fields"] = {"view_count": "not_returned"}
     records.append(missing)
     pipeline.import_records(records, synthetic=True)
-    for product in ("broad", "solo", "unknown", "stale", "short", "missing"):
+    for product in ("broad", "solo", "older", "unknown", "stale", "short", "missing"):
         pipeline.create_product(product, product.title(), synthetic=True)
     decisions = [
         pipeline.review_link(
             "broad" if entity.startswith("broad") else entity, f"fixture_import:video:{entity}"
         )
-        for entity in ("broad-a", "broad-b", "solo", "stale", "short", "missing")
+        for entity in ("broad-a", "broad-b", "solo", "older", "stale", "short", "missing")
     ]
     cutoff = now()
     policy = AssessmentPolicy(version="controlled-attention-v1", alert_threshold=0)
@@ -58,6 +61,10 @@ def test_published_attention_and_identity_remain_auditable_after_resets_and_reas
     assert broad["features"]["creator_concentration"] == pytest.approx(0.5)
     assert by_id["solo"]["features"]["growth_per_hour"] == pytest.approx(600)
     assert broad["score"] > by_id["solo"]["score"]
+    assert by_id["older"]["features"]["age_hours"] == pytest.approx(288, abs=0.01)
+    assert by_id["older"]["features"]["growth_per_hour"] == pytest.approx(60000)
+    assert by_id["older"]["features"]["cohort_growth_percentile"] == pytest.approx(0.5)
+    assert broad["features"]["cohort_growth_percentile"] == pytest.approx(0.5)
     assert by_id["unknown"]["score"] is None
     for product in ("stale", "short", "missing"):
         assert by_id[product]["score"] is None
@@ -76,7 +83,7 @@ def test_published_attention_and_identity_remain_auditable_after_resets_and_reas
         assert {"attention", "demand", "competition", "feasibility"} <= row.keys()
         assert row["demand"]["score"] is None and row["feasibility"]["score"] is None
     frozen = deepcopy(pipeline.alerts(True))
-    assert {row["product_id"] for row in frozen} == {"broad", "solo"}
+    assert {row["product_id"] for row in frozen} == {"broad", "solo", "older"}
     assert all(row["run_id"] == first["run_id"] for row in frozen)
     original_key = f"assessments/synthetic/{first['run_id']}.json"
 
