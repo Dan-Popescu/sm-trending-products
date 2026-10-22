@@ -437,7 +437,7 @@ class Catalog:
         *,
         connection=None,
     ) -> list[dict]:
-        """Select IDs, conflicts and physical deliveries in one statement snapshot."""
+        """Select one snapshot using the same UTF-8 identifier order as Python."""
         if connection is None:
             with self.transaction() as transaction:
                 self.guard_retention(transaction)
@@ -453,7 +453,9 @@ class Catalog:
         rows = list(
             connection.execute(
                 "WITH eligible AS NOT MATERIALIZED ("
-                "SELECT o.*,d.created_at,n.descriptor FROM observation_deliveries o "
+                'SELECT o.observation_id COLLATE "C" AS observation_id,o.dataset_id,'
+                "o.object_key,o.entity_key,o.observed_at,o.available_at,o.payload_sha256,"
+                "d.created_at,n.descriptor FROM observation_deliveries o "
                 "JOIN datasets d ON d.dataset_id=o.dataset_id "
                 "JOIN normalized_objects n ON n.dataset_id=o.dataset_id "
                 "AND n.object_key=o.object_key "

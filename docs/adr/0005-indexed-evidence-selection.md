@@ -15,8 +15,10 @@ keyset pages. Missing time bounds in legacy descriptors are conservative matches
 Interval-report reads do not apply observed-time bounds to metadata, because a
 report can describe a different period while remaining subject to availability.
 Evidence review selects stable `(observed_at, observation_id)` pages in one SQL
-statement snapshot, checks
-conflicting known payload fingerprints, and verifies only the selected S3 objects.
+statement snapshot. SQL identifier comparisons, keysets and indexes use `C`
+collation to match Python's Unicode ordering independently of the database locale.
+The page checks for conflicting known payload fingerprints and verifies only the
+selected S3 objects.
 Replayed deliveries deduplicate while the oldest active delivery preserves source
 provenance. The availability cutoff and resolved product ownership remain fixed
 for each cursor scope. The page retains a shared retention fence through its
