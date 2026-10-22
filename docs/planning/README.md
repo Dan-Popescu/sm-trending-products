@@ -24,7 +24,7 @@ Use Matt Pocock's setup, domain-modeling, to-spec, to-tickets, implement, and co
 
 GitHub Issues is the canonical tracker for Dan-Popescu/sm-trending-products. Keep reviewed product requirements in the repository; maintain the published umbrella issue and one issue per approved delivery ticket. Maintain native blocking links when the integration supports them; otherwise use explicit issue references. Do not mark a ticket ready-for-agent before its scope is approved and its human prerequisites are satisfied.
 
-Read the domain glossary and relevant architecture decisions before implementing. For each ready ticket: select an unblocked slice, verify its acceptance criteria at the highest useful boundary, implement, run the relevant checks, and review the change against its specification. Use test-first development for nontrivial correctness rules. Record evidence in the pull request. Do not merge or deploy automatically.
+Read the domain glossary and relevant architecture decisions before implementing. For each ready ticket: select an unblocked slice, verify its acceptance criteria at the highest useful boundary, implement, run the relevant checks, and review the change against its specification. Use test-first development for nontrivial correctness rules. Record evidence in the pull request. Review, merge and continue autonomously under the user's standing authorization recorded in [AGENTS.md](../../AGENTS.md#autonomous-pull-request-delivery). There is no human pull-request approval step.
 
 ## Accepted setup and remaining acceptance
 

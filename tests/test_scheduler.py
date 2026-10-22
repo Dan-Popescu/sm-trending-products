@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import time
 import uuid
@@ -88,6 +89,39 @@ def test_request_cost_estimate_affects_persisted_priority(catalog):
     assert inputs["estimated_request_cost"] == 2
     expected = (90 + min(100, inputs["overdue_hours"] * 10) + 10) / 2
     assert reason["execution_priority"] == pytest.approx(expected)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("request_cost", [0.01, 5e-324])
+def test_cost_scaling_preserves_exploration_at_the_collector_claim_boundary(catalog, request_cost):
+    from sm_trending_products.scheduler import Scheduler
+
+    catalog.configure_budget("tiktok_display", "creator", capacity=100, refill_per_second=1)
+    for index in range(10):
+        catalog.execute(
+            "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type,priority) "
+            "VALUES(%s,true,'tiktok_display','creator','video',%s)",
+            (f"tiktok_display:video:cost-{index}", 90 if index < 9 else 0),
+        )
+    result = Scheduler(catalog).schedule(
+        10,
+        synthetic=True,
+        policy={
+            "request_costs": {"tiktok_display": request_cost},
+            "discovery_queries": [
+                {"source": "tiktok_display", "account_id": "creator", "operation": "list"}
+            ],
+        },
+    )
+    assert result["scheduled"] == 10
+    assert result["exploration_scheduled"] == 2
+    claims = [catalog.claim(f"cost-worker-{index}", 60, True, 3) for index in range(10)]
+    assert {task["schedule_reason"]["bucket"] for task in claims[:2]} == {
+        "exploration_query",
+        "exploration_entity",
+    }
+    assert all(task["schedule_reason"]["bucket"] == "priority_refresh" for task in claims[2:])
+    assert all(math.isfinite(task["priority"]) for task in claims)
 
 
 @pytest.mark.integration

@@ -42,7 +42,7 @@
     "src/sm_trending_products/maintenance.py": "872fccd82e5b7c10a567ac5706e984ceb5a3c6e49323ab828a6fd79145f5ca96",
     "src/sm_trending_products/orchestration.py": "39d7763f7df272fe06c6350f1d17c09f40070eb2d7adba9e2188dadf188a9fe1",
     "src/sm_trending_products/pipeline.py": "57d272121b9d5351af6c2c9b08fdc0fdd91ae5e21c93bd1bd8a0914b53d129ca",
-    "src/sm_trending_products/scheduler.py": "0f69adf65b471a76153ea254d909d78d331acebac07d9f81d6b3e509ce9bda4e",
+    "src/sm_trending_products/scheduler.py": "6a80465d6e85941e61d1a6fe4151e536f474d03ec8117db34cf39f9f897f7252",
     "src/sm_trending_products/settings.py": "9ef6bdf466efd96fba4f821bf7b8e19773c8d759646b4634afddf3b20287389d",
     "src/sm_trending_products/sql/001_control_plane.sql": "d5de64e0fbdbe2f82d6ecdfc41db7cbd3adea43330af6aef5668dc84a6cd3343",
     "src/sm_trending_products/sql/002_scheduling_provenance.sql": "ca3000af4f246299355b708f8ae90efb7bb0586bc5a6d7d9ccd2ee399d079962",
@@ -73,7 +73,7 @@
     "tests/test_orchestration.py": "af4e2e814a2502afabea7bcdfc603e0fe3f57992a877150a275e7015b6b75197",
     "tests/test_pipeline_integration.py": "0bb3c0baaa3c728fc871cdd3d8e5eb5acb4b13167906cd19583e8195f3edea3f",
     "tests/test_process_recovery.py": "ee0c84737f523720ce58dbc263ce06332f121026403fa47d052fb67df8d8cc39",
-    "tests/test_scheduler.py": "0e0cbcae67d538328d601152c0b450702cd503734271c6080046f8ccf78bf956",
+    "tests/test_scheduler.py": "5bdd82fc2246442439be1c557904f3d76f491f3ea129842bfdf274d41a80991d",
     "uv.lock": "c55d9ccf2fca4b2629872b0ddaad202dd7e8181e34509088565d8b77dc513004"
   },
   "source_fingerprint_sha256": "9d3d2d8efacc0786704922dde1d4fc040c3cfcf507a8417e3afa674db5ceb5bd"

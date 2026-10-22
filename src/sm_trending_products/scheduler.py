@@ -333,9 +333,12 @@ class Scheduler:
                 overdue = max(0.0, (checked_at - entity["next_due_at"]).total_seconds() / 3600)
                 uncertainty = 1.0 if score is None else 0.0
                 request_cost = config.request_costs.get(source, 1.0)
-                priority = (
-                    hint + min(100.0, overdue / interval * 10) + uncertainty * 10
-                ) / request_cost
+                # Exploration occupies the 1000+ execution band. Cost estimates
+                # must not consume its reserved share or persist infinite JSON.
+                priority = min(
+                    999.0,
+                    (hint + min(100.0, overdue / interval * 10) + uncertainty * 10) / request_cost,
+                )
                 candidates.append(
                     {
                         "entity": entity,

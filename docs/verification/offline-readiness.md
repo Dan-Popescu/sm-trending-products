@@ -6,8 +6,8 @@ production bucket or VPS were used.
 
 ## Executed application boundary
 
-The full suite passed **160 tests, zero failures, zero errors and zero skips**
-against native PostgreSQL 17.11 and temporary HTTP Moto 5.2.4 services in 42.60
+The full suite passed **162 tests, zero failures, zero errors and zero skips**
+against native PostgreSQL 17.11 and temporary HTTP Moto 5.2.4 services in 42.33
 seconds. [JUnit evidence](offline/tests.xml) retains the executed scenarios. The
 [source manifest](offline/source-manifest.json) fingerprints runtime, test,
 configuration and verification-driver files independently of documentation.
@@ -28,7 +28,9 @@ New behavioral proofs include:
 - `test_scheduler.py`: A -> B -> A -> implicit selection retains A, preserves the
   definition's original availability and isolates live/synthetic activations.
   Four concurrent planners preserve the entire due frontier without duplication;
-  versioned request-cost estimates affect persisted priorities.
+  versioned request-cost estimates affect persisted priorities. Extreme small costs
+  cannot outrank protected exploration or persist infinite priorities; actual
+  collector claims verify both discovery and low-priority exploration precedence.
 - `test_dashboard.py`: real-shaped queue/source status populates the health cards
   and follows the selected workspace.
 - `test_orchestration.py`: executed Dagster materializations distinguish fatal
@@ -46,7 +48,7 @@ installed Cargo directory was missing from that command's PATH. Repeating with
 the documented toolchain selection produced the complete clean result above.
 A later full run also exposed a real UI cutoff precision bug: rounding the
 default time down to whole seconds could hide a link created in that second.
-The default now retains microseconds; the complete 160-test run passed afterward.
+The default now retains microseconds; the complete 162-test run passed afterward.
 No application failure was hidden or counted as a passing test.
 
 ## Measured finite workload
@@ -75,7 +77,8 @@ passed 159 tests at `47e4129`, built the image, started all four operator servic
 verified their health, and completed backup/restart and isolated restore.
 [Execution excerpts](offline/ci-log-extract.txt) and
 [artifact metadata](offline/ci-evidence.json) retain the exact boundary.
-The later linear benchmark grouping change adds the 160th local regression; its
+Later linear benchmark grouping and exploration-priority changes bring the local
+suite to 162 tests; their
 final-head CI is tracked on PR #24. The full-service/recovery driver now starts worker,
 Dagster daemon/webserver and Streamlit, probes their health, pauses/restarts
 writers during backup, and runs isolated database/object restore. The successful CI above establishes this expanded synthetic boundary.
@@ -100,7 +103,8 @@ This evidence advances T01/T03/T07/T13/T14 and the failure paths of the T15
 verification tool. It does not automatically close their GitHub acceptance
 checklists or claim a production sign-off.
 
-- Reconcile each criterion with the reviewed tests and runtime evidence.
+- Reconcile each criterion with agent-reviewed tests and runtime evidence. The user
+  authorized autonomous review and merging in AGENTS.md; no human PR approval is required.
 - Extend measured workloads to sustained queues, representative hardware,
   retention/compaction schedules, broader fault campaigns and service-level
   resource accounting; apply actual provider prices and required recovery goals.
