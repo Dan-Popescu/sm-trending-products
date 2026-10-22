@@ -1,9 +1,11 @@
 # Implementation handoff
 
 The original integration branch was `codex/project-planning`, merged through PR #1.
-Continue from `main`; offline follow-up is reviewed in
+Continue from `main`; offline follow-up was merged in
 [PR #24](https://github.com/Dan-Popescu/sm-trending-products/pull/24) on
-`codex/offline-readiness`. All code, specifications,
+2026-10-22 after 162 native tests and full-service recovery passed. Review and
+merge future verified PRs autonomously under [AGENTS.md](../../AGENTS.md#autonomous-pull-request-delivery);
+there is no human PR approval step. All code, specifications,
 tests, dependency locks, deployment configuration, and operating instructions
 are included. No real credentials or collected live TikTok data are included.
 

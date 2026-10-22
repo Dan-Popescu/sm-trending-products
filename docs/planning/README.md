@@ -38,7 +38,7 @@ Read the domain glossary and relevant architecture decisions before implementing
 
 ## Current repository state
 
-The initial implementation was merged into `main` through [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1). The initial permissions blocker was resolved on 2026-10-22. The [publication record](../implementation/publication.md) maps original local commits and issue identifiers. Follow-up work is prepared on `codex/offline-readiness`; its verification is distinct from the earlier merge. GitHub remains authoritative for integration status.
+The initial implementation was merged into `main` through [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1). The initial permissions blocker was resolved on 2026-10-22. The [publication record](../implementation/publication.md) maps original local commits and issue identifiers. Offline corrections and verification were merged through [PR #24](https://github.com/Dan-Popescu/sm-trending-products/pull/24), after 162 native tests and full-service recovery passed. The next verification slice runs the controlled benchmark and quota-exhaustion checks in every PR's CI. GitHub remains authoritative for integration status.
 
 The preexisting local Python/SQLite scaffold was an abandoned experiment. The supported runtime now implements PostgreSQL operational state and S3 raw/Parquet history; the earlier experiment is outside that runtime. Implementation assumptions and substitutions are recorded in [the decisions recap](../implementation/assumptions.md).
 

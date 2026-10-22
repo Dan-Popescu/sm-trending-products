@@ -69,3 +69,27 @@ remaining queue state, cache/disk usage and aggregate worker storage traffic.
 Process CPU/RSS does not include the full PostgreSQL/object-store service stack.
 The finite workload and separate hard-crash tests do not establish sustained
 queue stability, production capacity, restoration objectives or provider prices.
+
+## Automated native regression workload
+
+Every pull request and push to `main` runs `scripts/ci-benchmark.sh` against the
+isolated native CI database and temporary loopback HTTP sources/object storage.
+The first scenario publishes 1,000 observations with four workers, 10 ms source
+delay, 60% hot-product skew and compaction. The second deliberately exhausts a
+one-request budget: exit code 1 is required, the report must identify quota
+exhaustion, and all four queued tasks must remain accounted for (one completed,
+three retryable). Failure reports retain initial/final queue counts so completed
+and deferred work can be inspected independently of error messages.
+
+Both JSON reports and their diagnostic logs are retained in the workflow's
+`verification-results` artifact. CI fails on an unexpected successful quota run,
+an unrelated process error without a valid report, missing tasks, failed
+publication checks or changed compaction row counts. The five-minute step limit
+bounds the exercise; throughput has no machine-dependent pass threshold. This
+protects reproducibility and degradation behavior, not a production operating
+envelope. To repeat the same gate locally after building the collector:
+
+```sh
+TEST_DATABASE_URL=postgresql://test_user:test_password@127.0.0.1:5432/pipeline_test \
+  bash scripts/ci-benchmark.sh
+```
