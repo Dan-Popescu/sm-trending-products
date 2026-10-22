@@ -32,6 +32,7 @@ class History:
         self._client = None
         self.usage_id = uuid.uuid4().hex
         self._flushed_metrics: dict[str, int] | None = None
+        self._cache_budget_configuration: tuple[Path, int] | None = None
         self.bucket = settings.s3_bucket
         settings.cache_dir.mkdir(parents=True, exist_ok=True)
         self.metrics = {
