@@ -15,7 +15,7 @@ from psycopg.types.json import Jsonb
 from .analysis_batches import bounded_product_batches
 from .catalog import Catalog
 from .collection import SourceCollection
-from .collector import Collector, redact
+from .collector import CollectionError, Collector, redact
 from .contracts import (
     AssessmentPolicy,
     Observation,
@@ -259,19 +259,35 @@ class Pipeline:
         if not dataset:
             raise ValueError("No completed dataset found")
         raw = self.history.raw(dataset)
+        quarantine = raw.get("quarantine", [])
         if raw.get("kind") in {"import", "compaction"}:
             observations = [Observation.model_validate(item) for item in raw["records"]]
         else:
-            result = self.collector.run(
-                {
-                    "request": raw["request"],
-                    "raw": raw["response"],
-                    "observed_at": raw["observed_at"],
-                },
-                normalize=True,
-            )
-            observations = [Observation.model_validate(item) for item in result["records"]]
-        replay_id = digest({"replay_of": dataset_id, "version": transform_version})
+            try:
+                result = self.collector.run(
+                    {
+                        "request": raw["request"],
+                        "raw": raw["response"],
+                        "observed_at": raw["observed_at"],
+                    },
+                    normalize=True,
+                )
+            except CollectionError as error:
+                if error.category != "schema" or error.artifact is None:
+                    raise
+                observations = []
+                quarantine = [{"reason": error.category}]
+            else:
+                if result["normalizer_version"] != transform_version:
+                    raise ValueError("Collector normalizer version differs from requested replay")
+                observations = [Observation.model_validate(item) for item in result["records"]]
+                quarantine = result.get("quarantine", [])
+        replay_identity = {"replay_of": dataset_id, "version": transform_version}
+        if quarantine:
+            # Older replay publications lost these rejects. Corrected metadata
+            # needs a distinct immutable publication, not an overwrite or reuse.
+            replay_identity["quarantine"] = quarantine
+        replay_id = digest(replay_identity)
         self.history.publish(
             observations,
             raw,
@@ -280,8 +296,16 @@ class Pipeline:
             dataset_id=replay_id,
             transform_version=transform_version,
             supersedes=dataset_id,
+            quarantine=quarantine,
         )
-        return {"dataset_id": replay_id, "replayed_from": dataset_id, "records": len(observations)}
+        return {
+            "dataset_id": replay_id,
+            "replayed_from": dataset_id,
+            "records": len(observations),
+            "quarantine_count": len(quarantine),
+            "status": "quarantined" if quarantine else "complete",
+            "transform_version": transform_version,
+        }
 
     def _observations(
         self,

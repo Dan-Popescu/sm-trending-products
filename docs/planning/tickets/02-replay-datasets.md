@@ -4,6 +4,9 @@ GitHub issue: [#10](https://github.com/Dan-Popescu/sm-trending-products/issues/1
 
 **Status:** Software implemented; acceptance evidence is mapped in the [coverage record](../../implementation/coverage.md).
 
+The [replay rejection contract](../../verification/replay-contract.md) records the
+offline rejection/upgrade proof and the still-open new-transformation requirement.
+
 ## What to build
 
 Let the operator select a completed raw dataset, rederive normalized evidence without contacting TikTok, and inspect its transformation version and quarantine status.
