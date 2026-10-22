@@ -12,6 +12,7 @@ from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
+from .analysis_batches import bounded_product_batches
 from .catalog import Catalog
 from .collection import SourceCollection
 from .collector import Collector, redact
@@ -309,17 +310,18 @@ class Pipeline:
         ]
         rows: list[dict] = []
         dataset_ids: set[str] = set()
-        step = self.settings.analysis_product_batch_size
-        for start in range(0, len(products), step):
-            batch = products[start : start + step]
-            product_ids = {item.product_id for item in batch}
-            entity_keys = {link.entity_key for link in links if link.product_id in product_ids}
-            observations, manifests = self._observations(
+
+        def load(entity_keys: set[str]) -> tuple[list[Observation], list[dict]]:
+            return self._observations(
                 as_of,
                 synthetic,
                 entity_keys=entity_keys,
                 since=as_of - timedelta(days=policy.lookback_days),
             )
+
+        for batch, entity_keys, (observations, manifests) in bounded_product_batches(
+            products, links, self.settings.analysis_product_batch_size, load
+        ):
             dataset_ids.update(
                 item["dataset_id"]
                 for item in manifests
