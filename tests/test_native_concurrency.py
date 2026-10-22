@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from importlib.resources import files
 from threading import Barrier
 from uuid import uuid4
 
@@ -76,6 +77,92 @@ def test_shared_credential_quota_is_strict_across_parallel_account_aliases(nativ
     assert len(accepted) == capacity
     assert len(rejected) == WORKERS * 4 - capacity
     assert all(outcome["retry_after_seconds"] > 0 for outcome in rejected)
+
+
+def test_quota_reservation_does_not_wait_for_another_alias_binding(native_catalog):
+    for account in ("collecting-account", "binding-account"):
+        native_catalog.configure_budget("tiktok_ads", account, 3, 0.000001)
+    native_catalog.execute(
+        "INSERT INTO credential_budgets(credential_key,capacity,refill_per_second,tokens) "
+        "VALUES('established-credential',3,0.000001,3)"
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with native_catalog.transaction() as connection:
+            # A new alias holds the normal foreign-key KEY SHARE lock on its
+            # established parent. Reserving tokens does not change that key.
+            connection.execute(
+                "INSERT INTO credential_bindings VALUES"
+                "('tiktok_ads','binding-account','established-credential')"
+            )
+            future = pool.submit(
+                native_catalog.one,
+                "SELECT * FROM reserve_request('tiktok_ads','collecting-account',"
+                "'established-credential')",
+            )
+            assert future.result(timeout=2)["allowed"] is True
+    assert (
+        native_catalog.one(
+            "SELECT request_count FROM credential_budgets "
+            "WHERE credential_key='established-credential'"
+        )["request_count"]
+        == 1
+    )
+
+
+def test_existing_credential_is_strict_when_many_new_aliases_bind_in_parallel(native_catalog):
+    for index in range(WORKERS):
+        native_catalog.configure_budget("tiktok_ads", f"new-alias-{index}", 3, 0.000001)
+    native_catalog.execute(
+        "INSERT INTO credential_budgets(credential_key,capacity,refill_per_second,tokens) "
+        "VALUES('existing-shared-token',3,0.000001,3)"
+    )
+    gate = Barrier(WORKERS, timeout=15)
+
+    def reserve(index):
+        with native_catalog.transaction() as connection:
+            gate.wait()
+            return connection.execute(
+                "SELECT * FROM reserve_request('tiktok_ads',%s,'existing-shared-token')",
+                (f"new-alias-{index}",),
+            ).fetchone()
+
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        outcomes = list(pool.map(reserve, range(WORKERS)))
+    assert sum(result["allowed"] for result in outcomes) == 3
+    assert (
+        native_catalog.one(
+            "SELECT count(*) AS count FROM credential_bindings "
+            "WHERE credential_key='existing-shared-token'"
+        )["count"]
+        == WORKERS
+    )
+
+
+def test_credential_lock_upgrade_preserves_existing_limits_and_consumption(native_catalog):
+    original_function = files("sm_trending_products").joinpath(
+        "sql", "004_credential_budgets_and_search.sql"
+    )
+    with native_catalog.transaction() as connection:
+        connection.execute(original_function.read_text())
+        connection.execute("DELETE FROM schema_migrations WHERE version=12")
+    native_catalog.configure_budget("tiktok_ads", "upgrade-account", 7, 0.000001)
+    assert (
+        native_catalog.one(
+            "SELECT * FROM reserve_request('tiktok_ads','upgrade-account','upgrade-credential')"
+        )["allowed"]
+        is True
+    )
+    native_catalog.block_budget("tiktok_ads", "upgrade-account", 120)
+    tables = ("request_budgets", "credential_budgets", "credential_bindings")
+    before = {table: native_catalog.all(f"SELECT * FROM {table}") for table in tables}
+    native_catalog.initialize()
+    native_catalog.initialize()
+    assert {table: native_catalog.all(f"SELECT * FROM {table}") for table in tables} == before
+    result = native_catalog.one(
+        "SELECT * FROM reserve_request('tiktok_ads','upgrade-account','upgrade-credential')"
+    )
+    assert result["allowed"] is False
+    assert 0 < result["retry_after_seconds"] <= 120
 
 
 def test_parallel_workers_claim_each_due_task_once(native_catalog):
