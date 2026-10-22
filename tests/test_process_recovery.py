@@ -40,6 +40,9 @@ def _crashing_worker(settings, boundary):
             def __init__(self, connection):
                 self.connection = connection
 
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
             def execute(self, query, params=()):
                 if str(query).startswith("UPDATE collection_tasks SET state=%s,payload=%s"):
                     os._exit(CRASH_EXIT_CODE)
@@ -100,7 +103,15 @@ def test_process_termination_recovers_pagination_without_lost_or_duplicate_evide
             text=True,
             capture_output=True,
             timeout=30,
-            env={**os.environ, "PYTHONPATH": str(Path(__file__).parent)},
+            env={
+                **os.environ,
+                "PYTHONPATH": os.pathsep.join(
+                    (
+                        str(Path(__file__).resolve().parents[1] / "src"),
+                        str(Path(__file__).resolve().parent),
+                    )
+                ),
+            },
         )
         assert child.returncode == CRASH_EXIT_CODE
         assert pipeline.catalog.manifests(synthetic=True) == []
