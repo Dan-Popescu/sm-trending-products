@@ -1,6 +1,6 @@
 # Proposed delivery tickets
 
-Status: draft, not published. T01–T15 are local review identifiers, not GitHub issue numbers. Approve the size, blocking edges, and test boundary before publication. The first engineering ticket can proceed without API keys after setup; real access acceptance remains a separate human-dependent ticket.
+Status: approved for autonomous implementation; publication blocked by GitHub integration permissions. T01–T15 remain local identifiers, not GitHub issue numbers. Engineering verification and external acceptance are tracked separately.
 
 Each ticket is a narrow complete behavior with an operator-visible outcome and acceptance evidence. Relevant specifications define the shared contracts; tickets do not establish competing definitions.
 

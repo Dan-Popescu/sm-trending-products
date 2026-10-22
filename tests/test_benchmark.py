@@ -1,0 +1,82 @@
+"""The measured workload traverses collection, history, analysis, and decisions."""
+
+from __future__ import annotations
+
+import json
+from urllib.parse import urlsplit
+
+import pytest
+
+from sm_trending_products.benchmark import benchmark
+from sm_trending_products.contracts import utc
+
+pytestmark = pytest.mark.integration
+
+
+def test_benchmark_measures_actual_evidence_and_preserves_shared_cache(pipeline, tmp_path):
+    sentinel = pipeline.settings.cache_dir / "other-worker-cache-entry"
+    sentinel.write_bytes(b"Existing cache entries belong to other work")
+    output = tmp_path / "reports" / "benchmark.json"
+    report = benchmark(pipeline, records=40, output=output, product_count=4)
+
+    assert json.loads(output.read_text()) == report
+    assert report["synthetic"] is True
+    assert report["operating_envelope"] == "measured_sample_only"
+    assert report["errors"] == []
+    assert all(
+        report["checks"][key] is True
+        for key in (
+            "objects_verified",
+            "repeated_analysis_same_run",
+            "forward_decision_created",
+            "requested_records_published",
+        )
+    )
+    measurements = report["measurements"]
+    assert measurements["processed_pages"] == 2
+    assert measurements["error_count"] == 0
+    assert measurements["elapsed_seconds"] > 0
+    assert measurements["cpu_seconds_parent"] > 0
+    assert measurements["peak_parent_rss_kib"] > 0
+    assert measurements["peak_child_rss_kib"] > 0
+    assert measurements["cold_analysis_seconds"] > 0
+    assert measurements["warm_analysis_seconds"] > 0
+    traffic = measurements["storage_traffic"]
+    assert traffic["put_requests"] > 0
+    assert traffic["get_requests"] > 0
+    assert traffic["upload_bytes"] > 0
+    assert traffic["download_bytes"] > 0
+    assert traffic["cache_hits"] > 0
+
+    datasets = pipeline.datasets()
+    assert len(datasets) == 2
+    assert sum(row["row_count"] for row in datasets) == 40
+    assert sum(row["quarantine_count"] for row in datasets) == 0
+    assert measurements["actual_records"] == 40
+    assert measurements["quarantine_count"] == 0
+    assert measurements["actual_records_per_second"] == pytest.approx(
+        40 / measurements["elapsed_seconds"]
+    )
+    products = pipeline.latest_assessments(synthetic=True)
+    assert len(products) == 4
+    assert all(row["score"] is not None for row in products)
+    assert len({reference for row in products for reference in row["evidence_refs"]}) == 40
+    forward = [row for row in pipeline.evaluations(synthetic=True) if row["kind"] == "forward"]
+    assert len(forward) == 1
+    assert len(forward[0]["payload"]["selected"]) == 4
+    assert pipeline.latest_assessments(synthetic=False) == []
+    assert pipeline.evaluations(synthetic=False) == []
+    assert pipeline.verify()["ok"] is True
+    assert sentinel.read_bytes() == b"Existing cache entries belong to other work"
+
+    # Source request provenance proves this workload used the controlled loopback endpoint.
+    manifests = pipeline.catalog.manifests(synthetic=True, as_of=utc(products[0]["as_of"]))
+    assert len(manifests) == 2
+    for manifest in manifests:
+        raw = pipeline.history.raw(manifest)
+        request = raw["request"]
+        endpoint = urlsplit(request["endpoint_override"])
+        assert request["synthetic"] is True
+        assert request["account_id"] == report["benchmark_id"]
+        assert endpoint.scheme == "http"
+        assert endpoint.hostname == "127.0.0.1"

@@ -1,6 +1,6 @@
 # Product requirements: emerging physical-product opportunities
 
-Status: proposed specification of the user-approved architecture. Readiness depends on setup review and source acceptance.
+Status: approved for autonomous implementation on 2026-10-22. Real source acceptance remains credential- and permission-dependent.
 
 ## Problem Statement
 

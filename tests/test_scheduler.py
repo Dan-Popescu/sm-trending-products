@@ -1,0 +1,240 @@
+"""Scheduling behavior at the public policy and PostgreSQL queue boundary."""
+
+from __future__ import annotations
+
+import os
+import uuid
+from collections.abc import Iterator
+
+import psycopg
+import pytest
+from psycopg.conninfo import make_conninfo
+
+
+def test_policy_rejects_unbounded_or_unsupported_collection() -> None:
+    from sm_trending_products.scheduler import SchedulerPolicy
+
+    with pytest.raises(ValueError):
+        SchedulerPolicy.model_validate({"exploration_fraction": 0})
+    with pytest.raises(ValueError):
+        SchedulerPolicy.model_validate(
+            {
+                "discovery_queries": [
+                    {
+                        "source": "research_video",
+                        "account_id": "a",
+                        "operation": "query",
+                        "payload": {},
+                    }
+                ]
+            }
+        )
+    with pytest.raises(ValueError):
+        SchedulerPolicy.model_validate(
+            {
+                "discovery_queries": [
+                    {
+                        "source": "tiktok_display",
+                        "account_id": "a",
+                        "operation": "query",
+                        "payload": {},
+                    }
+                ]
+            }
+        )
+
+
+@pytest.fixture
+def catalog() -> Iterator[object]:
+    from sm_trending_products.catalog import Catalog
+
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("TEST_DATABASE_URL is required for real PostgreSQL scheduler scenarios")
+    schema = "scheduler_test_" + uuid.uuid4().hex
+    with psycopg.connect(url, autocommit=True) as connection:
+        connection.execute(
+            psycopg.sql.SQL("CREATE SCHEMA {}").format(psycopg.sql.Identifier(schema))
+        )
+    database = Catalog(make_conninfo(url, options=f"-csearch_path={schema}"))
+    database.initialize()
+    try:
+        yield database
+    finally:
+        database.close()
+        with psycopg.connect(url, autocommit=True) as connection:
+            connection.execute(
+                psycopg.sql.SQL("DROP SCHEMA {} CASCADE").format(psycopg.sql.Identifier(schema))
+            )
+
+
+@pytest.mark.integration
+def test_scheduler_preserves_exploration_and_does_not_duplicate_due_work(catalog: object) -> None:
+    from sm_trending_products.scheduler import Scheduler
+
+    catalog.configure_budget("tiktok_display", "creator", capacity=100, refill_per_second=1)
+    for index in range(40):
+        catalog.execute(
+            "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type,"
+            "priority,next_due_at) VALUES(%s,true,%s,%s,%s,%s,"
+            "clock_timestamp()-interval '1 day')",
+            (
+                f"tiktok_display:video:v{index}",
+                "tiktok_display",
+                "creator",
+                "video",
+                99 if index < 35 else 0,
+            ),
+        )
+    result = Scheduler(catalog).schedule(10, synthetic=True)
+    assert result["scheduled"] == 10
+    assert result["exploration_scheduled"] >= 2
+    assert result["refresh_scheduled"] > 0
+    assert len(set(result["task_ids"])) == 10
+    repeated = Scheduler(catalog).schedule(10, synthetic=True)
+    assert set(repeated["task_ids"]).isdisjoint(result["task_ids"])
+    assert all(decision["policy_id"] == result["policy_id"] for decision in result["decisions"])
+
+
+@pytest.mark.integration
+def test_discovery_is_due_based_and_shares_protected_exploration(catalog: object) -> None:
+    from sm_trending_products.scheduler import Scheduler
+
+    catalog.configure_budget("tiktok_display", "creator", capacity=100, refill_per_second=1)
+    for index in range(5):
+        catalog.execute(
+            "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type) "
+            "VALUES(%s,true,%s,%s,%s)",
+            (f"tiktok_display:video:old{index}", "tiktok_display", "creator", "video"),
+        )
+    policy = {
+        "discovery_queries": [
+            {
+                "source": "tiktok_display",
+                "account_id": "creator",
+                "operation": "list",
+                "payload": {"max_count": 20},
+                "interval_hours": 24,
+            }
+        ]
+    }
+    result = Scheduler(catalog).schedule(5, synthetic=True, policy=policy)
+    assert result["discovery_scheduled"] == 1
+    assert result["exploration_scheduled"] >= 1
+    query_id = next(
+        decision["query_id"] for decision in result["decisions"] if "query_id" in decision
+    )
+    repeated = Scheduler(catalog).schedule(5, synthetic=True)
+    assert not any(decision.get("query_id") == query_id for decision in repeated["decisions"])
+    task = catalog.claim("scheduler-test-worker", 60, True, 3)
+    assert task["schedule_reason"]["bucket"].startswith("exploration_")
+
+
+@pytest.mark.integration
+def test_live_discovery_requires_verified_policy_and_separate_capability(catalog: object) -> None:
+    from sm_trending_products.scheduler import Scheduler
+
+    catalog.configure_budget("tiktok_display", "creator", capacity=100, refill_per_second=1)
+    policy = {
+        "discovery_queries": [
+            {
+                "source": "tiktok_display",
+                "account_id": "creator",
+                "operation": "list",
+                "payload": {"max_count": 20},
+            }
+        ]
+    }
+    missing = Scheduler(catalog).schedule(10, policy=policy)
+    assert missing["scheduled"] == 0
+    assert any(warning["category"] == "source_policy_unverified" for warning in missing["warnings"])
+    catalog.execute(
+        "INSERT INTO source_policies(source,retention_days,verified) "
+        "VALUES('tiktok_display',7,true)"
+    )
+    catalog.execute(
+        "INSERT INTO source_capabilities(source,account_id,capability,state) "
+        "VALUES('tiktok_display','creator','collect','available')"
+    )
+    still_missing = Scheduler(catalog).schedule(10)
+    assert still_missing["discovery_scheduled"] == 0
+    assert any(
+        warning["category"] == "discovery_unavailable" for warning in still_missing["warnings"]
+    )
+    catalog.execute(
+        "INSERT INTO source_capabilities(source,account_id,capability,state) "
+        "VALUES('tiktok_display','creator','discovery','available')"
+    )
+    accepted = Scheduler(catalog).schedule(10)
+    assert accepted["discovery_scheduled"] == 1
+    with pytest.raises(ValueError, match="Fixture overrides"):
+        Scheduler(catalog).schedule(
+            10,
+            policy={
+                "discovery_queries": [
+                    {
+                        "source": "tiktok_display",
+                        "account_id": "creator",
+                        "operation": "list",
+                        "payload": {"endpoint_override": "http://127.0.0.1:8000"},
+                    }
+                ]
+            },
+        )
+
+
+@pytest.mark.integration
+def test_pending_queue_backpressure_is_visible(catalog: object) -> None:
+    from sm_trending_products.scheduler import Scheduler
+
+    catalog.configure_budget("tiktok_display", "creator", capacity=100, refill_per_second=1)
+    for index in range(4):
+        catalog.execute(
+            "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type) "
+            "VALUES(%s,true,%s,%s,%s)",
+            (f"tiktok_display:video:v{index}", "tiktok_display", "creator", "video"),
+        )
+    first = Scheduler(catalog).schedule(10, synthetic=True, policy={"max_pending_tasks": 2})
+    assert first["scheduled"] == 2
+    second = Scheduler(catalog).schedule(10, synthetic=True)
+    assert second["scheduled"] == 0
+    assert second["effective_budget"] == 0
+    assert any(
+        warning["category"] == "pending_task_limit_reached" for warning in second["warnings"]
+    )
+
+
+@pytest.mark.integration
+def test_rejected_hypothesis_preserves_confirmed_product_refresh_priority(catalog: object) -> None:
+    from sm_trending_products.scheduler import Scheduler
+
+    catalog.configure_budget("tiktok_display", "creator", capacity=100, refill_per_second=1)
+    for product_id in ["owner", "rejected"]:
+        catalog.execute(
+            "INSERT INTO products(product_id,name,synthetic) VALUES(%s,%s,true)",
+            (product_id, product_id),
+        )
+    catalog.execute(
+        "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type) "
+        "VALUES('tiktok_display:video:v1',true,'tiktok_display','creator','video')"
+    )
+    catalog.execute(
+        "INSERT INTO product_links(decision_id,product_id,entity_key,status,confidence,method) "
+        "VALUES('confirmed','owner','tiktok_display:video:v1','confirmed',1,'manual')"
+    )
+    catalog.execute(
+        "INSERT INTO product_links(decision_id,product_id,entity_key,status,confidence,method) "
+        "VALUES('alternative','rejected','tiktok_display:video:v1','rejected',1,'manual')"
+    )
+    catalog.execute(
+        "INSERT INTO assessment_runs(run_id,as_of,synthetic,policy,object_key,evidence_datasets) "
+        "VALUES('run',clock_timestamp(),true,'{}','unused','[]')"
+    )
+    catalog.execute(
+        "INSERT INTO current_assessments(product_id,run_id,synthetic,score,payload) "
+        "VALUES('owner','run',true,99,'{}')"
+    )
+    result = Scheduler(catalog).schedule(1, synthetic=True)
+    assert result["scheduled"] == 1
+    assert result["decisions"][0]["tier"] == "hot"
+    assert result["decisions"][0]["priority_inputs"]["assessment_score"] == 99

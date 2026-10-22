@@ -1,6 +1,6 @@
 # Delivery plan
 
-Status: architecture approved; setup, specifications, test boundaries, and ticket breakdown proposed for review. No implementation is authorized by these draft tickets alone.
+Status: architecture, defaults, specifications, test boundary, and autonomous implementation approved by the user on 2026-10-22. Implementation and integration verification are in progress; external acceptance is tracked separately.
 
 ## Reading order
 
@@ -28,11 +28,11 @@ Read the domain glossary and relevant architecture decisions before implementing
 ## Approval checkpoints
 
 - Architecture: approved by the user.
-- Agent instructions filename: user choice required between AGENTS.md and CLAUDE.md; neither exists.
-- Default triage labels: user confirmation required by the setup skill.
-- Configuration below: draft available for editing before activation.
+- Agent instructions: AGENTS.md selected under the user's authorization to choose recommended defaults.
+- Default triage labels: explicitly approved by the user.
+- Configuration: activated in AGENTS.md and docs/agents/.
 - Test boundary: propose collection-to-visible-evidence scenarios with real PostgreSQL and S3-compatible test services, a controlled HTTP source, and deterministic time. Smaller tests cover financial-independent numerical and temporal invariants where helpful.
-- Delivery breakdown: review before publishing issues, as required by the to-tickets skill.
+- Delivery breakdown: approved for autonomous execution; tracker publication is blocked by integration permissions.
 - Live source acceptance: cannot be completed without approved credentials and scopes. Contract fixtures demonstrate software behavior, not granted access or market coverage.
 
 ## Current repository state
