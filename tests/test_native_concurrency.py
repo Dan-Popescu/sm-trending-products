@@ -116,3 +116,74 @@ def test_parallel_workers_claim_each_due_task_once(native_catalog):
     assert set(identifiers) == expected
     assert len({task["lease_owner"] for task in tasks}) == WORKERS
     assert native_catalog.claim("extra-worker", 300, True, 3) is None
+
+
+@pytest.mark.parametrize("synthetic", [False, True])
+@pytest.mark.parametrize("state", ["pending", "leased"])
+def test_attempt_exhaustion_only_changes_the_claimed_workspace(native_catalog, synthetic, state):
+    tasks = {}
+    for workspace in (False, True):
+        task_id = native_catalog.enqueue(
+            "tiktok_display", "workspace-account", "query", {}, workspace, due_at=now()
+        )
+        native_catalog.execute(
+            "UPDATE collection_tasks SET attempts=3,state=%s,lease_owner='old-worker',"
+            "lease_until=clock_timestamp()-interval '1 second' WHERE task_id=%s",
+            (state, task_id),
+        )
+        tasks[workspace] = task_id
+    other_before = native_catalog.one(
+        "SELECT * FROM collection_tasks WHERE task_id=%s", (tasks[not synthetic],)
+    )
+    active = native_catalog.enqueue(
+        "tiktok_display", "active-account", "query", {}, synthetic, due_at=now()
+    )
+    native_catalog.execute(
+        "UPDATE collection_tasks SET attempts=3,state='leased',lease_owner='active-worker',"
+        "lease_until=clock_timestamp()+interval '5 minutes' WHERE task_id=%s",
+        (active,),
+    )
+    active_before = native_catalog.one("SELECT * FROM collection_tasks WHERE task_id=%s", (active,))
+    assert native_catalog.claim("isolated-worker", 300, synthetic, 3) is None
+    selected = native_catalog.one(
+        "SELECT * FROM collection_tasks WHERE task_id=%s", (tasks[synthetic],)
+    )
+    assert selected["state"] == "quarantined"
+    assert selected["last_error"] == "attempt_limit"
+    assert selected["lease_owner"] is None
+    assert (
+        native_catalog.one("SELECT * FROM collection_tasks WHERE task_id=%s", (active,))
+        == active_before
+    )
+    assert (
+        native_catalog.one(
+            "SELECT * FROM collection_tasks WHERE task_id=%s", (tasks[not synthetic],)
+        )
+        == other_before
+    )
+
+
+def test_claim_skips_locked_exhausted_work_and_reaches_other_due_tasks(native_catalog):
+    exhausted = native_catalog.enqueue(
+        "tiktok_display", "account", "query", {"old": True}, True, due_at=now()
+    )
+    due = native_catalog.enqueue(
+        "tiktok_display", "account", "query", {"new": True}, True, due_at=now()
+    )
+    native_catalog.execute("UPDATE collection_tasks SET attempts=3 WHERE task_id=%s", (exhausted,))
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with native_catalog.transaction() as connection:
+            connection.execute(
+                "SELECT task_id FROM collection_tasks WHERE task_id=%s FOR UPDATE", (exhausted,)
+            )
+            future = pool.submit(native_catalog.claim, "available-worker", 300, True, 3)
+            claimed = future.result(timeout=2)
+    assert claimed["task_id"] == due
+    assert claimed["state"] == "leased"
+    assert native_catalog.claim("cleanup-worker", 300, True, 3) is None
+    assert (
+        native_catalog.one("SELECT state FROM collection_tasks WHERE task_id=%s", (exhausted,))[
+            "state"
+        ]
+        == "quarantined"
+    )

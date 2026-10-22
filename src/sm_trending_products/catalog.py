@@ -138,10 +138,13 @@ class Catalog:
     ) -> dict[str, Any] | None:
         with self.transaction() as connection:
             connection.execute(
-                "UPDATE collection_tasks SET state='quarantined',last_error='attempt_limit',"
-                "lease_owner=NULL,lease_until=NULL WHERE attempts>=%s AND "
-                "(state='pending' OR (state='leased' AND lease_until<clock_timestamp()))",
-                (max_attempts,),
+                "WITH exhausted AS (SELECT task_id FROM collection_tasks "
+                "WHERE synthetic=%s AND attempts>=%s AND "
+                "(state='pending' OR (state='leased' AND lease_until<clock_timestamp())) "
+                "FOR UPDATE SKIP LOCKED) "
+                "UPDATE collection_tasks t SET state='quarantined',last_error='attempt_limit',"
+                "lease_owner=NULL,lease_until=NULL FROM exhausted e WHERE t.task_id=e.task_id",
+                (synthetic, max_attempts),
             )
             return connection.execute(
                 "WITH next_task AS (SELECT task_id FROM collection_tasks WHERE synthetic=%s "

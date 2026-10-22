@@ -32,6 +32,22 @@ GitHub protections; do not bypass failed checks or invent missing evidence.
 Continue work that does not require TikTok access while source acceptance is
 blocked. This authorization does not supply missing credentials or infrastructure.
 
+### Priorities and architecture
+
+The user requires delivery ticket by ticket, ordered by criticality, value and
+the dependencies each slice unlocks. Prefer correctness of shared collection,
+recovery, quotas and evidence contracts over downstream polish or additional
+benchmark variants when a foundational defect is known. A merged PR is a
+checkpoint: re-evaluate the remaining frontier and continue the next unblocked
+ticket rather than treating the merge as the end of the standing project task.
+
+For foundational changes, trace the existing callers, state transitions and
+ownership boundaries before editing. Keep invariants at their authoritative
+mutation boundary, use behavioral regression tests, and preserve one source of
+truth. Extend the current architecture when it fits; introduce abstractions or
+parallel execution paths only for a demonstrated need. Record meaningful
+tradeoffs and deferred risks so later tickets do not inherit hidden debt.
+
 Before implementation, read the approved ticket, its specification, CONTEXT.md,
 and relevant ADRs. Work on an unblocked vertical slice. Verify externally visible
 acceptance criteria and include evidence in the pull request. Keep real and
