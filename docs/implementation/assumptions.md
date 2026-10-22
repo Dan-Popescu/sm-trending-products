@@ -66,11 +66,12 @@ until the explicit acceptance command verifies them. Commercial Content access
 also requires permission for the actual intended use; the API name alone is not
 approval for commercial product-trend research. No Research video API is used.
 
-This workspace cannot run Docker or a native PostgreSQL service under an ordinary
-database user. Functional SQL integration uses official PGlite plus HTTP Moto.
-The subsequent [native CI run](../verification/native-ci.md) passed the native
-concurrency suite, built the image, and verified actual isolated backup/restore.
-These are CI proofs, not local PGlite proofs or production-provider acceptance.
+The early workspace used PGlite because native services were unavailable. The
+current managed Docker environment runs native PostgreSQL 17.11 and HTTP Moto;
+the no-key native suite now runs both locally and in CI. The subsequent
+[native CI report](../verification/native-ci.md) and
+[offline verification](../verification/offline-readiness.md) identify executed
+revisions and boundaries. Production-provider acceptance remains separate.
 The user's VPS and S3 account have not been accessed or deployed.
 
 Performance numbers apply only to the measured synthetic workload and environment.

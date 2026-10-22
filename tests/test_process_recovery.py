@@ -104,6 +104,13 @@ def test_process_termination_recovers_pagination_without_lost_or_duplicate_evide
         )
         assert child.returncode == CRASH_EXIT_CODE
         assert pipeline.catalog.manifests(synthetic=True) == []
+        staged = pipeline.datasets()
+        if boundary == "before_publication":
+            assert staged == []
+        else:
+            # Publication intent is visible before recovery; it must be repaired
+            # in place, rather than leaving an orphaned staging record behind.
+            assert len(staged) == 1 and staged[0]["state"] == "staged"
         task = pipeline.catalog.one("SELECT * FROM collection_tasks WHERE task_id=%s", (task_id,))
         assert task["state"] == "leased" and task["page_index"] == 0
         assert "cursor" not in task["payload"]
@@ -122,6 +129,13 @@ def test_process_termination_recovers_pagination_without_lost_or_duplicate_evide
         assert len(requests) == len(responses)
     datasets = pipeline.datasets()
     assert len(datasets) == 2 and all(row["state"] == "committed" for row in datasets)
+    assert {row["dataset_id"] for row in staged} <= {row["dataset_id"] for row in datasets}
+    listing = pipeline.history.client.list_objects_v2(Bucket=pipeline.history.bucket)
+    assert not listing["IsTruncated"]
+    assert {item["Key"] for item in listing["Contents"]} == {
+        row["object_key"]
+        for row in pipeline.catalog.all("SELECT object_key FROM dataset_object_refs")
+    }
     observations, _ = pipeline.history.observations(now(), synthetic=True)
     assert sorted(row.entity_id for row in observations) == ["first", "second"]
     assert pipeline.verify()["ok"] is True

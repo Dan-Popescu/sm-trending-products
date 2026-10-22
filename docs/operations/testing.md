@@ -18,7 +18,11 @@ TEST_DATABASE_URL=postgresql://test_user:test_password@127.0.0.1:5432/pipeline_t
 
 ## Constrained local SQL execution
 
-The implementation environment lacks a Docker daemon and cannot start a standard native PostgreSQL service under a separate mapped user. An embedded PGLite PostgreSQL build may be used for local functional SQL checks through the project test bridge when available.
+Native PostgreSQL is now available in the managed Docker environment. Use
+`scripts/offline-check.sh` to start an isolated PostgreSQL container and execute
+the no-key suite, or supply an isolated `TEST_DATABASE_URL`. The early environment
+used PGlite when native services were unavailable; that remains an optional
+functional fallback and cannot certify native concurrency.
 
 Set `TEST_PGLITE_BINARY` to the absolute path of `pglite-server` and leave `TEST_DATABASE_URL` unset to start the temporary in-memory bridge automatically. That fallback resets its ephemeral schema between tests. Native concurrency tests explicitly skip this engine because one multiplexed backend cannot validate contention. Without either variable, ordinary database fixtures skip and the native concurrency gate fails with the required configuration; inspect the summary rather than treating an unexecuted integration suite as a pass.
 
