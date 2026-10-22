@@ -617,7 +617,9 @@ class Pipeline:
         limit, offset = self._review_page(limit, offset)
         return self.catalog.all(
             "SELECT evaluation_id,kind,synthetic,decision_time,parent_id,invalidated,created_at,"
-            "payload->>'status' AS status FROM evaluation_runs WHERE synthetic=%s "
+            "payload->>'status' AS status,"
+            "COALESCE(payload->>'target',payload#>>'{config,target}') AS target "
+            "FROM evaluation_runs WHERE synthetic=%s "
             "ORDER BY created_at DESC,evaluation_id LIMIT %s OFFSET %s",
             (synthetic, limit, offset),
         )
