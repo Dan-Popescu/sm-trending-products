@@ -32,6 +32,11 @@ Separate discovery from refresh, allocate a bounded exploration budget, and refr
 - A zero effective task budget returns explicit backpressure after persisting policy activation, without scanning or deferring candidate entities. Policy changes remain effective while a queue is full.
 - PostgreSQL coordinates due work and shared quotas. The application scheduler chooses what to collect; Dagster starts and observes bounded batches. Do not create one orchestration run per video.
 - Record planned versus achieved intervals, skipped work, source update delay, policy version, and selection reasons. Evaluation uses the actual sampled universe and intervals.
+- The operator can inspect persisted plans through workspace-scoped summary and
+  selected-member pages. Policy inputs remain frozen; current candidate timestamps
+  and origin references are labeled separately. Review reads existing task and
+  entity records and never invokes planning. Actual observation intervals remain
+  part of the published assessment rather than being replaced by planned targets.
 
 ## Testing Decisions
 

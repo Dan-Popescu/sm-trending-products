@@ -138,6 +138,7 @@ class EvaluationService:
                 synthetic,
                 config.market,
                 metadata["capabilities"],
+                since=since,
             )
             datasets.update(dependencies)
             counts.update(

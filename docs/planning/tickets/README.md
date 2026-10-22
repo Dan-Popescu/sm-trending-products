@@ -29,11 +29,17 @@ Each ticket is a narrow complete behavior with an operator-visible outcome and a
   [criterion-by-criterion evidence](../../verification/evaluation-acceptance.md);
   no actual predictive advantage or elapsed market outcome is inferred.
 
-- T01, T03, T04, T05 and T06 have agent-verified controlled engineering acceptance, with
-  [criterion-by-criterion evidence](../../verification/foundation-acceptance.md).
+- T01, T03, T04, T05, T06 and T07 have agent-verified controlled engineering acceptance, with
+  [foundational evidence](../../verification/foundation-acceptance.md) and
+  [scheduling evidence](../../verification/scheduling-acceptance.md).
   Their acceptance unlocks dependent engineering work without granting real
   TikTok capabilities or production-provider acceptance.
 - T01–T12 have implemented software and behavioral test scenarios. The native PostgreSQL workflow passed worker/lease/quota scenarios; source fixtures do not establish live TikTok access.
+- T08 has controlled commercial-adapter acceptance with
+  [criterion evidence](../../verification/commercial-acceptance.md); T15 still
+  owns live endpoint, scope and intended-use acceptance.
+- T09 has controlled offer/cost review acceptance in the
+  [commercial criterion matrix](../../verification/commercial-acceptance.md#t09-commercial-dimensions-in-published-review).
 - T13 has deployment, backup, and isolated-restore tooling. The Docker image build and full native container restore passed in CI; actual provider checks and VPS rollout remain pending.
 - T14 has a measured synthetic sample and benchmark tooling. A production operating envelope, multiworker load capacity, and recurring provider cost remain unproven.
 - T15 has capability-verification tooling, but live acceptance is pending credentials, approved scopes, and permission for the actual intended use. It is not marked complete.
