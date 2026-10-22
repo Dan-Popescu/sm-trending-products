@@ -66,6 +66,9 @@ for _attempt in $(seq 1 60); do
 done
 [[ "$database_ready" == true ]] || { echo 'Isolated database did not become ready.' >&2; exit 1; }
 "$(dirname "$0")/restore-database.sh" --empty-container "$restore_database" "$backup_directory/pipeline.dump"
+docker exec "$restore_database" createdb --username=restore dagster
+docker exec -i "$restore_database" pg_restore --exit-on-error --single-transaction \
+  --no-owner --no-privileges --username=restore --dbname=dagster < "$backup_directory/dagster.dump"
 
 restore_environment=(
   --env "DATABASE_URL=postgresql://restore:$restore_password@$restore_database:5432/restore"
@@ -95,4 +98,19 @@ docker run --rm --network "$restore_network" "${restore_environment[@]}" "$pipel
   sm-trends verify --json
 docker run --rm --network "$restore_network" "${restore_environment[@]}" "$pipeline_image" \
   sm-trends status --json
+if [[ -f "$backup_directory/catalog-state.json" ]]; then
+  docker run --rm --network "$restore_network" "${restore_environment[@]}" "$pipeline_image" \
+    python -c 'from sm_trending_products.contracts import canonical
+from sm_trending_products.pipeline import Pipeline
+with Pipeline.from_env() as application:
+    print(canonical(application.catalog.export_state()))' \
+    | python3 -c 'import json,sys
+with open(sys.argv[1]) as expected_file:
+    expected = json.load(expected_file)
+actual = json.load(sys.stdin)
+if actual != expected:
+    raise SystemExit("Restored catalog differs from the captured evidence state")
+print("Restored products, identity, alerts, and frozen evaluations match the captured state.")' \
+      "$backup_directory/catalog-state.json"
+fi
 echo 'Isolated restore verified. No workers were started and no production destination was written.'

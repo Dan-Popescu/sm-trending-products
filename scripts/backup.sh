@@ -37,6 +37,13 @@ if [[ ${#writer_services[@]} -gt 0 ]]; then
   docker compose stop "${writer_services[@]}" >/dev/null
 fi
 docker compose run --rm --no-deps initialize sm-trends verify --json > "$backup_directory/source-verification.json"
+docker compose run --rm --no-deps -T initialize python - <<'PY' > "$backup_directory/catalog-state.json"
+from sm_trending_products.contracts import canonical
+from sm_trending_products.pipeline import Pipeline
+
+with Pipeline.from_env() as application:
+    print(canonical(application.catalog.export_state()))
+PY
 docker compose exec -T postgres sh -c \
   'exec pg_dump --format=custom --no-owner --username="$POSTGRES_USER" --dbname="$POSTGRES_DB"' \
   > "$backup_directory/pipeline.dump.partial"
@@ -60,7 +67,8 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 checksums = {}
-for name in ("pipeline.dump", "dagster.dump", "source-verification.json", "object-summary.json"):
+for name in ("pipeline.dump", "dagster.dump", "source-verification.json", "object-summary.json",
+             "catalog-state.json"):
     result = hashlib.sha256()
     with (root / name).open("rb") as stream:
         while chunk := stream.read(4 * 1024 * 1024):

@@ -28,13 +28,6 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U pipeline_test -d pipeline_test"
           --health-interval 5s --health-timeout 5s --health-retries 20
-      objectstore:
-        image: motoserver/moto:5.2.4
-        env:
-          MOTO_HOST: 0.0.0.0
-          MOTO_PORT: "5000"
-        ports:
-          - 5000:5000
     env:
       DATABASE_URL: postgresql://pipeline_test:pipeline-test-only@127.0.0.1:5432/pipeline_test
       TEST_DATABASE_URL: postgresql://pipeline_test:pipeline-test-only@127.0.0.1:5432/pipeline_test
@@ -81,9 +74,13 @@ jobs:
         run: |
           docker compose config --quiet
           docker compose build
+      - name: Rehearse isolated synthetic backup and restore
+        run: scripts/ci-recovery.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: verification-results
-          path: output/test-results.xml
+          path: |
+            output/test-results.xml
+            output/recovery-report.json
           if-no-files-found: ignore
