@@ -35,6 +35,10 @@ Replay recorded knowledge at each decision time, compare policies with simple ba
 - Use temporal train/validation/test periods where fitting occurs, keep families grouped, report repeated-alert dependence, and preserve the same collection constraints across policies. A frozen final test is not repeatedly tuned against.
 - Reports show precision at K for predefined observable targets, coverage, lead-time distributions, missing/censored outcomes, sample sizes, uncertainty intervals, and collection cost. Separate predictive comparison from evidence of business profit.
 - A forward test stores immutable decision snapshots, matures each horizon, and records changes to future policy versions without rewriting prior decisions. Snapshots include evidence sufficient for audit within retention constraints.
+- Realized profit resolves the latest available revision of each ledger period
+  before checking currency, realized status and cost completeness. A later
+  incomplete or incompatible ledger censors that period rather than reviving a
+  superseded complete profit claim. Earlier-cutoff reports remain immutable.
 - Persisted `freeze` and `backtest` accept the same `AssessmentPolicy` contract as
   scheduled assessment. The policy is passed through bounded preparation and
   frozen once in the existing snapshot; maturation reads that snapshot. Outcome
