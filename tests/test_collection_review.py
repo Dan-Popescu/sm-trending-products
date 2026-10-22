@@ -17,7 +17,9 @@ from sm_trending_products.pipeline import Pipeline
 pytestmark = pytest.mark.integration
 
 
-def test_collection_review_pages_bound_group_members_and_keep_workspaces_separate(pipeline):
+def test_collection_review_pages_bound_group_members_and_keep_workspaces_separate(
+    pipeline, monkeypatch
+):
     identifiers = {}
     for synthetic in (False, True):
         identifier = pipeline.catalog.enqueue(
@@ -68,6 +70,21 @@ def test_collection_review_pages_bound_group_members_and_keep_workspaces_separat
     ):
         with pytest.raises(ValueError, match="Review pages"):
             reader(True, limit=201)
+    monkeypatch.setattr(Pipeline, "from_env", classmethod(lambda cls: cls(pipeline.settings)))
+    app = AppTest.from_string("from sm_trending_products.dashboard import main\nmain()").run(
+        timeout=20
+    )
+    app.toggle[0].set_value(True).run(timeout=20)
+    app.radio(key="review_view").set_value("Collection plan").run(timeout=20)
+    app.number_input(key="collection_member_page").set_value(2).run(timeout=20)
+    assert not app.exception
+    shown = next(json.loads(element.value) for element in app.json if '"members"' in element.value)
+    assert len(shown["members"]) == 51 and shown["members"][0]["reason"]["position"] == 200
+    app.toggle[0].set_value(False).run(timeout=20)
+    assert not app.exception
+    assert app.number_input(key="collection_member_page").value == 1
+    shown = next(json.loads(element.value) for element in app.json if '"members"' in element.value)
+    assert shown["task_id"] == identifiers[False] and shown["members"][0]["reason"]["position"] == 0
 
 
 def test_recorded_exploration_and_refresh_reasons_survive_actual_collection_and_ui(

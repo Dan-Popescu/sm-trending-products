@@ -456,10 +456,6 @@ def _history(pipeline: DashboardPipeline, synthetic: bool) -> None:
                 st.json(display_safe(detail), expanded=False)
 
 
-def _reset_collection_member_page() -> None:
-    st.session_state["collection_member_page"] = 1
-
-
 def _collection_plan(pipeline: DashboardPipeline, synthetic: bool) -> None:
     st.subheader("Recorded collection plan")
     st.caption(
@@ -482,8 +478,11 @@ def _collection_plan(pipeline: DashboardPipeline, synthetic: bool) -> None:
         "Inspect planned request",
         [str(row["task_id"]) for row in tasks],
         key="collection_task",
-        on_change=_reset_collection_member_page,
     )
+    scope = (selected, synthetic)
+    if st.session_state.get("_collection_member_scope") != scope:
+        st.session_state["_collection_member_scope"] = scope
+        st.session_state["collection_member_page"] = 1
     member_page = st.number_input(
         "Candidate page", min_value=1, value=1, step=1, key="collection_member_page"
     )
