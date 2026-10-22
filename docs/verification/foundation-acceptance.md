@@ -1,6 +1,6 @@
 # Foundational engineering acceptance
 
-The agent reviewed T01, T03, T04 and T05 against their original criteria on 2026-10-22,
+The agent reviewed T01, T03, T04, T05 and T06 against their original criteria on 2026-10-22,
 under the user's standing authority to verify and merge without human PR review.
 These tickets specify controlled, no-key engineering scenarios. Real TikTok
 acceptance remains T15; production-provider and sustained-load acceptance remain
@@ -57,6 +57,22 @@ This adds no alternate scheduler, sleeping worker or persistence mechanism.
 No alternate identity resolver or mutable grouping table is added for this
 acceptance. The application and evaluation paths retain the shared historical
 ownership rules and append-only review decisions.
+
+## T06: published attention and frozen alerts
+
+| Criterion | Executed evidence |
+| --- | --- |
+| Interval-adjusted growth, acceleration and age/cohort context | [Attention delivery](../../tests/test_attention_delivery.py) imports stored timelines through native PostgreSQL and HTTP object storage: two independent creators have 600 views/hour combined growth, 400 views/hour-squared acceleration, one-hour intervals and a twelve-hour publication age. Analytics checks cover normalization across product partitions. |
+| Diffusion, concentration and creative duplication | The delivery compares equal-growth broad and single-creator products and verifies a higher broad-spread score and 0.5 concentration. [Analytics checks](../../tests/test_analytics.py) additionally verify repeated-creative concentration without removing observed exposure. |
+| Resets, stale/short history and missing fields | The delivery verifies unknown scores for stale, one-sample and missing-view inputs; a subsequent reset yields two explicit corrections and unknown growth, rather than negative or zero consumption. |
+| Published version, observations and identity decisions | Actual Streamlit displays the selected published assessment. Every broad-product observation reference resolves to stored evidence; the new additive identity snapshot references the immutable reviewed decisions and hashes their resolved state. A transfer changes the current hash while replaying the old cutoff produces the identical original run ID. |
+| Frozen threshold, policy, scope, cutoff and cooldown | The first versioned policy publishes two alerts with original run IDs, reasons, coverage and snapshots. A new policy/data version updates current results; the still-qualifying single-creator product does not repeat during cooldown. Original alert payloads and object bytes remain identical through reassignment, historical replay and application restart. |
+| Workspace and dimension isolation | The delivery keeps live assessments/alerts empty and renders synthetic current and frozen results through the actual review facade. Attention, demand, competition and feasibility remain separate; absent demand/cost evidence retains null scores. |
+
+The identity metadata uses the existing resolver at the analytical boundary. It
+adds no mutable grouping cache, migration or alternate ownership implementation.
+Old published objects and alerts are not rewritten to invent missing metadata.
+Exact-revision CI and its full-service results are recorded on the delivery PR.
 
 ## Execution and remaining frontier
 
