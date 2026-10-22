@@ -16,7 +16,7 @@ from psycopg.types.json import Jsonb
 from .analysis_batches import bounded_product_batches
 from .catalog import Catalog
 from .collection import SourceCollection
-from .collector import CollectionError, Collector, redact
+from .collector import Collector, redact
 from .contracts import (
     AssessmentPolicy,
     Observation,
@@ -29,6 +29,7 @@ from .contracts import (
 )
 from .evaluation_service import EvaluationService
 from .history import History, HistoryIndexPending
+from .replay import ReplayService
 from .settings import Settings
 
 
@@ -44,6 +45,7 @@ class Pipeline:
             settings, self.catalog, self.history, self.collector, self.worker_id
         )
         self._evaluation = EvaluationService(self.catalog, self.history, self.identity)
+        self._replay = ReplayService(self.catalog, self.history, self.collector)
 
     @classmethod
     def from_env(cls) -> Pipeline:
@@ -264,61 +266,7 @@ class Pipeline:
         return {"datasets": datasets, "synthetic": synthetic}
 
     def replay(self, dataset_id: str, transform_version: str = "1") -> dict:
-        if transform_version != "1":
-            raise ValueError("This binary implements normalizer version 1 only")
-        dataset = self.catalog.one(
-            "SELECT * FROM datasets WHERE dataset_id=%s AND state='committed'", (dataset_id,)
-        )
-        if not dataset:
-            raise ValueError("No completed dataset found")
-        raw = self.history.raw(dataset)
-        quarantine = raw.get("quarantine", [])
-        if raw.get("kind") in {"import", "compaction"}:
-            observations = [Observation.model_validate(item) for item in raw["records"]]
-        else:
-            try:
-                result = self.collector.run(
-                    {
-                        "request": raw["request"],
-                        "raw": raw["response"],
-                        "observed_at": raw["observed_at"],
-                    },
-                    normalize=True,
-                )
-            except CollectionError as error:
-                if error.category != "schema" or error.artifact is None:
-                    raise
-                observations = []
-                quarantine = [{"reason": error.category}]
-            else:
-                if result["normalizer_version"] != transform_version:
-                    raise ValueError("Collector normalizer version differs from requested replay")
-                observations = [Observation.model_validate(item) for item in result["records"]]
-                quarantine = result.get("quarantine", [])
-        replay_identity = {"replay_of": dataset_id, "version": transform_version}
-        if quarantine:
-            # Older replay publications lost these rejects. Corrected metadata
-            # needs a distinct immutable publication, not an overwrite or reuse.
-            replay_identity["quarantine"] = quarantine
-        replay_id = digest(replay_identity)
-        self.history.publish(
-            observations,
-            raw,
-            source=dataset["source"],
-            synthetic=dataset["synthetic"],
-            dataset_id=replay_id,
-            transform_version=transform_version,
-            supersedes=dataset_id,
-            quarantine=quarantine,
-        )
-        return {
-            "dataset_id": replay_id,
-            "replayed_from": dataset_id,
-            "records": len(observations),
-            "quarantine_count": len(quarantine),
-            "status": "quarantined" if quarantine else "complete",
-            "transform_version": transform_version,
-        }
+        return self._replay.replay(dataset_id, transform_version)
 
     def _observations(
         self,

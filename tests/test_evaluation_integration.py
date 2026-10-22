@@ -7,7 +7,8 @@ from datetime import timedelta
 
 import pytest
 
-from sm_trending_products.contracts import now
+from sm_trending_products.contracts import Product, ProductLink, now
+from sm_trending_products.evaluation import EvaluationConfig, freeze_decision
 
 pytestmark = pytest.mark.integration
 
@@ -169,6 +170,65 @@ def test_normalization_replay_does_not_duplicate_or_change_backtest_evidence(pip
     assert before["evaluation_id"] == after["evaluation_id"]
     assert after["result"]["snapshots"][0]["entity_bindings"][entity_key] == "replayed-product"
     assert len(after["result"]["snapshots"][0]["evidence_refs"]) == 2
+
+
+def test_prepared_history_adequacy_matches_raw_decisions_with_metadata_revisions(pipeline):
+    cutoff = now() + timedelta(minutes=1)
+    entity_id, entity_key, _ = seed_product(pipeline, "revision-history", base=cutoff)
+    config = outcome_config(minimum_history_observations=3)
+    original = pipeline.freeze(cutoff, synthetic=True, config=config)["result"]
+    assert original["status"] == "insufficient_history"
+
+    revisions = []
+    for hours, views in ((2, 100), (1, 200)):
+        row = record(
+            entity_id,
+            cutoff - timedelta(hours=hours),
+            views,
+            available_at=cutoff - timedelta(seconds=1),
+        )
+        row["observation_id"] += "-normalizer-v2"
+        row["attributes"]["normalizer_version"] = "2"
+        revisions.append(row)
+    pipeline.import_records(revisions, synthetic=True)
+    assert pipeline.freeze(cutoff, synthetic=True, config=config)["result"] == original
+
+    late = record(
+        entity_id,
+        cutoff - timedelta(minutes=30),
+        300,
+        available_at=cutoff + timedelta(days=1),
+    )
+    pipeline.import_records([late], synthetic=True)
+    assert pipeline.freeze(cutoff, synthetic=True, config=config)["result"] == original
+    genuine = {
+        **late,
+        "observation_id": "genuine-third-known-time",
+        "available_at": (cutoff - timedelta(microseconds=1)).isoformat(),
+    }
+    pipeline.import_records([genuine], synthetic=True)
+    persisted = pipeline.freeze(cutoff, synthetic=True, config=config)["result"]
+    evidence, _ = pipeline.history.observations(cutoff, synthetic=True, entity_keys={entity_key})
+    direct = freeze_decision(
+        evidence,
+        [Product.model_validate(row) for row in pipeline.products(synthetic=True)],
+        [ProductLink.model_validate(row) for row in pipeline.links(cutoff, synthetic=True)],
+        cutoff,
+        EvaluationConfig.model_validate(config),
+        synthetic=True,
+    )
+    assert persisted == direct
+    assert persisted["status"] == "frozen"
+    assert persisted["selected"] == ["revision-history"]
+    assert set(persisted["evidence_refs"]) == {row.observation_id for row in evidence}
+    assert len(persisted["evidence_refs"]) == 5
+    assert late["observation_id"] not in persisted["evidence_refs"]
+    assert set(persisted["universe"][0]["attention"]["evidence_refs"]) == {
+        row["observation_id"] for row in [*revisions, genuine]
+    }
+    assert persisted["universe"][0]["features"]["view_count"] == 300
+    assert persisted["config"]["minimum_history_observations"] == 3
+    assert persisted["policy"]["min_observations"] == 2
 
 
 def test_live_forward_decisions_cannot_be_backdated_or_populated_by_synthetic_history(pipeline):

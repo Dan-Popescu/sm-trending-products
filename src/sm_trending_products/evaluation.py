@@ -203,6 +203,9 @@ def freeze_decision(
 
     The returned JSON value contains no reference to mutable caller-owned objects.
     Snapshot integrity is checked again before maturation.
+    History adequacy counts distinct observation times per entity, while audit
+    references retain all eligible revisions of those observations. Prepared
+    observation counts must use the same distinct-time definition.
     """
     from .analytics import assess
 
@@ -244,7 +247,16 @@ def freeze_decision(
         raise ValueError("Precomputed assessments require counts and evidence references together")
     if prepared and observations:
         raise ValueError("Supply raw evidence or precomputed partitions, not both")
-    counts = observation_counts if prepared else Counter(row.entity_key for row in eligible)
+    counts = (
+        observation_counts
+        if prepared
+        else Counter(
+            entity_key
+            for entity_key, _observed_at in {
+                (row.entity_key, utc(row.observed_at)) for row in eligible
+            }
+        )
+    )
     assert counts is not None
     adequate_entities = {
         key for key, count in counts.items() if count >= config.minimum_history_observations

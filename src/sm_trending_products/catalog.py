@@ -95,6 +95,48 @@ class Catalog:
         with self.transaction() as connection:
             connection.execute(query, params)
 
+    def replay_origin(self, dataset_id: str) -> dict:
+        """Resolve only committed replay aliases within one source/workspace."""
+        with self.transaction() as connection:
+            self.guard_retention(connection)
+            visited: set[str] = set()
+            scope = None
+            for _ in range(100):
+                if dataset_id in visited:
+                    raise ValueError("Cyclic replay lineage")
+                visited.add(dataset_id)
+                row = connection.execute(
+                    "SELECT * FROM datasets WHERE dataset_id=%s", (dataset_id,)
+                ).fetchone()
+                if not row or row["state"] != "committed":
+                    raise ValueError("Replay parent is unavailable")
+                current_scope = (row["source"], row["synthetic"])
+                scope = current_scope if scope is None else scope
+                if current_scope != scope:
+                    raise ValueError("Replay lineage crosses source or workspace")
+                if row["supersedes"] is None:
+                    return row
+                dataset_id = row["supersedes"]
+            raise ValueError("Replay lineage exceeds the supported depth")
+
+    def replay_available_at(
+        self, replay_dataset_id: str, source_dataset_id: str, not_before: datetime
+    ) -> datetime:
+        """Freeze a canonical normalization clock without a long-held SQL lock."""
+        with self.transaction() as connection:
+            self.guard_inputs(connection, [source_dataset_id])
+            connection.execute(
+                "INSERT INTO replay_availability(replay_dataset_id,source_dataset_id,available_at) "
+                "VALUES(%s,%s,GREATEST(clock_timestamp(),%s)) ON CONFLICT DO NOTHING",
+                (replay_dataset_id, source_dataset_id, not_before),
+            )
+            row = connection.execute(
+                "SELECT * FROM replay_availability WHERE replay_dataset_id=%s", (replay_dataset_id,)
+            ).fetchone()
+            if not row or row["source_dataset_id"] != source_dataset_id:
+                raise ValueError("Replay identity collision")
+            return row["available_at"]
+
     @staticmethod
     def guard_retention(
         connection: psycopg.Connection[dict[str, Any]], *, exclusive: bool = False
@@ -671,6 +713,7 @@ class Catalog:
             "alerts",
             "evaluation_runs",
             "source_capabilities",
+            "replay_availability",
         )
         result = {}
         with self.transaction() as connection:

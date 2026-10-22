@@ -22,6 +22,9 @@ Each ticket is a narrow complete behavior with an operator-visible outcome and a
 
 ## Acceptance status
 
+- T02 has controlled versioned replay acceptance, including a real v2 source
+  transformation and immutable recovery; see the
+  [criterion matrix](../../verification/replay-contract.md#controlled-t02-acceptance).
 - T10/T11 have controlled replay/forward software acceptance with
   [criterion-by-criterion evidence](../../verification/evaluation-acceptance.md);
   no actual predictive advantage or elapsed market outcome is inferred.
