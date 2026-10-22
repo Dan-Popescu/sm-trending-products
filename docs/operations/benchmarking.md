@@ -70,6 +70,67 @@ Process CPU/RSS does not include the full PostgreSQL/object-store service stack.
 The finite workload and separate hard-crash tests do not establish sustained
 queue stability, production capacity, restoration objectives or provider prices.
 
+## Controlled operating-envelope matrix
+
+Build the release collector, then run the sequential matrix against an isolated
+native test database:
+
+```sh
+cargo build --release --locked --manifest-path collector/Cargo.toml
+TEST_DATABASE_URL=postgresql://test_user:test_password@127.0.0.1:5432/pipeline_test \
+  uv run --locked python scripts/offline-envelope.py \
+  --collector-binary collector/target/release/sm-collector \
+  --collector-profile release --output-dir output/envelope
+```
+
+The seven finite cases cover a uniform baseline, four-worker skew with controlled
+source latency, matched paced arrivals with one and four workers, a higher arrival
+rate, recovery under a constrained request budget, and termination after a raw
+upload. The last case restarts ordinary collection and waits for the actual
+experimental 40-second lease to expire. It does not modify SQL lease timestamps.
+This is an integration measurement, with HTTP Moto and synthetic source responses.
+
+Each case gets a fresh worker process, PostgreSQL schema, bucket, cache and spool.
+The supervisor limits cases to four workers, 10,000 records, 500 tasks, 180 seconds
+and 1 GiB of owned files plus schema relations. The suite admits cases only with
+at least 4 GiB of memory headroom and 8 GiB of free disk, and lasts at most 15
+minutes before bounded cleanup. A resource stop retains diagnostics and remaining
+task counts. These limits are experiment safeguards, not measured production
+capacity or a memory reservation on the shared host.
+
+For this bounded experiment, `--start-memory-headroom-gib 3` permits a declared
+3 GiB admission profile after checking the smaller baseline. The default remains
+4 GiB, and both profiles stop execution below 2 GiB. The selected start and stop
+limits are recorded in the summary; this option cannot disable the stop floor.
+
+Reports record the code revision, binary hash and declared build profile, CPU
+affinity and cgroup limits, database/library versions and effective nonsecret
+settings. History partitioning uses the deployed default of 64 buckets. Parent
+supervisor CPU includes Moto; the worker includes the controlled HTTP source.
+PostgreSQL, Dagster, dashboard and other host processes are outside process
+resource measurements. Sampled session RSS can miss brief peaks; when descendant
+discovery is unavailable, aggregate RSS remains unknown rather than being reported
+as the leader's memory.
+
+Collection throughput uses the enqueue-and-collection phase duration. The legacy
+whole-workflow throughput includes linking, assessment, compaction, verification
+and freezing. Task latency uses actual SQL creation/completion times; future
+logical fixture observation times do not measure live evidence freshness.
+Queue sampling and disk scans are throttled to avoid measuring the sampler's work.
+
+Both sides of compaction receive separate, initially empty application file
+caches. Cold/warm phases record their own traffic and verified hits. They do not
+claim to clear operating-system or provider caches. Assessment rows and evidence
+identities must survive compaction; run IDs may change with dataset lineage.
+Allocated cache/spool bytes deduplicate hard links, while promised download
+reservations remain separate. Compaction reduces active read objects; original
+objects retained for lineage still consume storage.
+
+Use the case reports and `summary.json` to compare the declared workloads. A
+failed or incomplete matrix establishes a stop condition, not a successful
+operating envelope. Rerun on the target deployment with representative retained
+history before choosing a VPS size or applying provider unit prices.
+
 ## Automated native regression workload
 
 Every pull request and push to `main` runs `scripts/ci-benchmark.sh` against the

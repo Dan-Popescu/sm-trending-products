@@ -161,6 +161,8 @@ def parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--compact", action="store_true")
     benchmark.add_argument("--request-capacity", type=float, default=10000)
     benchmark.add_argument("--requests-per-second", type=float, default=10000)
+    benchmark.add_argument("--arrival-rate", type=float, default=0)
+    benchmark.add_argument("--drain-seconds", type=float, default=30)
     query = command(
         "query", "Run a bounded read-only DuckDB query on completed history", synthetic=True
     )
@@ -321,6 +323,8 @@ def dispatch(pipeline, args):
                 compaction=args.compact,
                 request_capacity=args.request_capacity,
                 requests_per_second=args.requests_per_second,
+                arrival_rate=args.arrival_rate,
+                drain_seconds=args.drain_seconds,
             )
         case "query":
             return pipeline.explore(
