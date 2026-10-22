@@ -82,6 +82,7 @@ from datetime import timedelta
 
 from sm_trending_products.contracts import AssessmentPolicy, canonical, now
 from sm_trending_products.pipeline import Pipeline
+from scripts.recovery_fixture import seed
 
 timestamp = now()
 with Pipeline.from_env() as application:
@@ -113,10 +114,12 @@ with Pipeline.from_env() as application:
     assert any(row["evaluation_id"] == frozen["evaluation_id"]
                for row in application.evaluations(synthetic=True))
     assert application.verify()["ok"] is True
+    checkpoint = seed(application)
     print(canonical({
         "dataset_ids": dataset_ids, "observation_count": 2, "product_count": 1,
         "alert_count": 1, "forward_decision_id": frozen["evaluation_id"],
         "synthetic": True,
+        "interrupted_checkpoint": checkpoint,
     }))
 PY
 
@@ -140,7 +143,7 @@ docker compose exec -T worker sm-trends verify --json
 # backup.sh stops and restarts these writers; observe health after that restart too.
 scripts/backup.sh "$recovery_workdir/backup" --copy-objects
 docker compose exec -T worker sm-trends verify --json
-scripts/restore-check.sh "$recovery_workdir/backup"
+scripts/restore-check.sh "$recovery_workdir/backup" --exercise-synthetic-recovery
 python3 - "$recovery_workdir/seed.json" "$recovery_report" <<'PY'
 import json
 import sys
@@ -154,6 +157,7 @@ Path(sys.argv[2]).write_text(json.dumps({
     "operator_services_started": ["worker", "dagster-daemon", "dagster-webserver", "dashboard"],
     "dashboard_health": "ready", "dagster_webserver_health": "ready",
     "dagster_daemon_heartbeat": "ready", "writer_restart_verification": "passed",
+    "restored_checkpoint_recovery": "passed", "restored_restart_duplicates": 0,
 }, indent=2) + "\n")
 PY
 echo 'Native PostgreSQL and HTTP object-store backup/restore rehearsal passed.'

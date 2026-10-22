@@ -28,6 +28,18 @@ The command checks dump and inventory hashes, creates a private internal Docker 
 
 The lower-level database restore command accepts only an empty container whose name starts with `sm-trends-restore-` and which has the isolated-restore label. It refuses existing application tables and performs one transactional restore without a destructive `--clean` step. This deliberately excludes an accidental in-place production restore path.
 
+CI additionally invokes `--exercise-synthetic-recovery` on its dedicated fixture
+backup. Before capture, the fixture interrupts publication after immutable object
+writes and before checkpoint commit. After restoring and comparing the original
+catalog, the opt-in probe resumes that expired synthetic task from copied raw
+bytes, commits the original dataset identity, and reopens the application to
+verify no duplicate observation or task execution. Source requests are forbidden
+by the probe, credentials are empty and the Docker network is internal. Existing
+committed datasets, identity, alerts and frozen evaluations must remain identical.
+The probe refuses live state, enabled capabilities or unrelated task queues; it is
+not a general queue-draining or production cutover command. The default restore
+check remains read-only after restoring its isolated copy.
+
 The local rehearsal uses Moto and checks logical evidence recovery. Native PostgreSQL is used in the container exercise. Real provider versioning, access policies, encryption, and durability require separate provider acceptance. Record elapsed restore time, data volume, missing objects, and verification output; decide recovery objectives from measured results.
 
 ## Recovery after an incident
