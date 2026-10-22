@@ -25,7 +25,7 @@
     "src/sm_trending_products/__init__.py": "f1c6c43d26fc2d4bdda22ede3686f4dafabc9d3e313efda01a9faf2b0946f53b",
     "src/sm_trending_products/__main__.py": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
     "src/sm_trending_products/analytics.py": "87c5dcdabe0bef96da4da7caf042b11fad428520304df51f794594cb41623fbc",
-    "src/sm_trending_products/benchmark.py": "9b3d8c57877dcf9cf7f7dfc0275f43a983606e8a70d48b5c2d9b80ccd750e29e",
+    "src/sm_trending_products/benchmark.py": "3fd06e7737bfc02fab316558a20ba161f331fbbc9423db99ed5db6862ba33474",
     "src/sm_trending_products/cache.py": "53e74018f4dbc377ea02d4e9ef5930e3f4b137d2e088af0cc8fb8e1cc6cec529",
     "src/sm_trending_products/catalog.py": "8888533b5621e374e1886f33f8069da14d2cd68cb436654880a6d7fb5eb5a7d7",
     "src/sm_trending_products/cli.py": "4a01911f2922d760bd4e98a61abc9d8da5a85aaf595bb6696a8924f25f287e9a",
@@ -57,7 +57,7 @@
     "src/sm_trending_products/sql/011_scheduler_policy_activations.sql": "9526118687e2aed03aaf38044dc7182d96df36c1f1a39fb08b60f8fa16471232",
     "tests/conftest.py": "61226d9648cc0df29f70d8bb61f781290ebb790daf2f508522f2e988ad9b944c",
     "tests/test_analytics.py": "bd277b28a2c676b4b3e38892c9680732d0176dbb8e0b0ed33a706f0986b7f268",
-    "tests/test_benchmark.py": "753ab9927b640b334a29479f645377aad95ef0036969329b32253fa3eb2623fb",
+    "tests/test_benchmark.py": "202883a25ed1af7d25af2575f7d064bfc8ccb6b7d4d7cd37a4f52c2e59d52f5d",
     "tests/test_cli.py": "b305d1d2e74e837c3191e11c315da7e2e5b44b14e4de726bd2b57d8a556865dd",
     "tests/test_collector_contract.py": "4987448be34aca8d44d28b96c6bd2d1392773f0ccb52ca0a1fbbb1114b8f558b",
     "tests/test_contracts.py": "6de1cd25400e3b5551a34d087aa011ecb9f315dda4e6dd32d69a2f819276d50c",
@@ -76,5 +76,5 @@
     "tests/test_scheduler.py": "0e0cbcae67d538328d601152c0b450702cd503734271c6080046f8ccf78bf956",
     "uv.lock": "c55d9ccf2fca4b2629872b0ddaad202dd7e8181e34509088565d8b77dc513004"
   },
-  "source_fingerprint_sha256": "3071bdb28da250073f2e66e3262590759be39aaa0103b6464902e4d95f5783a3"
+  "source_fingerprint_sha256": "9d3d2d8efacc0786704922dde1d4fc040c3cfcf507a8417e3afa674db5ceb5bd"
 }

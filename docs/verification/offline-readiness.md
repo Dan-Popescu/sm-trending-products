@@ -6,8 +6,8 @@ production bucket or VPS were used.
 
 ## Executed application boundary
 
-The full suite passed **159 tests, zero failures, zero errors and zero skips**
-against native PostgreSQL 17.11 and temporary HTTP Moto 5.2.4 services in 42.03
+The full suite passed **160 tests, zero failures, zero errors and zero skips**
+against native PostgreSQL 17.11 and temporary HTTP Moto 5.2.4 services in 42.60
 seconds. [JUnit evidence](offline/tests.xml) retains the executed scenarios. The
 [source manifest](offline/source-manifest.json) fingerprints runtime, test,
 configuration and verification-driver files independently of documentation.
@@ -37,7 +37,8 @@ New behavioral proofs include:
   Dagster PostgreSQL materialization with the checked-in module/driver configuration.
 - Source acceptance tests retain an empty authorized response as unverified with
   an explicit observation count, rather than accepting T15 without observations.
-- Benchmark tests cover failed object verification, parallel/skewed collection,
+- Benchmark tests cover linear video assignment (one evaluation per identity),
+  failed object verification, parallel/skewed collection,
   compaction and bounded quota exhaustion with retained retryable work.
 
 The first full run had 140 passes and sixteen setup errors because the newly
@@ -45,7 +46,7 @@ installed Cargo directory was missing from that command's PATH. Repeating with
 the documented toolchain selection produced the complete clean result above.
 A later full run also exposed a real UI cutoff precision bug: rounding the
 default time down to whole seconds could hide a link created in that second.
-The default now retains microseconds; the complete 159-test run passed afterward.
+The default now retains microseconds; the complete 160-test run passed afterward.
 No application failure was hidden or counted as a passing test.
 
 ## Measured finite workload
@@ -56,9 +57,9 @@ No application failure was hidden or counted as a passing test.
 
 All mandatory checks passed with zero collection errors or quarantined records.
 All 50 tasks finished. Compaction reduced 200 normalized objects to four while
-preserving 1,000 observations. The run took approximately 10.72 seconds, including
+preserving 1,000 observations. The run took approximately 7.50 seconds, including
 analysis, verification and decision freezing; cold/warm analysis took about
-2.56/1.28 seconds. The report records request/byte traffic, process resource
+1.30/0.64 seconds. The report records request/byte traffic, process resource
 accounting, disk/cache values, actual database version and explicit limitations.
 
 This was a finite controlled workload on shared development infrastructure with
@@ -69,10 +70,15 @@ tests establish the specified recovery windows separately from this measurement.
 ## Deployment boundary
 
 The application image built successfully using an optional BuildKit CA secret
-for the managed proxy. The full-service/recovery driver now starts worker,
+for the managed proxy. [CI run 39833574277](https://github.com/Dan-Popescu/sm-trending-products/actions/runs/39833574277)
+passed 159 tests at `47e4129`, built the image, started all four operator services,
+verified their health, and completed backup/restart and isolated restore.
+[Execution excerpts](offline/ci-log-extract.txt) and
+[artifact metadata](offline/ci-evidence.json) retain the exact boundary.
+The later linear benchmark grouping change adds the 160th local regression; its
+final-head CI is tracked on PR #24. The full-service/recovery driver now starts worker,
 Dagster daemon/webserver and Streamlit, probes their health, pauses/restarts
-writers during backup, and runs isolated database/object restore. Execution
-evidence for this expanded boundary is recorded separately when complete.
+writers during backup, and runs isolated database/object restore. The successful CI above establishes this expanded synthetic boundary.
 
 Full startup checks exposed deployment assumptions that application-only tests
 could not detect: public bind mounts and copied source files must be readable by

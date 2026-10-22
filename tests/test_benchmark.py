@@ -7,10 +7,24 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from sm_trending_products.benchmark import benchmark
+from sm_trending_products.benchmark import _group_videos, benchmark
 from sm_trending_products.contracts import utc
 
 pytestmark = pytest.mark.integration
+
+
+def test_large_identity_assignment_evaluates_each_video_once():
+    evaluated = set()
+
+    def product_for(video):
+        assert video not in evaluated
+        evaluated.add(video)
+        return 0 if video < 6000 else video % 100
+
+    groups = _group_videos(10000, product_for)
+    assert len(evaluated) == 10000
+    assert len(groups[0]) == 6040
+    assert sorted(video for group in groups.values() for video in group) == list(range(10000))
 
 
 def test_failed_object_verification_fails_the_benchmark(pipeline, tmp_path, monkeypatch):

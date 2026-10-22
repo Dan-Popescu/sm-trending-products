@@ -10,12 +10,21 @@ import shutil
 import threading
 import time
 import uuid
+from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .contracts import canonical, now
+
+
+def _group_videos(video_count: int, product_for: Callable[[int], int]) -> dict[int, list[int]]:
+    groups: dict[int, list[int]] = defaultdict(list)
+    for video in range(video_count):
+        groups[product_for(video)].append(video)
+    return groups
 
 
 def benchmark(
@@ -51,6 +60,8 @@ def benchmark(
 
     def product_for(video: int) -> int:
         return 0 if video / video_count < hot_fraction else video % product_count
+
+    product_videos = _group_videos(video_count, product_for)
 
     class Source(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -171,7 +182,7 @@ def benchmark(
         for product in range(product_count):
             product_id = f"{run_id}-product-{product}"
             pipeline.create_product(product_id, f"Synthetic product {product}", synthetic=True)
-            for video in (video for video in range(video_count) if product_for(video) == product):
+            for video in product_videos.get(product, ()):
                 pipeline.review_link(product_id, f"tiktok_display:video:{run_id}-{video}")
         cutoff = base + timedelta(minutes=pages + 2)
         cold_start = time.perf_counter()

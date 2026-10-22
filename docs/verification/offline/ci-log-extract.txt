@@ -1,0 +1,5 @@
+2026-10-22T18:45:46.3122644Z ============================= 159 passed in 53.33s =============================
+2026-10-22T18:48:02.1513011Z Backup completed: /tmp/tmp.T8O8Oi7APJ/backup
+2026-10-22T18:48:16.8726982Z Restored products, identity, alerts, and frozen evaluations match the captured state.
+2026-10-22T18:48:16.8770810Z Isolated restore verified. No workers were started and no production destination was written.
+2026-10-22T18:48:17.0958028Z Native PostgreSQL and HTTP object-store backup/restore rehearsal passed.
