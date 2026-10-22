@@ -41,6 +41,10 @@ Each ticket is a narrow complete behavior with an operator-visible outcome and a
 - T09 has controlled offer/cost review acceptance in the
   [commercial criterion matrix](../../verification/commercial-acceptance.md#t09-commercial-dimensions-in-published-review).
 - T13 has deployment, backup, and isolated-restore tooling. The Docker image build and full native container restore passed in CI; actual provider checks and VPS rollout remain pending.
+- T12 has controlled commercial-outcome acceptance with
+  [criterion evidence](../../verification/commercial-outcome-acceptance.md).
+  Bounds, estimates and censoring remain explicit; actual profitability and real
+  sales performance are not inferred from synthetic ledgers or attention.
 - T14 has a measured synthetic sample and benchmark tooling. A production operating envelope, multiworker load capacity, and recurring provider cost remain unproven.
 - T15 has capability-verification tooling, but live acceptance is pending credentials, approved scopes, and permission for the actual intended use. It is not marked complete.
 
