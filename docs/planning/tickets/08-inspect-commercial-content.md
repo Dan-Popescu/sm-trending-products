@@ -1,6 +1,8 @@
 # T08 — Inspect commercial-content evidence separately
 
-**Status:** Software implemented; acceptance evidence is mapped in the [coverage record](../../implementation/coverage.md). Not published to GitHub.
+GitHub issue: [#16](https://github.com/Dan-Popescu/sm-trending-products/issues/16). Implementation: [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
+
+**Status:** Software implemented; acceptance evidence is mapped in the [coverage record](../../implementation/coverage.md).
 
 ## What to build
 

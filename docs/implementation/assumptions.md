@@ -14,8 +14,9 @@ implementation choices from external acceptance that software cannot grant.
 - Preserve the abandoned SQLite experiment outside the supported runtime. The
   supported deployment uses PostgreSQL, S3, Rust, Dagster, Polars, DuckDB, and
   Streamlit; no fallback silently replaces production storage with SQLite.
-- Use GitHub Issues as the intended tracker. The integration rejects writes with
-  HTTP 403, so local ticket files remain the publication backlog until access works.
+- Use GitHub Issues as the canonical tracker. Initial HTTP 403 responses required
+  preserving local tickets; access was later enabled and the backlog was published.
+  See [publication](publication.md) for actual issue IDs and commit mapping.
 - Default ranking is attention-only with all four dimensions displayed separately.
   Missing demand, competition, or cost inputs remain unknown. Commercial ranking
   and outcome evaluation require eligible imported or accessible evidence.
@@ -55,7 +56,8 @@ implementation choices from external acceptance that software cannot grant.
   initial deployment target; cloud provisioning and paid subscriptions are excluded.
 - Keep a recoverable source archive and Git history when remote publication is
   unavailable. GitHub integration writes returned 403, and a terminal push dry run
-  could not authenticate; no PR or remotely executed workflow is claimed.
+  could not authenticate. Those historical blockers were later resolved through
+  the connector; [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1) and CI now exist.
 
 ## External acceptance
 

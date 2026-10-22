@@ -1,5 +1,7 @@
 # VPS operation, recovery, and scale evidence
 
+GitHub issue: [#5](https://github.com/Dan-Popescu/sm-trending-products/issues/5). Implementation: [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
+
 Status: approved for autonomous implementation on 2026-10-22.
 
 ## Problem Statement

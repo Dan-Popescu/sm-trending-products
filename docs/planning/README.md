@@ -22,7 +22,7 @@ Status: architecture, defaults, specifications, test boundary, and autonomous im
 
 Use Matt Pocock's setup, domain-modeling, to-spec, to-tickets, implement, and code-review workflows. Start from externally visible behavior, specify acceptance criteria, and implement narrow vertical slices. A database layer, collector layer, or dashboard layer alone is not a delivery ticket.
 
-GitHub Issues is the canonical tracker for Dan-Popescu/sm-trending-products. Keep reviewed product requirements in the repository; publish an umbrella issue linking them and one issue per approved delivery ticket when write access works. Maintain native blocking links when the integration supports them; otherwise use explicit issue references. Do not mark a ticket ready-for-agent before its scope is approved and its human prerequisites are satisfied.
+GitHub Issues is the canonical tracker for Dan-Popescu/sm-trending-products. Keep reviewed product requirements in the repository; maintain the published umbrella issue and one issue per approved delivery ticket. Maintain native blocking links when the integration supports them; otherwise use explicit issue references. Do not mark a ticket ready-for-agent before its scope is approved and its human prerequisites are satisfied.
 
 Read the domain glossary and relevant architecture decisions before implementing. For each ready ticket: select an unblocked slice, verify its acceptance criteria at the highest useful boundary, implement, run the relevant checks, and review the change against its specification. Use test-first development for nontrivial correctness rules. Record evidence in the pull request. Do not merge or deploy automatically.
 
@@ -33,12 +33,12 @@ Read the domain glossary and relevant architecture decisions before implementing
 - Default triage labels: explicitly approved by the user.
 - Configuration: activated in AGENTS.md and docs/agents/.
 - Test boundary: collection-to-visible-evidence scenarios with PostgreSQL semantics and an HTTP S3 test service, a controlled HTTP source, and deterministic time. Smaller tests cover numerical and temporal invariants where helpful. Local SQL execution uses PGlite; native PostgreSQL remains required for concurrency acceptance.
-- Delivery breakdown: approved for autonomous execution; tracker publication is blocked by integration permissions.
+- Delivery breakdown: approved for autonomous execution; global PRD #2, specification issues #3–#8, and delivery issues #9–#23 are published.
 - Live source acceptance: cannot be completed without approved credentials and scopes. Contract fixtures demonstrate software behavior, not granted access or market coverage.
 
 ## Current repository state
 
-The remote repository was observed empty. GitHub write attempts returned HTTP 403, Resource not accessible by integration. Publication remains blocked until write access works; local delivery records are not published GitHub issues. Continue using the approved local records without silently changing the canonical tracker.
+The repository is published on `codex/project-planning` in [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1). The initial permissions blocker was resolved on 2026-10-22. The [publication record](../implementation/publication.md) maps original local commits and issue identifiers. `main` remains the initialization baseline pending review and merge.
 
 The preexisting local Python/SQLite scaffold was an abandoned experiment. The supported runtime now implements PostgreSQL operational state and S3 raw/Parquet history; the earlier experiment is outside that runtime. Implementation assumptions and substitutions are recorded in [the decisions recap](../implementation/assumptions.md).
 

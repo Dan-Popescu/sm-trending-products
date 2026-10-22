@@ -1,5 +1,7 @@
 # Historical replay and forward validation
 
+GitHub issue: [#8](https://github.com/Dan-Popescu/sm-trending-products/issues/8). Implementation: [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
+
 Status: approved for autonomous implementation on 2026-10-22.
 
 ## Problem Statement

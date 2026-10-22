@@ -1,6 +1,8 @@
 # T02 — Replay a completed dataset without source access
 
-**Status:** Software implemented; acceptance evidence is mapped in the [coverage record](../../implementation/coverage.md). Not published to GitHub.
+GitHub issue: [#10](https://github.com/Dan-Popescu/sm-trending-products/issues/10). Implementation: [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
+
+**Status:** Software implemented; acceptance evidence is mapped in the [coverage record](../../implementation/coverage.md).
 
 ## What to build
 

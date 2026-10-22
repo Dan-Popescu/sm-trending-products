@@ -1,6 +1,8 @@
 # T03 — Recover interrupted collection without duplicate results
 
-**Status:** Software implemented; native PostgreSQL concurrency acceptance pending. See the [coverage record](../../implementation/coverage.md). Not published to GitHub.
+GitHub issue: [#11](https://github.com/Dan-Popescu/sm-trending-products/issues/11). Implementation: [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
+
+**Status:** Software implemented; native PostgreSQL concurrency acceptance pending. See the [coverage record](../../implementation/coverage.md).
 
 ## What to build
 

@@ -1,6 +1,8 @@
 # T06 — Rank attention with inspectable reasons
 
-**Status:** Software implemented; acceptance evidence is mapped in the [coverage record](../../implementation/coverage.md). Not published to GitHub.
+GitHub issue: [#14](https://github.com/Dan-Popescu/sm-trending-products/issues/14). Implementation: [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
+
+**Status:** Software implemented; acceptance evidence is mapped in the [coverage record](../../implementation/coverage.md).
 
 ## What to build
 

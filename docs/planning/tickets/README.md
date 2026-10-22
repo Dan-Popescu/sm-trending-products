@@ -1,6 +1,6 @@
 # Delivery tickets
 
-Status: approved for autonomous implementation; software is implemented and external acceptance remains pending where identified in each ticket. Publication is blocked by GitHub integration permissions. T01–T15 remain local identifiers, not GitHub issue numbers. See [implementation coverage](../../implementation/coverage.md) for actual files, test scenarios, and release gates; a test's existence is not a claim that native infrastructure or live access has been accepted.
+Status: approved for autonomous implementation; software is implemented and external acceptance remains pending where identified in each ticket. Published in [global PRD #2](https://github.com/Dan-Popescu/sm-trending-products/issues/2). T01–T15 are stable local identifiers; their actual GitHub issues are recorded below. See [implementation coverage](../../implementation/coverage.md) for actual files, test scenarios, and release gates; a test's existence is not a claim that native infrastructure or live access has been accepted.
 
 Each ticket is a narrow complete behavior with an operator-visible outcome and acceptance evidence. Relevant specifications define the shared contracts; tickets do not establish competing definitions.
 
@@ -38,3 +38,23 @@ T10 deliberately starts with an attention outcome. T12 extends evaluation to com
 No ticket purchases services, deploys to an unspecified machine, launches products, or spends an advertising budget. T13 supplies a supported deployment and isolated exercise; actual VPS rollout requires the machine details and access.
 
 T14 must not promise a capacity number before measurement. This plan builds the mechanisms required to scale and then establishes their operating envelope.
+
+## Published issues
+
+| Local ticket | GitHub issue |
+| --- | --- |
+| T01 | [#9](https://github.com/Dan-Popescu/sm-trending-products/issues/9) |
+| T02 | [#10](https://github.com/Dan-Popescu/sm-trending-products/issues/10) |
+| T03 | [#11](https://github.com/Dan-Popescu/sm-trending-products/issues/11) |
+| T04 | [#12](https://github.com/Dan-Popescu/sm-trending-products/issues/12) |
+| T05 | [#13](https://github.com/Dan-Popescu/sm-trending-products/issues/13) |
+| T06 | [#14](https://github.com/Dan-Popescu/sm-trending-products/issues/14) |
+| T07 | [#15](https://github.com/Dan-Popescu/sm-trending-products/issues/15) |
+| T08 | [#16](https://github.com/Dan-Popescu/sm-trending-products/issues/16) |
+| T09 | [#17](https://github.com/Dan-Popescu/sm-trending-products/issues/17) |
+| T10 | [#18](https://github.com/Dan-Popescu/sm-trending-products/issues/18) |
+| T11 | [#19](https://github.com/Dan-Popescu/sm-trending-products/issues/19) |
+| T12 | [#20](https://github.com/Dan-Popescu/sm-trending-products/issues/20) |
+| T13 | [#21](https://github.com/Dan-Popescu/sm-trending-products/issues/21) |
+| T14 | [#22](https://github.com/Dan-Popescu/sm-trending-products/issues/22) |
+| T15 | [#23](https://github.com/Dan-Popescu/sm-trending-products/issues/23) |

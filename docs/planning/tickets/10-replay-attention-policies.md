@@ -1,6 +1,8 @@
 # T10 — Evaluate rankings with point-in-time replay
 
-**Status:** Software implemented; acceptance evidence is mapped in the [coverage record](../../implementation/coverage.md). Not published to GitHub.
+GitHub issue: [#18](https://github.com/Dan-Popescu/sm-trending-products/issues/18). Implementation: [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
+
+**Status:** Software implemented; acceptance evidence is mapped in the [coverage record](../../implementation/coverage.md).
 
 ## What to build
 

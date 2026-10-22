@@ -1,5 +1,7 @@
 # Reliable collection and replay
 
+GitHub issue: [#3](https://github.com/Dan-Popescu/sm-trending-products/issues/3). Implementation: [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
+
 Status: approved for autonomous implementation on 2026-10-22.
 
 ## Problem Statement

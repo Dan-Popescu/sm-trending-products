@@ -1,0 +1,154 @@
+{
+  "repository": "Dan-Popescu/sm-trending-products",
+  "pull_request": 1,
+  "umbrella_issue": 2,
+  "issues": [
+    {
+      "path": "docs/specs/collection.md",
+      "title": "Specification: Reliable collection and replay",
+      "number": 3,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/3",
+      "kind": "specification"
+    },
+    {
+      "path": "docs/specs/discovery.md",
+      "title": "Specification: Discovery and collection prioritization",
+      "number": 4,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/4",
+      "kind": "specification"
+    },
+    {
+      "path": "docs/specs/operations.md",
+      "title": "Specification: VPS operation, recovery, and scale evidence",
+      "number": 5,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/5",
+      "kind": "specification"
+    },
+    {
+      "path": "docs/specs/product-identity.md",
+      "title": "Specification: Product identity and evidence",
+      "number": 6,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/6",
+      "kind": "specification"
+    },
+    {
+      "path": "docs/specs/trend-assessment.md",
+      "title": "Specification: Trend assessment and opportunity review",
+      "number": 7,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/7",
+      "kind": "specification"
+    },
+    {
+      "path": "docs/specs/validation.md",
+      "title": "Specification: Historical replay and forward validation",
+      "number": 8,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/8",
+      "kind": "specification"
+    },
+    {
+      "path": "docs/planning/tickets/01-inspect-video-observation.md",
+      "title": "T01 — Inspect an authorized-video observation end to end",
+      "number": 9,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/9",
+      "kind": "ticket"
+    },
+    {
+      "path": "docs/planning/tickets/02-replay-datasets.md",
+      "title": "T02 — Replay a completed dataset without source access",
+      "number": 10,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/10",
+      "kind": "ticket"
+    },
+    {
+      "path": "docs/planning/tickets/03-recover-collection.md",
+      "title": "T03 — Recover interrupted collection without duplicate results",
+      "number": 11,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/11",
+      "kind": "ticket"
+    },
+    {
+      "path": "docs/planning/tickets/04-enforce-shared-quotas.md",
+      "title": "T04 — Enforce shared quotas across collectors",
+      "number": 12,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/12",
+      "kind": "ticket"
+    },
+    {
+      "path": "docs/planning/tickets/05-review-product-links.md",
+      "title": "T05 — Link videos and offers to reviewed products",
+      "number": 13,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/13",
+      "kind": "ticket"
+    },
+    {
+      "path": "docs/planning/tickets/06-rank-attention.md",
+      "title": "T06 — Rank attention with inspectable reasons",
+      "number": 14,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/14",
+      "kind": "ticket"
+    },
+    {
+      "path": "docs/planning/tickets/07-prioritize-discovery.md",
+      "title": "T07 — Discover and refresh candidates within a budget",
+      "number": 15,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/15",
+      "kind": "ticket"
+    },
+    {
+      "path": "docs/planning/tickets/08-inspect-commercial-content.md",
+      "title": "T08 — Inspect commercial-content evidence separately",
+      "number": 16,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/16",
+      "kind": "ticket"
+    },
+    {
+      "path": "docs/planning/tickets/09-review-commercial-evidence.md",
+      "title": "T09 — Review demand, competition, and feasibility gaps",
+      "number": 17,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/17",
+      "kind": "ticket"
+    },
+    {
+      "path": "docs/planning/tickets/10-replay-attention-policies.md",
+      "title": "T10 — Evaluate rankings with point-in-time replay",
+      "number": 18,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/18",
+      "kind": "ticket"
+    },
+    {
+      "path": "docs/planning/tickets/11-run-forward-evaluation.md",
+      "title": "T11 — Measure frozen decisions prospectively",
+      "number": 19,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/19",
+      "kind": "ticket"
+    },
+    {
+      "path": "docs/planning/tickets/12-evaluate-commercial-outcomes.md",
+      "title": "T12 — Compare commercial outcomes when evidence exists",
+      "number": 20,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/20",
+      "kind": "ticket"
+    },
+    {
+      "path": "docs/planning/tickets/13-operate-and-restore.md",
+      "title": "T13 — Operate and restore the complete pipeline on a VPS",
+      "number": 21,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/21",
+      "kind": "ticket"
+    },
+    {
+      "path": "docs/planning/tickets/14-measure-operating-envelope.md",
+      "title": "T14 — Establish a measured operating envelope",
+      "number": 22,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/22",
+      "kind": "ticket"
+    },
+    {
+      "path": "docs/planning/tickets/15-verify-live-capabilities.md",
+      "title": "T15 — Validate real source capabilities and enable live collection",
+      "number": 23,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/23",
+      "kind": "ticket"
+    }
+  ]
+}

@@ -16,18 +16,19 @@ cd sm-trending-products
 git switch codex/project-planning
 ```
 
-The bundle's `origin` points to the local delivery file. To publish to the intended
-repository, replace that remote after authenticating GitHub:
+## Current published checkout
+
+The project is now available in [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
+Use the normal GitHub checkout for continued work:
 
 ```sh
-git remote set-url origin https://github.com/Dan-Popescu/sm-trending-products.git
-git push origin codex/project-planning
+git clone --branch codex/project-planning https://github.com/Dan-Popescu/sm-trending-products.git
 ```
 
-For a still-empty remote, publish the existing local `main` initialization branch
-as the PR base as well. Do not overwrite a remote branch that gained independent
-work. Open a PR from the integration branch to `main`; no main-branch merge was
-performed by this implementation.
+Original archive commits and published commits have identical trees but different
+metadata/IDs, recorded in [publication](publication.md). Keep the bundle as recovery
+history; do not force-push its old branch over the published branch. No main-branch
+merge or production deployment was performed.
 
 ## Check and operate
 

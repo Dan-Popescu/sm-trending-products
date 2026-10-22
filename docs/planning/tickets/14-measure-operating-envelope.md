@@ -1,6 +1,8 @@
 # T14 — Establish a measured operating envelope
 
-**Status:** Benchmark software and a limited synthetic measurement implemented; production operating envelope and multiworker capacity acceptance pending. See the [coverage record](../../implementation/coverage.md). Not published to GitHub.
+GitHub issue: [#22](https://github.com/Dan-Popescu/sm-trending-products/issues/22). Implementation: [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
+
+**Status:** Benchmark software and a limited synthetic measurement implemented; production operating envelope and multiworker capacity acceptance pending. See the [coverage record](../../implementation/coverage.md).
 
 ## What to build
 

@@ -1,6 +1,8 @@
 # T15 — Validate real source capabilities and enable live collection
 
-**Status:** Acceptance pending; verification software implemented, but real credentials, approved scopes, permitted intended use, and real observations are unavailable. See the [coverage record](../../implementation/coverage.md). Not published to GitHub.
+GitHub issue: [#23](https://github.com/Dan-Popescu/sm-trending-products/issues/23). Implementation: [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
+
+**Status:** Acceptance pending; verification software implemented, but real credentials, approved scopes, permitted intended use, and real observations are unavailable. See the [coverage record](../../implementation/coverage.md).
 
 ## What to build
 

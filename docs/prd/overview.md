@@ -2,6 +2,8 @@
 
 Status: approved for autonomous implementation on 2026-10-22. Real source acceptance remains credential- and permission-dependent.
 
+Tracking: [global PRD #2](https://github.com/Dan-Popescu/sm-trending-products/issues/2), [implementation PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
+
 ## Problem Statement
 
 An operator needs to find physical products gaining traction early enough to assess and launch them. Popular-product lists conflate attention with purchasing, omit sampling limitations, and cannot establish whether their signals would have been actionable earlier. Collecting large volumes is useful only if evidence can be linked to products, interpreted honestly, and evaluated without future information.

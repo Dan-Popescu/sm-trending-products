@@ -28,4 +28,4 @@ Live TikTok acceptance is separate from contract fixtures. Tokens, actual grante
 
 ## Tracker publication
 
-GitHub integration write attempts returned HTTP 403, Resource not accessible by integration. The canonical tracker remains GitHub, while local ticket records preserve approved scope and delivery evidence until publication is possible. No issue numbers or remote labels are invented. Agent configuration is active despite that external publication limitation.
+Initial GitHub write attempts returned HTTP 403. Write access was enabled on 2026-10-22; the PRD, six specifications, and fifteen tickets are now published. See the [publication record](../implementation/publication.md) and [issue mapping](github-issues.json). The credential-dependent live acceptance issue #23 carries the `ready-for-human` label.

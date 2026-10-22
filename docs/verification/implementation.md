@@ -66,11 +66,12 @@ backup and isolated restore, actual VPS/private access, production S3 behavior,
 representative load, and live TikTok permissions remain unverified locally.
 The [CI workflow](../../.github/workflows/ci.yml) runs the native concurrency tests,
 builds the image, and invokes [isolated recovery](../../scripts/ci-recovery.sh).
-No remote execution result is available because publication is blocked.
+Remote CI execution is now available through [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1); its acceptance results are recorded separately below when complete.
 
-GitHub integration writes returned HTTP 403. A terminal `git push --dry-run` also
-failed because no GitHub username/credential was available. No issue IDs, PR,
-remote commit, workflow success, or deployment is claimed.
+Initial GitHub writes returned HTTP 403, and a terminal dry run had no usable
+credential. The connector permissions were subsequently fixed. The complete source
+and tracker are now published; see [publication](../implementation/publication.md).
+Successful publication alone does not establish a passing CI run or deployment.
 
 See [coverage and release gates](../implementation/coverage.md) for ticket-level
 acceptance and [handoff](../implementation/handoff.md) for source/history recovery.

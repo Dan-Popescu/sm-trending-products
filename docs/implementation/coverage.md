@@ -30,7 +30,7 @@ This record maps the approved fifteen-ticket delivery plan to actual software an
 4. **Production storage and VPS:** validate the actual provider's semantics/permissions, supply the target machine and secrets, verify private operator access, and measure resource headroom. Neither the VPS nor a production S3 account has been deployed by this implementation.
 5. **Representative scale:** run the workload on the target hardware with realistic history, skew, multiple workers, source latency, retention, cache states, and compaction. Apply explicitly sourced provider prices to measured units; do not extrapolate unlimited capacity from the small local sample.
 6. **Live TikTok capabilities:** verify the actual app/account scopes, allowed purpose, response meanings, market coverage, quotas, retention/deletion rules, and revocation behavior. T15 remains pending until those prerequisites exist.
-7. **Remote publication:** GitHub writes currently return HTTP 403. The local branch/ticket records are real work, but no remote PR, issue IDs, labels, workflow execution, or deployment is claimed without successful publication evidence.
+7. **Remote publication:** resolved on 2026-10-22. [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1), global PRD #2, six specification issues, and fifteen delivery issues are published. See [publication](publication.md). CI execution status is recorded separately from source publication; no production deployment is claimed.
 
 ## Acceptance interpretation
 
