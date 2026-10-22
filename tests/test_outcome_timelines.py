@@ -61,12 +61,19 @@ def test_long_timeline_is_prepared_once_and_reports_the_first_confirmed_crossing
                 product_id="p1", entity_key="fixture:cost:cost", available_at=before[0].available_at
             )
         )
-    config = EvaluationConfig(
-        target="profit" if kind == "profit" else "attention",
-        currency="EUR" if kind == "profit" else None,
-        threshold=count,
-        horizon_days=(3,),
-        launch_delay_days=(0,),
+    config = EvaluationConfig.model_validate(
+        {
+            "target": "profit" if kind == "profit" else "attention",
+            "currency": "EUR" if kind == "profit" else None,
+            "threshold": count,
+            "horizon_days": (3,),
+            "launch_delay_days": (0,),
+            **(
+                {"profit_contract": {"ledgers": {"fixture:cost:cost": ("goods",)}}}
+                if kind == "profit"
+                else {}
+            ),
+        }
     )
     snapshot = freeze_decision(before, [product], links, cutoff, config, synthetic=True)
     calls = 0

@@ -49,6 +49,30 @@ def outcome_config(**changes):
     return {"top_k": 1, "horizon_days": [3], "launch_delay_days": [0], "threshold": 1000, **changes}
 
 
+def test_new_financial_contracts_reject_invalid_scope_before_reading_history(pipeline, monkeypatch):
+    seed_product(pipeline, "known-product")
+    cutoff = now()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("An invalid financial definition must reject before observation reads")
+
+    monkeypatch.setattr(pipeline.history, "observations", forbidden)
+    missing_contract = outcome_config(target="profit", currency="EUR")
+    with pytest.raises(ValueError, match="declared profit_contract"):
+        pipeline.freeze(cutoff, True, missing_contract)
+    with pytest.raises(ValueError, match="declared profit_contract"):
+        pipeline.backtest([], cutoff, True, missing_contract)
+    unknown_ledger = {
+        **missing_contract,
+        "profit_contract": {"ledgers": {"fixture_import:cost:unknown": ["goods"]}},
+    }
+    with pytest.raises(ValueError, match="reviewed links in the decision scope"):
+        pipeline.freeze(cutoff, True, unknown_ledger)
+    with pytest.raises(ValueError, match="reviewed links in the decision scope"):
+        pipeline.backtest([cutoff], cutoff, True, unknown_ledger)
+    assert pipeline.evaluations(True) == []
+
+
 def test_persisted_forward_decision_is_immutable_and_outcomes_are_idempotent(pipeline):
     entity_id, _, _ = seed_product(pipeline, "first-product")
     decision_time = now() + timedelta(minutes=1)

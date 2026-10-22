@@ -5,7 +5,7 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from datetime import datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, DecimalException, InvalidOperation
 from typing import Any
 
 from .contracts import Measurement, Observation, utc
@@ -35,11 +35,61 @@ def _counter_period(row: Observation, target: str) -> str | None:
     return str(period) if period is not None else None
 
 
+def _realized_amount(
+    row: Observation,
+    currency: str | None,
+    required_cost_components: tuple[str, ...] | None,
+) -> Decimal | None:
+    """Validate one resolved ledger revision under its frozen monetary contract."""
+    if (
+        row.attributes.get("currency") != currency
+        or row.attributes.get("realized") is not True
+        or row.attributes.get("costs_complete") is not True
+    ):
+        return None
+    try:
+        revenue = Decimal(str(row.attributes["realized_revenue"]))
+        costs = row.attributes["realized_costs"]
+        if required_cost_components is not None:
+            if (
+                not isinstance(costs, dict)
+                or not costs
+                or not set(required_cost_components) <= costs.keys()
+            ):
+                return None
+            values = [Decimal(str(value)) for value in costs.values()]
+            if any(not value.is_finite() or value < 0 for value in values):
+                return None
+            total = sum(values, Decimal(0))
+        else:
+            # Existing frozen definitions accepted scalar costs and validated the
+            # aggregate. Their monetary meaning cannot change on later maturation.
+            total = (
+                sum((Decimal(str(value)) for value in costs.values()), Decimal(0))
+                if isinstance(costs, dict)
+                else Decimal(str(costs))
+            )
+        if not revenue.is_finite() or not total.is_finite() or total < 0:
+            return None
+        profit = revenue - total
+        return None if required_cost_components is not None and not profit.is_finite() else profit
+    except (KeyError, TypeError, ValueError, DecimalException) as error:
+        if (
+            required_cost_components is None
+            and isinstance(error, DecimalException)
+            and not isinstance(error, InvalidOperation)
+        ):
+            raise  # Preserve the arithmetic behavior of existing frozen definitions.
+        return None
+
+
 def _realized_profit(
     rows: Sequence[Observation],
     start: datetime,
     end: datetime,
     currency: str | None,
+    *,
+    required_cost_components: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     periods: dict[tuple[datetime, datetime], Observation] = {}
     for row in rows:
@@ -57,24 +107,16 @@ def _realized_profit(
     for period, row in sorted(periods.items()):
         if period[0] != cursor:
             return {"status": "censored", "reason": "realized_profit_period_gap_or_overlap"}
-        if (
-            row.attributes.get("currency") != currency
-            or row.attributes.get("realized") is not True
-            or row.attributes.get("costs_complete") is not True
-        ):
+        amount = _realized_amount(row, currency, required_cost_components)
+        if amount is None:
             return {"status": "censored", "reason": "incomplete_realized_costs_or_revenue"}
         try:
-            revenue = Decimal(str(row.attributes["realized_revenue"]))
-            costs = row.attributes["realized_costs"]
-            total_costs = (
-                sum((Decimal(str(value)) for value in costs.values()), Decimal(0))
-                if isinstance(costs, dict)
-                else Decimal(str(costs))
-            )
-            if not revenue.is_finite() or not total_costs.is_finite() or total_costs < 0:
-                raise ValueError("Invalid realized amount")
-            profit += revenue - total_costs
-        except (KeyError, TypeError, ValueError, InvalidOperation):
+            profit += amount
+            if required_cost_components is not None and not profit.is_finite():
+                return {"status": "censored", "reason": "incomplete_realized_costs_or_revenue"}
+        except DecimalException as error:
+            if required_cost_components is None and not isinstance(error, InvalidOperation):
+                raise
             return {"status": "censored", "reason": "incomplete_realized_costs_or_revenue"}
         evidence.append(row.observation_id)
         cursor = period[1]
@@ -98,7 +140,7 @@ class _PeriodPrefix:
     or a mutable ordered tree. References are materialized only for final results.
     """
 
-    def __init__(self, periods: list[tuple], start: datetime):
+    def __init__(self, periods: list[tuple], start: datetime, *, strict_profit: bool = False):
         self.rows = sorted(
             (record for record in periods if record[0][0] >= start),
             key=lambda record: (record[0][1], record[0][0]),
@@ -134,8 +176,17 @@ class _PeriodPrefix:
             if value is None:
                 invalid = True
             else:
-                lower += value[0]
-                upper += value[1]
+                try:
+                    lower += value[0]
+                    upper += value[1]
+                    if strict_profit and (
+                        not Decimal(lower).is_finite() or not Decimal(upper).is_finite()
+                    ):
+                        invalid = True
+                except DecimalException:
+                    if not strict_profit:
+                        raise
+                    invalid = True
             estimated |= precision == "estimated"
             bounded |= precision == "bounded"
             chain = not branches and sources == {start} and len(sinks) == 1
@@ -158,8 +209,16 @@ class _PeriodPrefix:
 class EntityTimeline:
     """One product partition's reusable metric, boundary and correction indexes."""
 
-    def __init__(self, rows: Sequence[Observation], target: str, currency: str | None = None):
+    def __init__(
+        self,
+        rows: Sequence[Observation],
+        target: str,
+        currency: str | None = None,
+        *,
+        required_cost_components: tuple[str, ...] | None = None,
+    ):
         self.target, self.currency = target, currency
+        self.required_cost_components = required_cost_components
         self.rows = list(rows)
         cumulative: list[tuple[Observation, Measurement]] = []
         periods: dict[tuple[datetime, datetime], tuple[Observation, Measurement | None]] = {}
@@ -181,7 +240,8 @@ class EntityTimeline:
         for period, (row, metric) in periods.items():
             value: tuple[int | Decimal, int | Decimal] | None
             if target == "profit":
-                value = self._profit_value(row)
+                amount = _realized_amount(row, currency, required_cost_components)
+                value = None if amount is None else (amount, amount)
                 precision = "exact"
             else:
                 assert metric is not None
@@ -201,35 +261,19 @@ class EntityTimeline:
         self._prefix_start: datetime | None = None
         self._prefix: _PeriodPrefix | None = None
 
-    def _profit_value(self, row: Observation) -> tuple[Decimal, Decimal] | None:
-        # Resolve the latest period revision before validating its business fields.
-        # Filtering incomplete revisions first would revive an older profit claim.
-        if (
-            row.attributes.get("currency") != self.currency
-            or row.attributes.get("realized") is not True
-            or row.attributes.get("costs_complete") is not True
-        ):
-            return None
-        try:
-            revenue = Decimal(str(row.attributes["realized_revenue"]))
-            costs = row.attributes["realized_costs"]
-            total = (
-                sum((Decimal(str(value)) for value in costs.values()), Decimal(0))
-                if isinstance(costs, dict)
-                else Decimal(str(costs))
-            )
-            if not revenue.is_finite() or not total.is_finite() or total < 0:
-                return None
-            return revenue - total, revenue - total
-        except (KeyError, TypeError, ValueError, InvalidOperation):
-            return None
-
     def _period_outcome(
         self, start: datetime, end: datetime, include_references: bool
     ) -> dict[str, Any] | None:
         profit = self.target == "profit"
         if self._prefix_start != start:
-            self._prefix_start, self._prefix = start, _PeriodPrefix(self.periods, start)
+            self._prefix_start, self._prefix = (
+                start,
+                _PeriodPrefix(
+                    self.periods,
+                    start,
+                    strict_profit=profit and self.required_cost_components is not None,
+                ),
+            )
         assert self._prefix is not None
         selected = self._prefix.query(end)
         if selected is None:
@@ -242,7 +286,13 @@ class EntityTimeline:
         if profit and invalid:
             # Preserve the established ordering of malformed-cost versus gap
             # diagnostics on exceptional inputs; valid periods use prefix sums.
-            fallback = _realized_profit(self.rows, start, end, self.currency)
+            fallback = _realized_profit(
+                self.rows,
+                start,
+                end,
+                self.currency,
+                required_cost_components=self.required_cost_components,
+            )
             if not include_references:
                 fallback.pop("evidence_refs", None)
             return fallback

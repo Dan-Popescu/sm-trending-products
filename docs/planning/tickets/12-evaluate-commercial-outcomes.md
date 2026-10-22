@@ -5,6 +5,9 @@ GitHub issue: [#20](https://github.com/Dan-Popescu/sm-trending-products/issues/2
 **Status:** Controlled engineering acceptance verified against the original criteria;
 see the [criterion matrix](../../verification/commercial-outcome-acceptance.md).
 Real commercial outcomes and business profitability remain unvalidated.
+The financial definition and baseline eligibility rules are specified in the
+[validation contract](../../specs/validation.md); existing frozen definitions are
+preserved when the stronger contract is used for new decisions.
 
 ## What to build
 

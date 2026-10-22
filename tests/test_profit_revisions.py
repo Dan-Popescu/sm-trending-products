@@ -47,7 +47,14 @@ def test_later_incomplete_realized_ledger_censors_without_rewriting_old_reports(
     )
     pipeline.review_link("ledger-product", "cost_import:cost:ledger")
     frozen = pipeline.freeze(
-        decision, True, outcome_config(target="profit", currency="EUR", threshold=30)
+        decision,
+        True,
+        outcome_config(
+            target="profit",
+            currency="EUR",
+            threshold=30,
+            profit_contract={"ledgers": {"cost_import:cost:ledger": ["goods", "ad_spend", "fees"]}},
+        ),
     )
     assert frozen["result"]["selected"] == ["ledger-product"]
     complete = {
