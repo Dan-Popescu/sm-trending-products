@@ -1,6 +1,6 @@
 # Delivery plan
 
-Status: architecture, defaults, specifications, test boundary, and autonomous implementation approved by the user on 2026-10-22. Implementation and integration verification are in progress; external acceptance is tracked separately.
+Status: architecture, defaults, specifications, test boundary, and autonomous implementation approved by the user on 2026-10-22. The software delivery is implemented; native-service, deployment, capacity, and live-source acceptance remain separate release gates. See the [implementation coverage](../implementation/coverage.md) for evidence and limits rather than interpreting this status as a production sign-off.
 
 ## Reading order
 
@@ -14,31 +14,32 @@ Status: architecture, defaults, specifications, test boundary, and autonomous im
    - [Trend assessment](../specs/trend-assessment.md)
    - [Historical and forward validation](../specs/validation.md)
    - [Operations and deployment](../specs/operations.md)
-5. [Proposed agent configuration](setup.md): review before activating repository instructions.
-6. [Proposed delivery tickets](tickets/README.md): review size and blocking edges before publication.
+5. [Repository setup record](setup.md): accepted choices and links to the active agent configuration.
+6. [Delivery tickets](tickets/README.md): approved behavior, dependency map, and acceptance status.
+7. [Implementation coverage](../implementation/coverage.md): actual software/test mapping and outstanding release gates.
 
 ## Working method
 
 Use Matt Pocock's setup, domain-modeling, to-spec, to-tickets, implement, and code-review workflows. Start from externally visible behavior, specify acceptance criteria, and implement narrow vertical slices. A database layer, collector layer, or dashboard layer alone is not a delivery ticket.
 
-GitHub Issues is the proposed canonical tracker for Dan-Popescu/sm-trending-products. Keep reviewed product requirements in the repository; publish an umbrella issue linking them and one issue per approved delivery ticket. Maintain native blocking links when the integration supports them; otherwise use explicit issue references. Do not mark a ticket ready-for-agent before its scope is approved and its human prerequisites are satisfied.
+GitHub Issues is the canonical tracker for Dan-Popescu/sm-trending-products. Keep reviewed product requirements in the repository; publish an umbrella issue linking them and one issue per approved delivery ticket when write access works. Maintain native blocking links when the integration supports them; otherwise use explicit issue references. Do not mark a ticket ready-for-agent before its scope is approved and its human prerequisites are satisfied.
 
 Read the domain glossary and relevant architecture decisions before implementing. For each ready ticket: select an unblocked slice, verify its acceptance criteria at the highest useful boundary, implement, run the relevant checks, and review the change against its specification. Use test-first development for nontrivial correctness rules. Record evidence in the pull request. Do not merge or deploy automatically.
 
-## Approval checkpoints
+## Accepted setup and remaining acceptance
 
 - Architecture: approved by the user.
 - Agent instructions: AGENTS.md selected under the user's authorization to choose recommended defaults.
 - Default triage labels: explicitly approved by the user.
 - Configuration: activated in AGENTS.md and docs/agents/.
-- Test boundary: propose collection-to-visible-evidence scenarios with real PostgreSQL and S3-compatible test services, a controlled HTTP source, and deterministic time. Smaller tests cover financial-independent numerical and temporal invariants where helpful.
+- Test boundary: collection-to-visible-evidence scenarios with PostgreSQL semantics and an HTTP S3 test service, a controlled HTTP source, and deterministic time. Smaller tests cover numerical and temporal invariants where helpful. Local SQL execution uses PGlite; native PostgreSQL remains required for concurrency acceptance.
 - Delivery breakdown: approved for autonomous execution; tracker publication is blocked by integration permissions.
 - Live source acceptance: cannot be completed without approved credentials and scopes. Contract fixtures demonstrate software behavior, not granted access or market coverage.
 
 ## Current repository state
 
-The remote repository was observed empty. An earlier GitHub write attempt returned HTTP 403, Resource not accessible by integration. Publication remains blocked until write access works; local drafts are not published GitHub issues.
+The remote repository was observed empty. GitHub write attempts returned HTTP 403, Resource not accessible by integration. Publication remains blocked until write access works; local delivery records are not published GitHub issues. Continue using the approved local records without silently changing the canonical tracker.
 
-The preexisting local Python/SQLite scaffold is an abandoned experiment. It is not an implementation of this plan and must not be included in the documentation change or silently reused as the approved storage architecture. Preserve it separately until implementation cleanup is explicitly recorded.
+The preexisting local Python/SQLite scaffold was an abandoned experiment. The supported runtime now implements PostgreSQL operational state and S3 raw/Parquet history; the earlier experiment is outside that runtime. Implementation assumptions and substitutions are recorded in [the decisions recap](../implementation/assumptions.md).
 
 All repository documentation and technical identifiers use English, including filenames, variables, functions, tables, fields, metrics, and issue titles. User-facing discussion can remain in French.

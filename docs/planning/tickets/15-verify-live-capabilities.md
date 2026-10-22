@@ -1,6 +1,6 @@
 # T15 — Validate real source capabilities and enable live collection
 
-**Status:** proposed; not published; human prerequisites pending.
+**Status:** Acceptance pending; verification software implemented, but real credentials, approved scopes, permitted intended use, and real observations are unavailable. See the [coverage record](../../implementation/coverage.md). Not published to GitHub.
 
 ## What to build
 

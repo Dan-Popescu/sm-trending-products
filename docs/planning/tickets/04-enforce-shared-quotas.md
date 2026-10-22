@@ -1,6 +1,6 @@
 # T04 — Enforce shared quotas across collectors
 
-**Status:** proposed; not published.
+**Status:** Software implemented; native PostgreSQL concurrency acceptance pending. See the [coverage record](../../implementation/coverage.md). Not published to GitHub.
 
 ## What to build
 

@@ -34,9 +34,17 @@ implementation choices from external acceptance that software cannot grant.
 - Evaluate 3/7/14-day outcomes and 2/10-day action-delay scenarios with frozen
   definitions. Asynchronous polls produce bounds or censoring; synthetic history
   never qualifies as real-market validation.
+- Advance prospective outcomes through a persistent, leased due queue rather than
+  repeatedly selecting the newest decisions. Retry missing observations through
+  the configured polling grace, then retain terminal censored results.
+- Start all four Dagster schedules automatically. Collection authorization and
+  verified retention policies still determine which work can actually execute.
 - Default controls bound collector requests, import batches, analytical product
   batches, row materialization, cache use, and DuckDB memory. Oversized work fails
   explicitly and requires repartitioning instead of claiming unlimited scale.
+- Split oversized evaluation batches by product. A single product exceeding the
+  configured relevant-row budget still fails explicitly; extreme fanout requires
+  additional per-entity partial aggregation rather than an unmeasured RAM increase.
 - Compaction preserves original observation provenance. Retention invalidates
   descendants, blocks re-publication, clears affected payloads and cache files,
   and purges applicable S3 object versions rather than merely adding delete markers.
@@ -45,6 +53,9 @@ implementation choices from external acceptance that software cannot grant.
   image location; this does not substitute Moto for durable production storage.
 - Bind operator services to loopback and document SSH access. A single VPS is the
   initial deployment target; cloud provisioning and paid subscriptions are excluded.
+- Keep a recoverable source archive and Git history when remote publication is
+  unavailable. GitHub integration writes returned 403, and a terminal push dry run
+  could not authenticate; no PR or remotely executed workflow is claimed.
 
 ## External acceptance
 

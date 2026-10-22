@@ -1,6 +1,6 @@
-# Proposed delivery tickets
+# Delivery tickets
 
-Status: approved for autonomous implementation; publication blocked by GitHub integration permissions. T01–T15 remain local identifiers, not GitHub issue numbers. Engineering verification and external acceptance are tracked separately.
+Status: approved for autonomous implementation; software is implemented and external acceptance remains pending where identified in each ticket. Publication is blocked by GitHub integration permissions. T01–T15 remain local identifiers, not GitHub issue numbers. See [implementation coverage](../../implementation/coverage.md) for actual files, test scenarios, and release gates; a test's existence is not a claim that native infrastructure or live access has been accepted.
 
 Each ticket is a narrow complete behavior with an operator-visible outcome and acceptance evidence. Relevant specifications define the shared contracts; tickets do not establish competing definitions.
 
@@ -20,11 +20,14 @@ Each ticket is a narrow complete behavior with an operator-visible outcome and a
 14. **[T14 — Establish a measured operating envelope](14-measure-operating-envelope.md).** Blocked by: T07, T10, T13. Publish repeatable load, memory, recovery, and object-store traffic measurements with a cost model.
 15. **[T15 — Validate real source capabilities and enable live collection](15-verify-live-capabilities.md).** Engineering blockers: T01, T08. Human blocker: credentials, approved scopes and permitted use. Produce a verified capability matrix and at least one real observation from each actually available adapter; disable denied capabilities explicitly.
 
-## Review questions
+## Acceptance status
 
-- Is each slice small enough for one focused implementation session, or should any be split or merged?
-- Do the listed blockers represent real prerequisites rather than preferred sequencing?
-- Does the collection-to-visible-evidence test boundary match the desired level of confidence?
+- T01–T12 have implemented software and behavioral test scenarios. Native PostgreSQL concurrent workers/leases/quotas still require verification on the native-service workflow; source fixtures do not establish live TikTok access.
+- T13 has deployment, backup, and isolated-restore tooling. The Docker image build, full native container restore, provider checks, and actual VPS rollout have not been demonstrated in this workspace.
+- T14 has a measured synthetic sample and benchmark tooling. A production operating envelope, multiworker load capacity, and recurring provider cost remain unproven.
+- T15 has capability-verification tooling, but live acceptance is pending credentials, approved scopes, and permission for the actual intended use. It is not marked complete.
+
+The individual acceptance checklists retain the original delivery requirements. Use the coverage record and execution reports to decide which release gates are satisfied; do not treat an implemented feature as deployed or accepted merely because its code exists.
 
 ## Execution notes
 

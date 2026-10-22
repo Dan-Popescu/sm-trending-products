@@ -1,6 +1,6 @@
 # T06 — Rank attention with inspectable reasons
 
-**Status:** proposed; not published.
+**Status:** Software implemented; acceptance evidence is mapped in the [coverage record](../../implementation/coverage.md). Not published to GitHub.
 
 ## What to build
 

@@ -1,6 +1,6 @@
 # T01 — Inspect an authorized-video observation end to end
 
-**Status:** proposed; not published.
+**Status:** Software implemented; acceptance evidence is mapped in the [coverage record](../../implementation/coverage.md). Not published to GitHub.
 
 ## What to build
 

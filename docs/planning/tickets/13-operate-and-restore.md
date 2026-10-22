@@ -1,6 +1,6 @@
 # T13 — Operate and restore the complete pipeline on a VPS
 
-**Status:** proposed; not published.
+**Status:** Deployment and recovery software implemented; Docker image build, full isolated native restore, provider acceptance, and VPS rollout pending. See the [coverage record](../../implementation/coverage.md). Not published to GitHub.
 
 ## What to build
 

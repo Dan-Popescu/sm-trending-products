@@ -1,6 +1,6 @@
 # T09 — Review demand, competition, and feasibility gaps
 
-**Status:** proposed; not published.
+**Status:** Software implemented; acceptance evidence is mapped in the [coverage record](../../implementation/coverage.md). Not published to GitHub.
 
 ## What to build
 

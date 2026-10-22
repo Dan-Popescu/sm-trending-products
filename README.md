@@ -10,6 +10,11 @@ Repository documentation and all technical identifiers use English. The earlier 
 
 Start with the [VPS runbook](docs/operations/runbook.md), [product requirements](docs/prd/overview.md), [delivery plan](docs/planning/README.md), and [autonomous implementation decisions](docs/implementation/assumptions.md).
 
+The [implementation coverage](docs/implementation/coverage.md),
+[verification report](docs/verification/implementation.md), and
+[handoff instructions](docs/implementation/handoff.md) distinguish implemented
+software from the remaining live-source and deployment acceptance gates.
+
 ```bash
 uv sync --locked --extra dev
 cargo build --locked --manifest-path collector/Cargo.toml
