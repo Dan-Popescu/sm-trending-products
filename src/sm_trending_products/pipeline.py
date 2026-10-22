@@ -490,6 +490,54 @@ class Pipeline:
             )
         return limit, offset
 
+    def collection_summaries(
+        self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
+    ) -> list[dict]:
+        limit, offset = self._review_page(limit, offset)
+        return self.catalog.all(
+            "SELECT task_id,source,account_id,operation,synthetic,state,created_at,due_at,"
+            "completed_at,last_error,schedule_reason->>'policy_version' AS policy_version,"
+            "schedule_reason->>'bucket' AS bucket,schedule_reason->>'tier' AS tier,"
+            "schedule_reason->>'scope' AS scope,"
+            "schedule_reason->'planned_interval_hours' AS planned_interval_hours,"
+            "CASE WHEN jsonb_typeof(schedule_reason->'entity_keys')='array' "
+            "THEN jsonb_array_length(schedule_reason->'entity_keys') "
+            "WHEN schedule_reason ? 'entity_key' THEN 1 ELSE 0 END AS entity_count "
+            "FROM collection_tasks WHERE synthetic=%s AND schedule_reason<>'{}'::jsonb "
+            "ORDER BY created_at DESC,task_id LIMIT %s OFFSET %s",
+            (synthetic, limit, offset),
+        )
+
+    def collection_decision(
+        self, task_id: str, synthetic: bool = False, *, limit: int = 200, offset: int = 0
+    ) -> dict | None:
+        """Read one decision and a bounded member page in the same SQL snapshot."""
+        limit, offset = self._review_page(limit, offset)
+        row = self.catalog.one(
+            "WITH planned AS (SELECT *,CASE "
+            "WHEN jsonb_typeof(schedule_reason->'entity_reasons')='array' "
+            "THEN schedule_reason->'entity_reasons' "
+            "WHEN schedule_reason ? 'entity_key' THEN jsonb_build_array(schedule_reason) "
+            "ELSE '[]'::jsonb END AS reasons FROM collection_tasks "
+            "WHERE task_id=%s AND synthetic=%s AND schedule_reason<>'{}'::jsonb) "
+            "SELECT p.task_id,p.source,p.account_id,p.operation,p.synthetic,p.state,"
+            "p.created_at,p.due_at,p.completed_at,p.last_error,p.page_index,"
+            "p.payload AS request_context,"
+            "p.schedule_reason-'entity_reasons'-'entity_keys' AS decision,"
+            "jsonb_array_length(p.reasons) AS member_count,"
+            "COALESCE((SELECT jsonb_agg(jsonb_build_object('reason',page.reason,"
+            "'candidate',jsonb_build_object('discovered_at',e.discovered_at,"
+            "'last_observed_at',e.last_observed_at,'next_due_at',e.next_due_at,"
+            "'origin_dataset_id',e.origin->>'dataset_id')) ORDER BY page.position) "
+            "FROM (SELECT value AS reason,ordinality AS position "
+            "FROM jsonb_array_elements(p.reasons) WITH ORDINALITY "
+            "ORDER BY ordinality LIMIT %s OFFSET %s) page "
+            "LEFT JOIN entities e ON e.entity_key=(page.reason->>'entity_key') "
+            "AND e.synthetic=p.synthetic),'[]'::jsonb) AS members FROM planned p",
+            (task_id, synthetic, limit, offset),
+        )
+        return redact(row) if row else None
+
     def alerts(self, synthetic: bool = False) -> list[dict]:
         return self.catalog.all(
             "SELECT * FROM alerts WHERE synthetic=%s ORDER BY created_at DESC LIMIT 1000",

@@ -69,6 +69,14 @@ class DashboardPipeline(Protocol):
 
     def evaluation(self, evaluation_id: str, synthetic: bool = False) -> Row | None: ...
 
+    def collection_summaries(
+        self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
+    ) -> list[Row]: ...
+
+    def collection_decision(
+        self, task_id: str, synthetic: bool = False, *, limit: int = 200, offset: int = 0
+    ) -> Row | None: ...
+
     def create_product(
         self, product_id: str, name: str, synthetic: bool = False, market: str | None = None
     ) -> Row: ...
@@ -448,6 +456,52 @@ def _history(pipeline: DashboardPipeline, synthetic: bool) -> None:
                 st.json(display_safe(detail), expanded=False)
 
 
+def _reset_collection_member_page() -> None:
+    st.session_state["collection_member_page"] = 1
+
+
+def _collection_plan(pipeline: DashboardPipeline, synthetic: bool) -> None:
+    st.subheader("Recorded collection plan")
+    st.caption(
+        "Inspect the recorded policy inputs, request scope and planned intervals. "
+        "Candidate timestamps describe the current catalog state. "
+        "Coverage is limited to sampled candidates and permitted sources."
+    )
+    page = st.number_input("Plan page", min_value=1, value=1, step=1, key="collection_page")
+    tasks: list[Row] = _read(
+        "collection plan",
+        lambda: pipeline.collection_summaries(
+            synthetic, limit=MAX_REVIEW_ROWS, offset=(int(page) - 1) * MAX_REVIEW_ROWS
+        ),
+        [],
+    )
+    _records("planned tasks", tasks)
+    if not tasks:
+        return
+    selected = st.selectbox(
+        "Inspect planned request",
+        [str(row["task_id"]) for row in tasks],
+        key="collection_task",
+        on_change=_reset_collection_member_page,
+    )
+    member_page = st.number_input(
+        "Candidate page", min_value=1, value=1, step=1, key="collection_member_page"
+    )
+    detail = _read(
+        "collection decision",
+        lambda: pipeline.collection_decision(
+            selected,
+            synthetic,
+            limit=MAX_REVIEW_ROWS,
+            offset=(int(member_page) - 1) * MAX_REVIEW_ROWS,
+        ),
+        None,
+    )
+    if detail is not None:
+        st.caption(f"{detail['member_count']} candidate intentions in this recorded request.")
+        st.json(display_safe(detail), expanded=False)
+
+
 def _health(status: Row, capabilities: list[Row], synthetic: bool = False) -> None:
     st.subheader("Source capabilities and measured coverage")
     if not any(row.get("state") == "available" for row in capabilities):
@@ -521,7 +575,13 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
         )
         view = st.radio(
             "Review view",
-            ["Opportunities", "Catalog", "Datasets and evaluations", "Health and coverage"],
+            [
+                "Opportunities",
+                "Catalog",
+                "Collection plan",
+                "Datasets and evaluations",
+                "Health and coverage",
+            ],
             key="review_view",
         )
         st.caption(
@@ -561,6 +621,8 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
             _catalog(pipeline, products, as_of, synthetic)
     elif view == "Datasets and evaluations":
         _history(pipeline, synthetic)
+    elif view == "Collection plan":
+        _collection_plan(pipeline, synthetic)
     else:
         status: Row = _read("operational status", pipeline.status, {})
         _health(status, status.get("capabilities", []), synthetic)
