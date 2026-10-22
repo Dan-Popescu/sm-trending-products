@@ -422,3 +422,54 @@ def test_bounded_scan_progresses_past_unrefreshable_old_candidates_and_retries_t
     retried = pipeline.schedule(1, synthetic=True)
     assert retried["scheduled"] == 1
     assert retried["decisions"][0]["entity_key"] == "tiktok_ads:ad:old"
+
+
+def test_legacy_commercial_list_origin_uses_canonical_refresh():
+    from sm_trending_products.scheduler import Scheduler
+
+    for source, kind in [("tiktok_ads", "ad"), ("tiktok_commercial", "commercial_content")]:
+        entity = {
+            "source": source,
+            "account_id": "account",
+            "entity_type": kind,
+            "entity_key": f"{source}:{kind}:one",
+            "origin_manifest": {
+                "task_request": {
+                    "source": source,
+                    "account_id": "account",
+                    "operation": "list",
+                    "payload": {
+                        "filters": {"country_code": "FR"},
+                        "cursor": 2,
+                        "search_id": "old-page",
+                    },
+                }
+            },
+        }
+        assert Scheduler._refresh_request(entity, False) == (
+            "query",
+            {"filters": {"country_code": "FR"}},
+        )
+
+
+@pytest.mark.integration
+def test_full_queue_preserves_policy_without_scanning_or_deferring_entities(catalog):
+    from sm_trending_products.scheduler import Scheduler
+
+    catalog.configure_budget("tiktok_display", "creator", 100, 1)
+    catalog.execute(
+        "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type) "
+        "VALUES('tiktok_display:video:full',true,'tiktok_display','creator','video')"
+    )
+    first = Scheduler(catalog).schedule(1, synthetic=True, policy={"max_pending_tasks": 1})
+    assert first["scheduled"] == 1
+    catalog.execute("UPDATE entities SET next_due_at=clock_timestamp()-interval '1 day'")
+    before = catalog.one("SELECT last_scheduler_inspected_at FROM entities")
+    result = Scheduler(catalog).schedule(
+        100, synthetic=True, policy={"version": "full-queue-v2", "max_pending_tasks": 1}
+    )
+    assert result["scheduled"] == result["scanned_candidates"] == result["deferred_count"] == 0
+    assert result["policy"]["version"] == "full-queue-v2"
+    entity = catalog.one("SELECT last_scheduler_inspected_at,schedule_reason FROM entities")
+    assert entity["last_scheduler_inspected_at"] == before["last_scheduler_inspected_at"]
+    assert "deferred" not in entity["schedule_reason"]

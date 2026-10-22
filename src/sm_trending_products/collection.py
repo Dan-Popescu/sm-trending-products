@@ -11,6 +11,7 @@ from .collector import CollectionError, Collector, redact
 from .contracts import Observation, digest, now
 from .history import History
 from .settings import Settings
+from .source_contracts import canonical_operation
 
 
 class SourceCollection:
@@ -44,8 +45,7 @@ class SourceCollection:
         synthetic: bool = False,
         idempotency_key: str | None = None,
     ) -> str:
-        if source not in {"tiktok_display", "tiktok_ads", "tiktok_commercial"}:
-            raise ValueError("Unsupported source")
+        operation = canonical_operation(source, operation)
         if not synthetic:
             self._require_access(source, account_id)
             if any(
@@ -68,7 +68,7 @@ class SourceCollection:
         request = {
             "source": task["source"],
             "account_id": task["account_id"],
-            "operation": task["operation"],
+            "operation": canonical_operation(task["source"], task["operation"]),
             "synthetic": task["synthetic"],
             "payload": payload,
         }
@@ -133,6 +133,11 @@ class SourceCollection:
                             "quarantine": envelope.get("quarantine", []),
                         }
                     observations = [Observation.model_validate(item) for item in raw["records"]]
+                    if task["source"] == "tiktok_display" and task["operation"] == "query":
+                        requested = set(task["payload"].get("filters", {}).get("video_ids", []))
+                        returned = {obs.entity_id for obs in observations}
+                        raw["requested_entity_ids"] = sorted(requested)
+                        raw["missing_entity_ids"] = sorted(requested - returned)
                     if any(
                         obs.source != task["source"] or obs.synthetic != synthetic
                         for obs in observations
@@ -246,6 +251,7 @@ class SourceCollection:
         evidence: str,
         retention_days: int,
     ) -> dict:
+        operation = canonical_operation(source, operation)
         if not evidence.strip() or retention_days < 1:
             raise ValueError("Source approval evidence and positive retention are required")
         request = {
