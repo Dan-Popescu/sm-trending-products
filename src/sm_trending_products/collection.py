@@ -228,6 +228,7 @@ class SourceCollection:
                     "access_denied",
                     "invalid_request",
                     "schema",
+                    "invalid_retry_hint",
                 }
                 if not synthetic and category == "access_denied":
                     self.catalog.execute(

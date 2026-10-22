@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
 import tempfile
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .contracts import canonical
@@ -18,7 +20,17 @@ class CollectionError(RuntimeError):
         self, category: str, retry_after_seconds: float = 60, artifact: dict | None = None
     ):
         self.category = category if re.fullmatch(r"[a-z_]+", category) else "collection_error"
-        self.retry_after_seconds = max(1, min(float(retry_after_seconds), 86400))
+        try:
+            delay = float(retry_after_seconds)
+            if not math.isfinite(delay) or delay < 0:
+                raise ValueError("Invalid retry delay")
+            # Validate the durable timestamp range instead of shortening a valid
+            # upstream block to an arbitrary local one-day refresh ceiling.
+            datetime.now(UTC) + timedelta(seconds=delay)
+        except (TypeError, ValueError, OverflowError):
+            self.category = "invalid_retry_hint"
+            delay = 60.0
+        self.retry_after_seconds = max(1, delay)
         self.artifact = redact(artifact) if artifact is not None else None
         super().__init__(self.category)
 

@@ -86,6 +86,14 @@ Investigate the reported category rather than dumping tokens, request headers, s
 
 The application scheduler decides which candidate tasks are due and how the budget is split. Dagster coordinates batches and downstream assessments. A Dagster run is not created for every individual video.
 
+Source retry windows take precedence over the desired refresh interval, including
+valid waits longer than a day. Workers persist the due time and release their
+lease rather than sleeping for that period. A nonfinite, negative or
+unrepresentable delay produces `invalid_retry_hint` and quarantines the task;
+inspect the source/adapter contract before enqueueing replacement work.
+`collector_timeout` terminates the child collector and preserves retryable work
+without publishing partial evidence.
+
 ## Backup and recovery
 
 See [backup and restore](backup-and-restore.md). Run an isolated restore exercise after configuration or schema changes and on a regular operational schedule selected by the operator. Backup creation alone does not demonstrate recoverability.
@@ -97,6 +105,24 @@ Before upgrading, record the current image/dependency revisions, pause writers, 
 Compaction publishes a completed replacement before changing the catalog's read frontier, preserves original observation/availability/provenance, and retains raw evidence subject to policy. Retention preview is read-only; applying retention invalidates dependent assessments/evaluations before deleting restricted objects. Versioned or suspended-versioning S3 buckets require listing and deleting every affected version and delete marker; a simple delete marker is insufficient. The service identity therefore needs bucket versioning inspection, version listing, and version deletion permissions in addition to ordinary object reads/writes/deletes. Object Lock or denied deletion leaves explicit pending work for retry. Review source policies and backup retention together: a backup can also contain data that must expire.
 
 Cache eviction must affect only reproducible local copies. If a cached object fails its checksum, reacquire and verify it. Do not delete S3 history to free VPS cache space.
+
+`HISTORY_TARGET_ROWS_PER_FILE` defaults to 1,000 rows and bounds physical fanout
+under `HISTORY_PARTITION_BUCKETS`; small source pages therefore avoid producing
+one Parquet object per entity. The `history_compaction` Dagster job runs at minute
+45 each hour and compacts one compatible group of at most 100 datasets. Its
+default workspace is live; run it explicitly with `synthetic=true` for synthetic
+history. It preserves raw provenance and may correctly report `no_work` when no
+two eligible small datasets fit the row limit.
+
+The additive object/delivery index migration preserves existing datasets. Their
+first evidence-page requests may return `status=indexing` while preparing compact
+lookup references from verified legacy Parquet. Retry the same product, workspace,
+cutoff and cursor until `status=ready`. Each request processes at most
+`HISTORY_INDEX_OBJECTS_PER_CALL` objects (default 32), using 1,000-row Arrow batches.
+Current publications index atomically and do not require that preparation. Use
+`Pipeline.evidence_page` cursors for stable paging; the compatibility `evidence`
+offset API skips bounded pages and raises an explicit pending error during legacy
+preparation. Cursors cannot be reused with a different product, workspace or cutoff.
 
 ## Scale decisions
 

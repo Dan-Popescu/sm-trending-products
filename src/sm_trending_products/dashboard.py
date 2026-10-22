@@ -6,6 +6,7 @@ it to loopback; reach it through an authenticated SSH tunnel or a private proxy.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from collections.abc import Callable, Mapping, Sequence
@@ -370,7 +371,25 @@ def _health(status: Row, capabilities: list[Row], synthetic: bool = False) -> No
         "Latest observation", max(observed).isoformat() if observed else "No observation"
     )
     st.caption("Health cards describe the selected live or synthetic workspace.")
-    st.json(display_safe(status), expanded=False)
+    visible_status = dict(status)
+    if "budgets" in status:
+        visible_status["budgets"] = []
+        for budget in status["budgets"]:
+            units = budget.get("tokens")
+            # Quota units are not authentication tokens. Rename only the known
+            # numeric counter at this facade boundary; keep secret filtering broad.
+            numeric = (
+                isinstance(units, (int, float))
+                and not isinstance(units, bool)
+                and math.isfinite(units)
+            )
+            visible_status["budgets"].append(
+                {
+                    **{key: value for key, value in budget.items() if key != "tokens"},
+                    "remaining_request_units": units if numeric else None,
+                }
+            )
+    st.json(display_safe(visible_status), expanded=False)
     st.caption(
         "Healthy processes do not establish fresh evidence, complete market coverage, "
         "or usable source permissions."

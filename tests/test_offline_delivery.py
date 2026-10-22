@@ -96,6 +96,27 @@ def test_dagster_collection_publishes_reviewable_evidence_and_a_frozen_decision(
     assert not app.exception
     assert app.dataframe[0].value.iloc[0]["Product"] == "Controlled lamp"
     assert app.selectbox(key="evidence_product").value == "offline-product"
+    published = next(
+        value
+        for element in app.json
+        if isinstance(value := json.loads(element.value), dict)
+        and value.get("product_id") == "offline-product"
+        and "features" in value
+    )
+    assert published["features"]["interval_hours"] == pytest.approx([1.0], abs=1e-12)
+    status = next(
+        value
+        for element in app.json
+        if isinstance(value := json.loads(element.value), dict)
+        and "queues" in value
+        and "budgets" in value
+    )
+    assert status["budgets"] and all(
+        isinstance(row["remaining_request_units"], (int, float))
+        and 0 <= row["remaining_request_units"] <= row["capacity"]
+        for row in status["budgets"]
+    )
+    assert all("oldest_due_at" in row for row in status["queues"])
     evidence_frame = next(frame.value for frame in app.dataframe if "observation_id" in frame.value)
     assert len(evidence_frame) == 2
     observations = next(

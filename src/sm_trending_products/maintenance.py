@@ -6,12 +6,12 @@ import fcntl
 import gzip
 import hashlib
 import io
-from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
+from .cache import cache_object_lock
 from .contracts import Observation, canonical, digest
 
 if TYPE_CHECKING:
@@ -29,31 +29,43 @@ class Maintenance:
     def compact(self, synthetic: bool = False, max_datasets: int = 100) -> dict[str, Any]:
         if not 2 <= max_datasets <= 1000:
             raise ValueError("Compaction dataset limit must be between 2 and 1000")
-        candidates = self.catalog.all(
-            "SELECT * FROM datasets WHERE state='committed' AND compacted_into IS NULL "
-            "AND synthetic=%s AND row_count>0 AND quarantine_count=0 "
-            "ORDER BY created_at,dataset_id LIMIT %s",
-            (synthetic, max_datasets),
-        )
-        groups: dict[tuple, list[dict]] = defaultdict(list)
-        for dataset in candidates:
-            manifest = dataset["manifest"]
-            groups[
-                (dataset["source"], dataset["transform_version"], manifest["partition_buckets"])
-            ].append(dataset)
-        selected: list[dict] = []
         row_limit = min(COMPACTION_MAX_ROWS, self.pipeline.settings.analysis_max_rows_per_batch)
-        for group in groups.values():
+        # Select a mergeable group in SQL before fetching manifests. Full outputs
+        # and incompatible early groups cannot repeatedly occupy the candidate cap.
+        group = self.catalog.one(
+            "WITH ranked AS (SELECT source,transform_version,"
+            "manifest->>'partition_buckets' AS buckets,row_count,created_at,"
+            "row_number() OVER(PARTITION BY source,transform_version,"
+            "manifest->>'partition_buckets' ORDER BY row_count,created_at,dataset_id) AS position "
+            "FROM datasets WHERE state='committed' AND compacted_into IS NULL "
+            "AND synthetic=%s AND row_count>0 AND row_count<%s AND quarantine_count=0) "
+            "SELECT source,transform_version,buckets FROM ranked WHERE position<=2 "
+            "GROUP BY source,transform_version,buckets HAVING count(*)=2 AND sum(row_count)<=%s "
+            "ORDER BY min(created_at),source,transform_version LIMIT 1",
+            (synthetic, row_limit, row_limit),
+        )
+        selected: list[dict] = []
+        if group:
+            candidates = self.catalog.all(
+                "SELECT * FROM datasets WHERE state='committed' AND compacted_into IS NULL "
+                "AND synthetic=%s AND row_count>0 AND row_count<%s AND quarantine_count=0 "
+                "AND source=%s AND transform_version=%s AND manifest->>'partition_buckets'=%s "
+                "ORDER BY row_count,created_at,dataset_id LIMIT %s",
+                (
+                    synthetic,
+                    row_limit,
+                    group["source"],
+                    group["transform_version"],
+                    group["buckets"],
+                    max_datasets,
+                ),
+            )
             rows = 0
-            possible = []
-            for dataset in group:
+            for dataset in candidates:
                 if rows + dataset["row_count"] <= row_limit:
-                    possible.append(dataset)
+                    selected.append(dataset)
                     rows += dataset["row_count"]
-            if len(possible) >= 2:
-                selected = possible
-                break
-        if not selected:
+        if len(selected) < 2:
             return {
                 "status": "no_work",
                 "reason": "fewer_than_two_eligible_datasets",
@@ -63,6 +75,9 @@ class Maintenance:
         observations = self.history.read(selected, as_of=cutoff, max_rows=row_limit)
         parent_ids = sorted(dataset["dataset_id"] for dataset in selected)
         dataset_id = digest({"kind": "compaction", "parents": parent_ids, "version": "1"})
+        staged = self.catalog.one(
+            "SELECT manifest FROM datasets WHERE dataset_id=%s AND state='staged'", (dataset_id,)
+        )
         source = selected[0]["source"]
         partition_buckets = selected[0]["manifest"]["partition_buckets"]
         objects, raw_body, manifest = self._compaction_objects(
@@ -72,6 +87,7 @@ class Maintenance:
             parent_ids,
             dataset_id,
             partition_buckets,
+            recorded=staged["manifest"] if staged else None,
         )
         self.catalog.stage_dataset(dataset_id, source, synthetic, manifest)
         self.history.put(manifest["raw"]["key"], raw_body, content_type="application/gzip")
@@ -117,6 +133,7 @@ class Maintenance:
                     dataset_id,
                 ),
             )
+            self.catalog.index_observations(connection, dataset_id, manifest, observations)
             connection.execute(
                 "UPDATE datasets SET compacted_into=%s WHERE dataset_id=ANY(%s)",
                 (dataset_id, parent_ids),
@@ -140,6 +157,8 @@ class Maintenance:
         parent_ids: list[str],
         dataset_id: str,
         partition_buckets: int,
+        *,
+        recorded: dict | None = None,
     ) -> tuple[list[tuple[dict, bytes]], bytes, dict]:
         namespace = "synthetic" if synthetic else "live"
         date = min(obs.observed_at for obs in observations).date().isoformat()
@@ -160,27 +179,14 @@ class Maintenance:
             compressed.write(b"]}\n")
         raw_body = raw_stream.getvalue()
         raw_hash = hashlib.sha256(raw_body).hexdigest()
-        buckets: dict[int, list[Observation]] = defaultdict(list)
-        for obs in observations:
-            bucket = int(hashlib.sha256(obs.entity_key.encode()).hexdigest()[:8], 16)
-            buckets[bucket % partition_buckets].append(obs)
-        objects = []
-        for bucket, part in sorted(buckets.items()):
-            body = self.history.encode(part)
-            checksum = hashlib.sha256(body).hexdigest()
-            key = f"normalized/{prefix}/bucket={bucket:04d}/{checksum}.parquet"
-            objects.append(
-                (
-                    {
-                        "key": key,
-                        "sha256": checksum,
-                        "bytes": len(body),
-                        "bucket": bucket,
-                        "entity_keys": sorted({obs.entity_key for obs in part}),
-                    },
-                    body,
-                )
-            )
+        objects, physical_buckets = self.history.normalized_objects(
+            observations,
+            prefix,
+            partition_buckets,
+            physical_buckets=(
+                recorded.get("physical_partition_buckets", partition_buckets) if recorded else None
+            ),
+        )
         manifest = {
             "schema_version": "1",
             "dataset_id": dataset_id,
@@ -188,6 +194,7 @@ class Maintenance:
             "source": source,
             "synthetic": synthetic,
             "partition_buckets": partition_buckets,
+            "physical_partition_buckets": physical_buckets,
             "parent_dataset_ids": parent_ids,
             "raw": {
                 "key": f"raw/{prefix}/{raw_hash}.jsonl.gz",
@@ -202,6 +209,9 @@ class Maintenance:
             "supersedes": None,
             "manifest_key": f"manifests/{namespace}/{dataset_id}.json",
         }
+        if recorded:
+            objects = self.history.recover_staged_objects(recorded, raw_hash, objects)
+            manifest = recorded
         return objects, raw_body, manifest
 
     @staticmethod
@@ -428,19 +438,21 @@ class Maintenance:
         for item in pending:
             key = item["object_key"]
             try:
-                if versioned:
-                    self._delete_object_versions(key)
-                else:
-                    self.history.metrics["delete_requests"] = (
-                        self.history.metrics.get("delete_requests", 0) + 1
-                    )
-                    self.history.client.delete_object(Bucket=self.history.bucket, Key=key)
-                with (self.pipeline.settings.cache_dir / ".cache.lock").open("a") as lock:
-                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-                    cached = (
-                        self.pipeline.settings.cache_dir / hashlib.sha256(key.encode()).hexdigest()
-                    )
-                    cached.unlink(missing_ok=True)
+                with cache_object_lock(self.history, key):
+                    if versioned:
+                        self._delete_object_versions(key)
+                    else:
+                        self.history.metrics["delete_requests"] = (
+                            self.history.metrics.get("delete_requests", 0) + 1
+                        )
+                        self.history.client.delete_object(Bucket=self.history.bucket, Key=key)
+                    with (self.pipeline.settings.cache_dir / ".cache.lock").open("a") as lock:
+                        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                        cached = (
+                            self.pipeline.settings.cache_dir
+                            / hashlib.sha256(key.encode()).hexdigest()
+                        )
+                        cached.unlink(missing_ok=True)
             except (BotoCoreError, ClientError, OSError):
                 self.catalog.execute(
                     "UPDATE retention_objects SET attempts=attempts+1,"

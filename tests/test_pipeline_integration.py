@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 import time
 from contextlib import contextmanager
@@ -189,23 +190,118 @@ def test_rust_http_pagination_publishes_both_pages_before_advancing_the_cursor(
     assert pipeline.latest_assessments(synthetic=False) == []
 
 
+@pytest.mark.parametrize("retry_after", [120, 172800])
 def test_source_rate_limit_preserves_the_task_without_publishing_or_retrying_ahead(
-    pipeline, monkeypatch
+    pipeline, monkeypatch, retry_after
 ):
     monkeypatch.setenv("TIKTOK_DISPLAY_ACCESS_TOKEN", "fixture-access-token")
     pipeline.catalog.configure_budget("tiktok_display", ACCOUNT, 20, 1)
-    with controlled_source([(429, {}, {"Retry-After": "120"})]) as (endpoint, requests):
-        pipeline.enqueue(
+    # Synthetic Rust requests intentionally do not bind real credential keys.
+    # Seed the established shared-budget relationship through its native SQL API.
+    pipeline.catalog.one(
+        "SELECT * FROM reserve_request('tiktok_display',%s,'controlled-shared-credential')",
+        (ACCOUNT,),
+    )
+    started = now()
+    with controlled_source([(429, {}, {"Retry-After": str(retry_after)})]) as (endpoint, requests):
+        task_id = pipeline.enqueue(
             "tiktok_display", ACCOUNT, "list", {"endpoint_override": endpoint}, synthetic=True
         )
         result = pipeline.collect_batch(batch_size=3, synthetic=True)
     assert result["processed"] == 0
     assert result["errors"][0]["category"] == "rate_limited"
     assert len(requests) == 1
+    task = pipeline.catalog.one("SELECT * FROM collection_tasks WHERE task_id=%s", (task_id,))
+    assert task["due_at"] >= started + timedelta(seconds=retry_after)
+    budget = pipeline.catalog.one(
+        "SELECT blocked_until FROM request_budgets WHERE source='tiktok_display' AND account_id=%s",
+        (ACCOUNT,),
+    )
+    assert budget["blocked_until"] >= started + timedelta(seconds=retry_after)
+    shared = pipeline.catalog.one("SELECT blocked_until FROM credential_budgets")
+    assert shared["blocked_until"] >= started + timedelta(seconds=retry_after)
+    pipeline.catalog.configure_budget("tiktok_display", "other-alias", 20, 1)
+    reservation = pipeline.catalog.one(
+        "SELECT * FROM reserve_request('tiktok_display','other-alias',"
+        "'controlled-shared-credential')"
+    )
+    assert reservation["allowed"] is False
     assert pipeline.datasets() == []
     queues = pipeline.status()["queues"]
     assert any(row["state"] == "pending" and row["count"] == 1 for row in queues)
     assert pipeline.collect_batch(batch_size=1, synthetic=True)["processed"] == 0
+
+
+def test_unrepresentable_source_retry_window_is_visible_and_not_automatically_retried(pipeline):
+    pipeline.catalog.configure_budget("tiktok_display", ACCOUNT, 20, 1)
+    with controlled_source([(429, {}, {"Retry-After": "1e300"})]) as (endpoint, requests):
+        task_id = pipeline.enqueue(
+            "tiktok_display", ACCOUNT, "list", {"endpoint_override": endpoint}, synthetic=True
+        )
+        result = pipeline.collect_batch(3, synthetic=True)
+    assert result["processed"] == 0
+    assert result["errors"] == [{"task_id": task_id, "category": "invalid_retry_hint"}]
+    assert len(requests) == 1
+    assert pipeline.datasets() == []
+    task = pipeline.catalog.one("SELECT * FROM collection_tasks WHERE task_id=%s", (task_id,))
+    assert task["state"] == "quarantined" and task["last_error"] == "invalid_retry_hint"
+    assert pipeline.collect_batch(1, synthetic=True)["processed"] == 0
+
+
+def test_collector_timeout_terminates_the_process_and_retains_retryable_work(pipeline, monkeypatch):
+    arrived, release = threading.Event(), threading.Event()
+
+    class SuspendedSource(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            arrived.set()
+            release.wait(15)
+            try:
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"data":{"videos":[]},"error":{"code":"ok"}}')
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), SuspendedSource)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    children = []
+    original_popen = subprocess.Popen
+
+    def record_process(*args, **kwargs):
+        child = original_popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(subprocess, "Popen", record_process)
+    settings = pipeline.settings.model_copy(update={"collector_timeout_seconds": 5})
+    try:
+        with Pipeline(settings) as worker:
+            task_id = worker.enqueue(
+                "tiktok_display",
+                ACCOUNT,
+                "list",
+                {"endpoint_override": f"http://127.0.0.1:{server.server_port}"},
+                synthetic=True,
+            )
+            result = worker.collect_batch(1, synthetic=True)
+            assert arrived.is_set()
+            assert result["errors"] == [{"task_id": task_id, "category": "collector_timeout"}]
+            assert len(children) == 1 and children[0].poll() is not None
+            assert worker.datasets() == []
+            task = worker.catalog.one("SELECT * FROM collection_tasks WHERE task_id=%s", (task_id,))
+            assert task["state"] == "pending" and task["last_error"] == "collector_timeout"
+            assert task["lease_owner"] is None and task["due_at"] > now()
+            assert worker.collect_batch(1, synthetic=True)["processed"] == 0
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_cached_commercial_search_id_does_not_collapse_distinct_pages(pipeline, monkeypatch):
