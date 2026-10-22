@@ -84,6 +84,14 @@ Check both process health and data health. The status report and dashboard expos
 
 Investigate the reported category rather than dumping tokens, request headers, signed URLs, or remote response strings into tickets. Follow an observation's dataset manifest and evidence references when investigating a ranking. Missing evidence and denied access remain visible; they do not become zero activity.
 
+`storage_capacity` reports filesystem total, used and available bytes for cache
+and spool, plus the configured cache ceiling. These are constant-time filesystem
+counters, not directory-size scans or per-process memory measurements. A spool
+directory not yet created explicitly reports its nearest existing ancestor's
+filesystem; inaccessible measurements remain unavailable. Shared volumes can
+report the same capacity, so do not sum these values. The health view exposes the
+same measurements without publishing local paths or filesystem error text.
+
 The application scheduler decides which candidate tasks are due and how the budget is split. Dagster coordinates batches and downstream assessments. A Dagster run is not created for every individual video.
 
 Source retry windows take precedence over the desired refresh interval, including

@@ -32,13 +32,30 @@ Read the domain glossary and relevant architecture decisions before implementing
 - Agent instructions: AGENTS.md selected under the user's authorization to choose recommended defaults.
 - Default triage labels: explicitly approved by the user.
 - Configuration: activated in AGENTS.md and docs/agents/.
-- Test boundary: collection-to-visible-evidence scenarios with PostgreSQL semantics and an HTTP S3 test service, a controlled HTTP source, and deterministic time. Smaller tests cover numerical and temporal invariants where helpful. Local SQL execution uses PGlite; native PostgreSQL remains required for concurrency acceptance.
+- Test boundary: collection-to-visible-evidence scenarios with native PostgreSQL and an HTTP S3 test service, a controlled HTTP source, and deterministic time. Smaller tests cover numerical and temporal invariants where helpful. PGlite remains an optional fallback; concurrency acceptance uses native PostgreSQL.
 - Delivery breakdown: approved for autonomous execution; global PRD #2, specification issues #3–#8, and delivery issues #9–#23 are published.
 - Live source acceptance: cannot be completed without approved credentials and scopes. Contract fixtures demonstrate software behavior, not granted access or market coverage.
 
 ## Current repository state
 
-The initial implementation was merged into `main` through [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1). The initial permissions blocker was resolved on 2026-10-22. The [publication record](../implementation/publication.md) maps original local commits and issue identifiers. Offline corrections and verification were merged through [PR #24](https://github.com/Dan-Popescu/sm-trending-products/pull/24), after 162 native tests and full-service recovery passed. The next verification slice runs the controlled benchmark and quota-exhaustion checks in every PR's CI. GitHub remains authoritative for integration status.
+The initial implementation was merged through [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1), followed by autonomous correctness and acceptance work. The original GitHub permission blocker is resolved. The [publication record](../implementation/publication.md) preserves historical commit mappings; GitHub remains authoritative for current integration and issue state.
+
+T01–T13 now have controlled engineering acceptance mapped in the
+[ticket index](tickets/README.md). Follow-up work fixed shared quota/claim
+contention, bounded history/cache/review access, versioned replay, historical
+decision parity and incomplete-ledger revisions. Every PR runs Rust/Python/native
+checks, the controlled benchmark/quota gate, image build and isolated recovery.
+The strengthened recovery rehearsal resumes an interrupted checkpoint from copied
+objects and verifies idempotency after reopening the restored application.
+
+The [seven-case native measurement](../verification/controlled-envelope.md)
+advances T14 with declared resource limits and explicit measurement gaps. The
+remaining priority is target-VPS/private-access and production-object-store
+acceptance, followed by representative retained-history/full-stack measurements
+and dated provider prices. These need the specified infrastructure, independently
+of TikTok access. T15 remains pending actual approved credentials, scopes and
+intended use; synthetic tests cannot complete it. No production predictive value,
+actual profit or universal capacity is established by controlled fixtures.
 
 The preexisting local Python/SQLite scaffold was an abandoned experiment. The supported runtime now implements PostgreSQL operational state and S3 raw/Parquet history; the earlier experiment is outside that runtime. Implementation assumptions and substitutions are recorded in [the decisions recap](../implementation/assumptions.md).
 
