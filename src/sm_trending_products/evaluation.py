@@ -107,20 +107,18 @@ def _source_scope(
             key = (capability.source, capability.account_id, capability.capability)
             if key not in latest or latest[key].available_at < capability.available_at:
                 latest[key] = capability
+    grants = {key for key, capability in latest.items() if capability.state == "available"}
+    accounts = {(source, account) for source, account, _ in grants}
     allowed = []
     for row in rows:
         if row.source not in scoped_sources:
             allowed.append(row)
             continue
         required = row.attributes.get("required_capability")
-        grants = [
-            value
-            for key, value in latest.items()
-            if key[0] == row.source
-            and key[1] == (row.account_id or "")
-            and (required is None or key[2] == required)
-        ]
-        if any(grant.state == "available" for grant in grants):
+        account = (row.source, row.account_id or "")
+        if (required is None and account in accounts) or (
+            isinstance(required, str) and (*account, required) in grants
+        ):
             allowed.append(row)
     return allowed
 
@@ -796,6 +794,8 @@ def mature_decision(
     missing_references = sorted(set(snapshot["evidence_refs"]) - available_ids)
     methods = {"policy": snapshot["selected"], **snapshot["baselines"]}
     scenarios: list[dict[str, Any]] = []
+    windows: list[tuple[datetime, datetime, str]] = []
+    measured: list[dict[str, dict[str, Any]]] = []
     for horizon in config.horizon_days:
         end = decision_time + timedelta(days=horizon)
         for delay in config.launch_delay_days:
@@ -809,52 +809,8 @@ def mature_decision(
                 if missing_references
                 else "matured"
             )
-            results: dict[str, dict[str, Any]] = {}
-            measured: dict[str, dict[str, Any]] = {}
-            for method, selected_ids in methods.items():
-                outcomes = []
-                for product_id in selected_ids:
-                    if state != "matured":
-                        outcome = {"product_id": product_id, "status": state}
-                    else:
-                        if product_id not in measured:
-                            product_evidence = evidence
-                            if product_evidence_loader is not None:
-                                product_evidence = defaultdict(list)
-                                for item in _eligible_observations(
-                                    product_evidence_loader(product_id),
-                                    cutoff,
-                                    bool(snapshot["synthetic"]),
-                                    config.market,
-                                ):
-                                    if (
-                                        snapshot["entity_bindings"].get(item.entity_key)
-                                        == product_id
-                                    ):
-                                        product_evidence[item.entity_key].append(item)
-                            measured[product_id] = _product_outcome(
-                                product_id,
-                                product_evidence,
-                                snapshot["entity_bindings"],
-                                start,
-                                end,
-                                config,
-                            )
-                            if measured[product_id]["status"] == "success":
-                                measured[product_id].update(
-                                    _lead_time(
-                                        product_id,
-                                        product_evidence,
-                                        snapshot["entity_bindings"],
-                                        start,
-                                        end,
-                                        decision_time,
-                                        config,
-                                    )
-                                )
-                        outcome = measured[product_id]
-                    outcomes.append(outcome)
-                results[method] = _summarize(outcomes)
+            windows.append((start, end, state))
+            measured.append({})
             scenarios.append(
                 {
                     "horizon_days": horizon,
@@ -862,9 +818,64 @@ def mature_decision(
                     "window_start": start.isoformat(),
                     "window_end": end.isoformat(),
                     "status": state,
-                    "methods": results,
                 }
             )
+
+    # Keep at most one product's raw evidence alive. Only compact outcomes survive
+    # across products; all scenarios and methods reuse that product's one read.
+    if any(state == "matured" for _, _, state in windows):
+        product_ids = sorted({product for selected in methods.values() for product in selected})
+        bindings_by_product: dict[str, set[str]] = defaultdict(set)
+        for key, product in snapshot["entity_bindings"].items():
+            bindings_by_product[product].add(key)
+        for product_id in product_ids:
+            keys = bindings_by_product[product_id]
+            product_evidence: dict[str, list[Observation]] = defaultdict(list)
+            if product_evidence_loader is None:
+                product_evidence.update({key: evidence[key] for key in keys if key in evidence})
+            else:
+                for item in _eligible_observations(
+                    product_evidence_loader(product_id),
+                    cutoff,
+                    bool(snapshot["synthetic"]),
+                    config.market,
+                ):
+                    if item.entity_key in keys:
+                        product_evidence[item.entity_key].append(item)
+            for index, (start, end, state) in enumerate(windows):
+                if state != "matured":
+                    continue
+                outcome = _product_outcome(
+                    product_id, product_evidence, snapshot["entity_bindings"], start, end, config
+                )
+                if outcome["status"] == "success":
+                    outcome.update(
+                        _lead_time(
+                            product_id,
+                            product_evidence,
+                            snapshot["entity_bindings"],
+                            start,
+                            end,
+                            decision_time,
+                            config,
+                        )
+                    )
+                measured[index][product_id] = outcome
+            del product_evidence
+
+    for index, scenario in enumerate(scenarios):
+        state = scenario["status"]
+        scenario["methods"] = {
+            method: _summarize(
+                [
+                    measured[index][product_id]
+                    if state == "matured"
+                    else {"product_id": product_id, "status": state}
+                    for product_id in selected_ids
+                ]
+            )
+            for method, selected_ids in methods.items()
+        }
     report: dict[str, Any] = {
         "schema_version": "1",
         "snapshot_id": snapshot["snapshot_id"],

@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from psycopg.types.json import Jsonb
 
+from .analysis_batches import bounded_product_batches
 from .analytics import assess, normalize_assessments
 from .catalog import Catalog
 from .collector import redact
@@ -124,25 +125,12 @@ class EvaluationService:
         datasets: set[str] = set()
         since = cutoff - timedelta(days=policy.lookback_days)
 
-        def prepare_partition(batch: Sequence[Product]) -> None:
-            product_ids = {product.product_id for product in batch}
-            keys = {link.entity_key for link in links if link.product_id in product_ids}
-            try:
-                observations, dependencies = self._read_scope(
-                    cutoff,
-                    synthetic,
-                    keys,
-                    since,
-                    cutoff,
-                )
-            except ValueError as error:
-                if "row budget" not in str(error) or len(batch) < 2:
-                    raise
-                # Split oversized product partitions rather than raising the memory budget.
-                midpoint = len(batch) // 2
-                prepare_partition(batch[:midpoint])
-                prepare_partition(batch[midpoint:])
-                return
+        def load(keys: set[str]) -> tuple[list[Observation], set[str]]:
+            return self._read_scope(cutoff, synthetic, keys, since, cutoff)
+
+        for batch, (observations, dependencies) in bounded_product_batches(
+            products, links, self.history.settings.analysis_product_batch_size, load
+        ):
             eligible = eligible_evidence(
                 observations,
                 cutoff,
@@ -156,9 +144,6 @@ class EvaluationService:
                 refs[row.entity_key].append(row.observation_id)
             rows.extend(assess(eligible, batch, links, cutoff, synthetic, policy, normalize=False))
 
-        step = self.history.settings.analysis_product_batch_size
-        for start in range(0, len(products), step):
-            prepare_partition(products[start : start + step])
         normalized = normalize_assessments(rows, policy)
         snapshot = freeze_decision(
             [],
@@ -315,6 +300,9 @@ class EvaluationService:
         final_horizon = decision_time + timedelta(days=max(configuration.horizon_days))
         since, until = first_action - gap, min(cutoff, final_horizon + gap)
         datasets = set(dependencies)
+        keys_by_product: dict[str, set[str]] = defaultdict(set)
+        for key, product_id in snapshot["entity_bindings"].items():
+            keys_by_product[product_id].add(key)
 
         def load_product(product_id: str) -> list[Observation]:
             if frontier_token:
@@ -327,9 +315,7 @@ class EvaluationService:
                 )
                 if not renewed:
                     raise ValueError("Forward outcome lease was lost")
-            keys = {
-                key for key, value in snapshot["entity_bindings"].items() if value == product_id
-            }
+            keys = keys_by_product[product_id]
             observations, used = self._read_scope(
                 cutoff,
                 bool(snapshot["synthetic"]),
