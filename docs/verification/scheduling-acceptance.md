@@ -16,7 +16,7 @@ discovery coverage or a production refresh guarantee.
 ## Read boundary and limits
 
 The Collection plan view reads SQL-projected task summaries and one selected
-decision. Migration 015 adds a partial workspace/time index for those summaries.
+decision. Migration 016 adds a partial workspace/time index for those summaries.
 Selected group members are paged in SQL before JSON transfer, with at most 200
 members per call; a 251-member native fixture verifies stable slicing and workspace
 isolation. The header excludes the full member/key arrays. Request context and

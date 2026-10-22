@@ -43,6 +43,12 @@ def test_collection_review_pages_bound_group_members_and_keep_workspaces_separat
             "UPDATE collection_tasks SET schedule_reason=%s WHERE task_id=%s",
             (Jsonb(reason), identifier),
         )
+    before_upgrade = pipeline.catalog.all("SELECT * FROM collection_tasks ORDER BY task_id")
+    pipeline.catalog.execute("DROP INDEX collection_review_page")
+    pipeline.catalog.execute("DELETE FROM schema_migrations WHERE version=16")
+    pipeline.catalog.initialize()
+    pipeline.catalog.initialize()
+    assert pipeline.catalog.all("SELECT * FROM collection_tasks ORDER BY task_id") == before_upgrade
     summaries = pipeline.collection_summaries(True, limit=1)
     assert len(summaries) == 1 and summaries[0]["task_id"] == identifiers[True]
     assert summaries[0]["entity_count"] == 251
