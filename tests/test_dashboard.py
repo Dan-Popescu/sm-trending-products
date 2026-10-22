@@ -1,5 +1,7 @@
 """Operator-visible checks through Streamlit and the public pipeline facade."""
 
+import json
+
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -179,6 +181,29 @@ def test_health_cards_read_the_actual_status_contract_and_selected_workspace() -
     assert app.metric[0].value == "30"
     assert app.metric[1].value == "0"
     assert "11:00:00" in app.metric[2].value
+
+
+def test_quota_units_are_visible_without_exposing_authentication_tokens() -> None:
+    source = CONTROLLED_APP.replace(
+        'return {"queued_tasks": 2, "failed_tasks": 1, "last_observed_at": "2026-10-22T10:00:00Z"}',
+        """return {"budgets": [
+            {"tokens": 7.5, "access_token": "fixture-authentication-secret"},
+            {"tokens": "act.invalid-counter-credential"}
+        ]}""",
+    )
+    app = AppTest.from_string(source).run(timeout=20)
+    assert not app.exception
+    shown = next(
+        value
+        for element in app.json
+        if isinstance(value := json.loads(element.value), dict) and "budgets" in value
+    )
+    assert shown["budgets"][0]["remaining_request_units"] == 7.5
+    assert shown["budgets"][0]["access_token"] == "[redacted]"
+    assert shown["budgets"][1]["remaining_request_units"] is None
+    rendered = "\n".join(element.value for element in app.json)
+    assert "fixture-authentication-secret" not in rendered
+    assert "act.invalid-counter-credential" not in rendered
 
 
 def test_missing_pipeline_configuration_is_safe_and_actionable(

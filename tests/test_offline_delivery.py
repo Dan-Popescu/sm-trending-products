@@ -111,7 +111,11 @@ def test_dagster_collection_publishes_reviewable_evidence_and_a_frozen_decision(
         and "queues" in value
         and "budgets" in value
     )
-    assert status["budgets"] and all("tokens" in row for row in status["budgets"])
+    assert status["budgets"] and all(
+        isinstance(row["remaining_request_units"], (int, float))
+        and 0 <= row["remaining_request_units"] <= row["capacity"]
+        for row in status["budgets"]
+    )
     assert all("oldest_due_at" in row for row in status["queues"])
     evidence_frame = next(frame.value for frame in app.dataframe if "observation_id" in frame.value)
     assert len(evidence_frame) == 2
