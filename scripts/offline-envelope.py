@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import runpy
 import time
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 HELPER = runpy.run_path(str(Path(__file__).with_name("offline-benchmark.py")))
 GIB = HELPER["GIB"]
@@ -119,53 +121,20 @@ def run_matrix(
     if start_memory_headroom_gib not in (3, 4):
         raise ValueError("Start memory headroom must be 3 or 4 GiB; the stop floor remains 2 GiB")
     output.mkdir(parents=True, exist_ok=True)
-    start, rows, stop_reason = time.monotonic(), [], None
-    for name, arguments, interruption in matrix_cases():
-        facts = HELPER["hardware_facts"](output)
-        remaining = suite_timeout - (time.monotonic() - start)
-        if remaining <= 15:
-            stop_reason = "suite_deadline"
-        elif facts["memory_headroom_bytes"] is None:
-            stop_reason = "memory_headroom_unknown"
-        elif facts["memory_headroom_bytes"] < start_memory_headroom_gib * GIB:
-            stop_reason = "insufficient_memory_headroom"
-        elif facts["disk_free_bytes"] < 8 * GIB:
-            stop_reason = "insufficient_disk_headroom"
-        if stop_reason:
-            break
-        report_path = output / f"{name}.json"
-        result = HELPER["run_case"](
-            [*arguments, "--output", str(report_path.resolve())],
-            collector_binary=collector,
-            collector_profile=profile,
-            case_timeout=min(180, remaining - 10),
-            interruption=interruption,
-        )
-        measurements, runner = result.get("measurements", {}), result.get("runner", {})
-        rows.append(
-            {
-                "name": name,
-                "ok": result["ok"],
-                "status": result.get("status"),
-                "report": str(report_path),
-                "elapsed_seconds": runner.get("elapsed_seconds"),
-                "collection_records_per_second": measurements.get("collection_records_per_second"),
-                "task_latency_seconds": measurements.get("task_latency_seconds"),
-                "sampled_peak_session_rss_bytes": runner.get("sampled_peak_session_rss_bytes"),
-                "storage_traffic": measurements.get("storage_traffic"),
-            }
-        )
-        if not result["ok"]:
-            stop_reason = "case_failed"
-            break
+    start, rows, current_case = time.monotonic(), [], None
+    planned_cases = matrix_cases()
     summary = {
-        "ok": len(rows) == len(matrix_cases()) and all(row["ok"] for row in rows),
-        "complete": len(rows) == len(matrix_cases()),
+        "suite_id": uuid4().hex,
+        "started_at": datetime.now(UTC).isoformat(),
+        "ok": False,
+        "complete": False,
+        "status": "running",
+        "active_case": None,
         "synthetic": True,
         "operating_envelope": "controlled_finite_local_matrix",
         "suite_deadline_seconds": suite_timeout,
         "elapsed_seconds": time.monotonic() - start,
-        "stop_reason": stop_reason,
+        "stop_reason": None,
         "cases": rows,
         "bounds": {
             "max_workers": 4,
@@ -184,7 +153,83 @@ def run_matrix(
             "Provider prices, real upstream freshness and target VPS headroom remain unknown",
         ],
     }
-    HELPER["write_report"](output / "summary.json", summary)
+
+    def checkpoint():
+        summary["elapsed_seconds"] = time.monotonic() - start
+        HELPER["write_report"](output / "summary.json", summary)
+
+    # Replace a previous successful report before admitting any new work.
+    checkpoint()
+    try:
+        for name, arguments, interruption in planned_cases:
+            current_case = name
+            facts = HELPER["hardware_facts"](output)
+            remaining = suite_timeout - (time.monotonic() - start)
+            if remaining <= 15:
+                summary["stop_reason"] = "suite_deadline"
+            elif facts["memory_headroom_bytes"] is None:
+                summary["stop_reason"] = "memory_headroom_unknown"
+            elif facts["memory_headroom_bytes"] < start_memory_headroom_gib * GIB:
+                summary["stop_reason"] = "insufficient_memory_headroom"
+            elif facts["disk_free_bytes"] < 8 * GIB:
+                summary["stop_reason"] = "insufficient_disk_headroom"
+            if summary["stop_reason"]:
+                break
+            report_path = output / f"{name}.json"
+            summary["active_case"] = name
+            checkpoint()
+            result = HELPER["run_case"](
+                [*arguments, "--output", str(report_path.resolve())],
+                collector_binary=collector,
+                collector_profile=profile,
+                case_timeout=min(180, remaining - 10),
+                interruption=interruption,
+            )
+            measurements, runner = result.get("measurements", {}), result.get("runner", {})
+            rows.append(
+                {
+                    "name": name,
+                    "ok": result["ok"],
+                    "status": result.get("status"),
+                    "report": str(report_path),
+                    "elapsed_seconds": runner.get("elapsed_seconds"),
+                    "collection_records_per_second": measurements.get(
+                        "collection_records_per_second"
+                    ),
+                    "task_latency_seconds": measurements.get("task_latency_seconds"),
+                    "sampled_peak_session_rss_bytes": runner.get("sampled_peak_session_rss_bytes"),
+                    "storage_traffic": measurements.get("storage_traffic"),
+                }
+            )
+            summary["active_case"] = None
+            checkpoint()
+            if not result["ok"]:
+                summary["stop_reason"] = "case_failed"
+                break
+    except BaseException as error:
+        interrupted = isinstance(error, (KeyboardInterrupt, InterruptedError))
+        summary.update(
+            ok=False,
+            complete=False,
+            status="interrupted" if interrupted else "failed",
+            stop_reason="suite_interrupted" if interrupted else "suite_failed",
+            active_case=None,
+            failed_case=current_case,
+            terminal_error={"type": type(error).__name__},
+        )
+        checkpoint()
+        raise
+    summary["complete"] = len(rows) == len(planned_cases)
+    summary["ok"] = summary["complete"] and all(row["ok"] for row in rows)
+    if summary["ok"]:
+        summary["status"] = "completed"
+    elif rows and rows[-1]["status"] == "runner_interrupted":
+        summary["status"] = "interrupted"
+    elif rows and not rows[-1]["ok"]:
+        summary["status"] = "failed"
+    else:
+        summary["status"] = "stopped"
+    checkpoint()
     return summary
 
 

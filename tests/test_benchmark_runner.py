@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -220,3 +221,81 @@ def test_matrix_admission_profile_keeps_the_execution_stop_floor(tmp_path, monke
     assert summary["ok"] is (start_gib == 3)
     assert summary["bounds"]["start_memory_headroom_bytes"] == start_gib * runner.GIB
     assert summary["bounds"]["stop_memory_headroom_bytes"] == 2 * runner.GIB
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
+def test_matrix_replaces_stale_success_and_keeps_progress_on_exception(
+    tmp_path, monkeypatch, error_type
+):
+    spec = importlib.util.spec_from_file_location(
+        "offline_envelope_progress", ROOT / "scripts/offline-envelope.py"
+    )
+    assert spec and spec.loader
+    matrix = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(matrix)
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(json.dumps({"ok": True, "complete": True, "suite_id": "prior-success"}))
+    monkeypatch.setattr(
+        matrix, "matrix_cases", lambda: [("completed", [], False), ("later", [], False)]
+    )
+    observed, progress = [], []
+
+    def hardware(directory):
+        if observed:
+            progress.append(json.loads(summary_path.read_text()))
+            # SIGINT raises KeyboardInterrupt here, between protected case calls.
+            raise error_type("private connection detail must not enter the summary")
+        return {"memory_headroom_bytes": 8 * runner.GIB, "disk_free_bytes": 20 * runner.GIB}
+
+    def run_case(*args, **kwargs):
+        observed.append(json.loads(summary_path.read_text()))
+        return {"ok": True, "status": "completed"}
+
+    monkeypatch.setitem(matrix.HELPER, "hardware_facts", hardware)
+    monkeypatch.setitem(matrix.HELPER, "run_case", run_case)
+    with pytest.raises(error_type):
+        matrix.run_matrix(tmp_path, tmp_path / "unused", "release")
+    initial = observed[0]
+    final = json.loads(summary_path.read_text())
+    assert initial["ok"] is False and initial["complete"] is False
+    assert initial["cases"] == [] and initial["status"] == "running"
+    assert initial["suite_id"] != "prior-success"
+    assert [row["name"] for row in progress[0]["cases"]] == ["completed"]
+    assert progress[0]["status"] == "running" and progress[0]["complete"] is False
+    assert final["suite_id"] == initial["suite_id"]
+    assert datetime.fromisoformat(final["started_at"]).utcoffset() == timedelta(0)
+    assert final["ok"] is False and final["complete"] is False
+    assert [row["name"] for row in final["cases"]] == ["completed"]
+    assert final["terminal_error"] == {"type": error_type.__name__}
+    assert final["failed_case"] == "later"
+    assert final["active_case"] is None
+    assert final["status"] == ("interrupted" if error_type is KeyboardInterrupt else "failed")
+    assert "private connection detail" not in summary_path.read_text()
+
+
+@pytest.mark.parametrize("case_status", ["failed", "runner_interrupted"])
+def test_matrix_keeps_the_final_case_failure_and_interruption(tmp_path, monkeypatch, case_status):
+    spec = importlib.util.spec_from_file_location(
+        "offline_envelope_failure", ROOT / "scripts/offline-envelope.py"
+    )
+    assert spec and spec.loader
+    matrix = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(matrix)
+    monkeypatch.setattr(matrix, "matrix_cases", lambda: [("failed", [], False)])
+    monkeypatch.setitem(
+        matrix.HELPER,
+        "hardware_facts",
+        lambda directory: {
+            "memory_headroom_bytes": 8 * runner.GIB,
+            "disk_free_bytes": 20 * runner.GIB,
+        },
+    )
+    monkeypatch.setitem(
+        matrix.HELPER, "run_case", lambda *args, **kwargs: {"ok": False, "status": case_status}
+    )
+    summary = matrix.run_matrix(tmp_path, tmp_path / "unused", "release")
+    assert summary["ok"] is False and summary["complete"] is True
+    assert summary["cases"][0]["status"] == case_status
+    assert summary["status"] == ("interrupted" if case_status == "runner_interrupted" else "failed")
+    assert summary["stop_reason"] == "case_failed"
+    assert json.loads((tmp_path / "summary.json").read_text()) == summary

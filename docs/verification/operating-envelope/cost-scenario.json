@@ -1,0 +1,16 @@
+{
+  "get_requests": 7710,
+  "head_requests": 60,
+  "put_requests": 4710,
+  "upload_bytes": 43786440,
+  "download_bytes": 79863840,
+  "compute_instance_hours_assumed": 720,
+  "unit_prices": {
+    "instance_hour": null,
+    "storage_gb_month": null,
+    "get_or_head_per_1000": null,
+    "put_per_1000": null,
+    "egress_gb": null
+  },
+  "scope": "Illustrative 30 independent baseline jobs, no accumulated analytical history; prices unprovided"
+}
