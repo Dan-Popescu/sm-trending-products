@@ -13,7 +13,7 @@ recovery_workdir="$(mktemp -d)"
 recovery_id="$(python3 -c 'import secrets; print(secrets.token_hex(6))')"
 recovery_password="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
 
-# Explicitly replace inherited CI/production values. This exercise never starts live workers.
+# Explicitly replace inherited CI/production values. No live capabilities or tokens are enabled.
 export COMPOSE_PROJECT_NAME="sm-trends-ci-recovery-$recovery_id"
 export COMPOSE_FILE="$repository_directory/compose.yaml"
 export COMPOSE_PROFILES=local
@@ -39,6 +39,9 @@ export CREATE_BUCKET_ON_INIT=true
 cleanup() {
   recovery_status=$?
   trap - EXIT
+  if [[ "$recovery_status" -ne 0 ]]; then
+    docker compose logs --no-color --tail 60 >&2 || true
+  fi
   docker compose down --volumes --remove-orphans >/dev/null 2>&1 || true
   if [[ "$recovery_status" -ne 0 ]]; then
     python3 - "$recovery_report" "$recovery_status" <<'PY'
@@ -68,6 +71,9 @@ Path(sys.argv[1]).write_text(json.dumps({
 }, indent=2) + "\n")
 PY
 
+# These two bind mounts contain public configuration, never secrets. A restrictive
+# checkout umask must not prevent the unprivileged container users reading them.
+chmod a+rX deploy/postgres/001-create-dagster-db.sh deploy/dagster/dagster.yaml
 docker compose config --quiet
 docker compose up --detach --no-build --wait --wait-timeout 120 postgres objectstore
 docker compose run --rm --no-deps initialize sm-trends init --create-bucket
@@ -114,7 +120,26 @@ with Pipeline.from_env() as application:
     }))
 PY
 
+docker compose up --detach --no-build worker dagster-daemon dagster-webserver dashboard
+services_ready=false
+for _attempt in $(seq 1 45); do
+  if docker compose exec -T dashboard python -c \
+      'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8501/_stcore/health", timeout=2).close()' \
+      >/dev/null 2>&1 \
+    && docker compose exec -T dagster-webserver python -c \
+      'import urllib.request; urllib.request.urlopen("http://127.0.0.1:3000/server_info", timeout=2).close()' \
+      >/dev/null 2>&1 \
+    && docker compose exec -T dagster-daemon dagster-daemon liveness-check >/dev/null 2>&1; then
+    services_ready=true
+    break
+  fi
+  sleep 1
+done
+[[ "$services_ready" == true ]] || { echo 'Operator services or daemon did not become ready.' >&2; exit 1; }
+docker compose exec -T worker sm-trends verify --json
+# backup.sh stops and restarts these writers; observe health after that restart too.
 scripts/backup.sh "$recovery_workdir/backup" --copy-objects
+docker compose exec -T worker sm-trends verify --json
 scripts/restore-check.sh "$recovery_workdir/backup"
 python3 - "$recovery_workdir/seed.json" "$recovery_report" <<'PY'
 import json
@@ -126,6 +151,9 @@ Path(sys.argv[2]).write_text(json.dumps({
     "status": "verified", "boundary": "native_container_recovery",
     "database": "PostgreSQL 17.11", "object_store": "HTTP Moto 5.2.4",
     "synthetic": True, "catalog_fingerprint_matched": True, "seed": seed,
+    "operator_services_started": ["worker", "dagster-daemon", "dagster-webserver", "dashboard"],
+    "dashboard_health": "ready", "dagster_webserver_health": "ready",
+    "dagster_daemon_heartbeat": "ready", "writer_restart_verification": "passed",
 }, indent=2) + "\n")
 PY
 echo 'Native PostgreSQL and HTTP object-store backup/restore rehearsal passed.'

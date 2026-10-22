@@ -13,6 +13,54 @@ from sm_trending_products.contracts import utc
 pytestmark = pytest.mark.integration
 
 
+def test_failed_object_verification_fails_the_benchmark(pipeline, tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline, "verify", lambda: {"ok": False})
+    report = benchmark(pipeline, records=4, product_count=1, output=tmp_path / "failed.json")
+    assert report["checks"]["objects_verified"] is False
+    assert report["ok"] is False
+    assert "objects_verified" in report["failed_checks"]
+
+
+def test_parallel_skewed_workload_compacts_without_changing_the_published_records(
+    pipeline, tmp_path
+):
+    report = benchmark(
+        pipeline,
+        records=80,
+        product_count=4,
+        output=tmp_path / "parallel.json",
+        workers=3,
+        source_latency_ms=2,
+        hot_fraction=0.6,
+        compaction=True,
+    )
+    assert report["ok"] is True
+    assert report["workload"]["workers"] == 3
+    assert report["workload"]["source_latency_ms"] == 2
+    assert report["compaction"]["status"] == "compacted"
+    assert report["measurements"]["actual_records"] == 80
+    assert report["measurements"]["queue_final"] == [{"state": "done", "count": 4}]
+    assert report["measurements"]["storage_traffic"]["put_requests"] > 0
+    assert pipeline.verify()["ok"] is True
+    assert pipeline.latest_assessments(synthetic=False) == []
+
+
+def test_exhausted_budget_returns_a_failed_bounded_report_with_retryable_work(pipeline, tmp_path):
+    report = benchmark(
+        pipeline,
+        records=80,
+        product_count=4,
+        output=tmp_path / "budget.json",
+        workers=2,
+        request_capacity=1,
+        requests_per_second=0.0001,
+    )
+    assert report["ok"] is False
+    assert any(error["category"] == "quota_exhausted" for error in report["errors"])
+    assert report["checks"]["collection_completed"] is False
+    assert any(row["state"] == "pending" for row in pipeline.status()["queues"])
+
+
 def test_benchmark_measures_actual_evidence_and_preserves_shared_cache(pipeline, tmp_path):
     sentinel = pipeline.settings.cache_dir / "other-worker-cache-entry"
     sentinel.write_bytes(b"Existing cache entries belong to other work")

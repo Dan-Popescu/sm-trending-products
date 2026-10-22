@@ -345,7 +345,7 @@ def _history(pipeline: DashboardPipeline, synthetic: bool) -> None:
             st.json(display_safe(evaluations[selected_index]), expanded=False)
 
 
-def _health(status: Row, capabilities: list[Row]) -> None:
+def _health(status: Row, capabilities: list[Row], synthetic: bool = False) -> None:
     st.subheader("Source capabilities and measured coverage")
     if not any(row.get("state") == "available" for row in capabilities):
         st.warning(
@@ -358,12 +358,18 @@ def _health(status: Row, capabilities: list[Row]) -> None:
         "and comment access must each be verified; a key alone does not establish them."
     )
     st.subheader("Operational status")
-    queue = status.get("queue", {})
-    queue = queue if isinstance(queue, Mapping) else {}
+    queues = [row for row in status.get("queues", []) if row.get("synthetic") is synthetic]
+    sources = [row for row in status.get("sources", []) if row.get("synthetic") is synthetic]
+    queued = sum(row["count"] for row in queues if row["state"] in {"pending", "leased"})
+    quarantined = sum(row["count"] for row in queues if row["state"] == "quarantined")
+    observed = [utc(row["last_observed_at"]) for row in sources if row.get("last_observed_at")]
     columns = st.columns(3)
-    columns[0].metric("Queued tasks", status.get("queued_tasks", queue.get("pending", "Unknown")))
-    columns[1].metric("Failed tasks", status.get("failed_tasks", queue.get("failed", "Unknown")))
-    columns[2].metric("Latest observation", status.get("last_observed_at", "Unknown"))
+    columns[0].metric("Queued tasks", queued if "queues" in status else "Unknown")
+    columns[1].metric("Quarantined tasks", quarantined if "queues" in status else "Unknown")
+    columns[2].metric(
+        "Latest observation", max(observed).isoformat() if observed else "No observation"
+    )
+    st.caption("Health cards describe the selected live or synthetic workspace.")
     st.json(display_safe(status), expanded=False)
     st.caption(
         "Healthy processes do not establish fresh evidence, complete market coverage, "
@@ -418,7 +424,7 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
     with history:
         _history(pipeline, synthetic)
     with health:
-        _health(status, capabilities)
+        _health(status, capabilities, synthetic)
 
 
 def main() -> None:

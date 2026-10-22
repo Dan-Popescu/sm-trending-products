@@ -8,6 +8,18 @@ Use Docker Engine with Compose v2.20 or newer, a dedicated S3 bucket, and access
 
 The checked-in image versions are explicit: PostgreSQL 17.11, Python 3.12.14, Rust 1.99.1, uv 0.12.23, and Moto 5.2.4 for tests. Review upstream security updates before each deployment and update the pins deliberately. Python and Rust dependencies are locked separately.
 
+The two public bind-mounted files under `deploy/postgres/` and `deploy/dagster/`
+must be readable by their container users. A restrictive checkout umask may
+require `chmod a+rX deploy/postgres/001-create-dagster-db.sh deploy/dagster/dagster.yaml`.
+Keep `.env` and credential files private. The image explicitly grants read/traverse
+permissions to its public source/scripts for the unprivileged application user.
+
+For managed environments using an intercepting HTTPS proxy, build with an optional
+BuildKit `proxy_ca` secret containing the trusted combined CA bundle. The Dockerfile
+uses it only during dependency installation; it is not copied into image layers.
+Compose preserves external proxy routing and excludes its private service names
+from proxying. The isolated restore similarly excludes only its own container names.
+
 Production S3 must provide the conditional writes, metadata, and consistency used by the storage implementation. Enable encryption and appropriate versioning/lifecycle policy, then verify the actual provider. Synthetic HTTP tests do not certify a provider's durability or IAM policy.
 
 ## Configure production

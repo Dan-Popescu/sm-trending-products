@@ -274,6 +274,11 @@ class SourceCollection:
                 },
             )
             observations = [Observation.model_validate(record) for record in envelope["records"]]
+            details["endpoint_accessible"] = True
+            details["acceptance_observation_count"] = len(observations)
+            if not observations:
+                state = "unverified"
+                details["category"] = "no_eligible_observations"
             raw = {
                 "request": request,
                 "response": envelope["raw"],

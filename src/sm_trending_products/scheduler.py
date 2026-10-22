@@ -132,12 +132,13 @@ class Scheduler:
             if clock is None:
                 raise RuntimeError("Database did not provide its clock")
             checked_at = clock["checked_at"]
+            prior = connection.execute(
+                "SELECT p.policy_id,p.payload FROM scheduler_policy_activations a "
+                "JOIN scheduler_policies p USING(policy_id) WHERE a.synthetic=%s "
+                "ORDER BY a.available_at DESC,a.activation_id DESC LIMIT 1",
+                (synthetic,),
+            ).fetchone()
             if supplied is None:
-                prior = connection.execute(
-                    "SELECT payload FROM scheduler_policies WHERE payload->>'synthetic'=%s "
-                    "ORDER BY available_at DESC,policy_id DESC LIMIT 1",
-                    (str(synthetic).lower(),),
-                ).fetchone()
                 supplied = SchedulerPolicy.model_validate(
                     prior["payload"]["configuration"] if prior else {}
                 )
@@ -152,6 +153,11 @@ class Scheduler:
                 "ON CONFLICT DO NOTHING",
                 (policy_id, Jsonb(policy_body)),
             )
+            if prior is None or prior["policy_id"] != policy_id:
+                connection.execute(
+                    "INSERT INTO scheduler_policy_activations(policy_id,synthetic) VALUES(%s,%s)",
+                    (policy_id, synthetic),
+                )
             capabilities = connection.execute(
                 "SELECT DISTINCT ON(source,account_id,capability) "
                 "source,account_id,capability,state "

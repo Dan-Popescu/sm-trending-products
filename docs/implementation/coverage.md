@@ -2,6 +2,16 @@
 
 This record maps the approved fifteen-ticket delivery plan to actual software and behavioral tests as of 2026-10-22. It describes what exists, what the scenarios exercise, and what still requires external acceptance. The presence of a test is not an execution result; consult the verification report and test output for the final run. Local PGlite/Moto execution must not be reported as native PostgreSQL or production S3 verification.
 
+The follow-up [offline verification](../verification/offline-readiness.md) adds
+native PostgreSQL tests for policy reactivation, actual Dagster materialization
+through controlled Rust collection to Streamlit review, hard worker termination
+at three publication boundaries, negative batch/benchmark outcomes and a parallel
+latency/skew/compaction benchmark. These proofs supersede the earlier absence of
+an executed in-process Dagster path and three-boundary crash exercise. Target
+provider acceptance, sustained workload/fault limits and real source access remain
+separate. Ticket checklists are reconciled at review rather than automatically
+closing issues after a successful test run.
+
 ## Coverage map
 
 | Ticket | Implemented software | Behavioral evidence and remaining acceptance |

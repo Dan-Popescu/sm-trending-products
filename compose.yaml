@@ -1,6 +1,10 @@
 name: sm-trending-products
 
 x-pipeline-environment: &pipeline-environment
+  # Keep configured proxy routing for external APIs, with direct access to the
+  # private services on this Compose network (including managed-cloud runtimes).
+  NO_PROXY: ${NO_PROXY:-},localhost,127.0.0.1,postgres,objectstore
+  no_proxy: ${NO_PROXY:-},localhost,127.0.0.1,postgres,objectstore
   DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
   PIPELINE_NAMESPACE: ${PIPELINE_NAMESPACE:-development}
   S3_BUCKET: ${S3_BUCKET:?Set S3_BUCKET in .env}

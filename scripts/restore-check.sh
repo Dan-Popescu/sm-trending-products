@@ -71,6 +71,8 @@ docker exec -i "$restore_database" pg_restore --exit-on-error --single-transacti
   --no-owner --no-privileges --username=restore --dbname=dagster < "$backup_directory/dagster.dump"
 
 restore_environment=(
+  --env "NO_PROXY=${NO_PROXY:-},localhost,127.0.0.1,$restore_database,$restore_objects"
+  --env "no_proxy=${NO_PROXY:-},localhost,127.0.0.1,$restore_database,$restore_objects"
   --env "DATABASE_URL=postgresql://restore:$restore_password@$restore_database:5432/restore"
   --env "PIPELINE_NAMESPACE=$restore_namespace"
   --env "S3_ENDPOINT_URL=http://$restore_objects:5000"

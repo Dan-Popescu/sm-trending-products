@@ -45,6 +45,31 @@ def test_policy_rejects_unbounded_or_unsupported_collection() -> None:
         )
 
 
+@pytest.mark.integration
+def test_reactivating_a_policy_persists_without_rewriting_its_first_availability(catalog):
+    from sm_trending_products.scheduler import Scheduler
+
+    scheduler = Scheduler(catalog)
+    first = scheduler.schedule(0, synthetic=True, policy={"version": "policy-a"})
+    original = catalog.one(
+        "SELECT available_at FROM scheduler_policies WHERE policy_id=%s", (first["policy_id"],)
+    )
+    scheduler.schedule(0, synthetic=True, policy={"version": "policy-b"})
+    scheduler.schedule(0, synthetic=True, policy={"version": "policy-a"})
+    restored = scheduler.schedule(0, synthetic=True)
+    assert restored["policy"]["version"] == "policy-a"
+    assert (
+        catalog.one(
+            "SELECT available_at FROM scheduler_policies WHERE policy_id=%s", (first["policy_id"],)
+        )
+        == original
+    )
+    assert catalog.one("SELECT count(*) AS count FROM scheduler_policy_activations")["count"] == 3
+    # Activating the live workspace cannot change the synthetic selection.
+    scheduler.schedule(0, synthetic=False, policy={"version": "live-policy"})
+    assert scheduler.schedule(0, synthetic=True)["policy"]["version"] == "policy-a"
+
+
 @pytest.fixture
 def catalog() -> Iterator[object]:
     from sm_trending_products.catalog import Catalog
