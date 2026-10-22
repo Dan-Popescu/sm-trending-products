@@ -1,6 +1,9 @@
 # Implementation handoff
 
-The integration branch is `codex/project-planning`. All code, specifications,
+The original integration branch was `codex/project-planning`, merged through PR #1.
+Continue from `main`; offline follow-up is reviewed in
+[PR #24](https://github.com/Dan-Popescu/sm-trending-products/pull/24) on
+`codex/offline-readiness`. All code, specifications,
 tests, dependency locks, deployment configuration, and operating instructions
 are included. No real credentials or collected live TikTok data are included.
 
@@ -18,11 +21,11 @@ git switch codex/project-planning
 
 ## Current published checkout
 
-The project is now available in [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
+The initial implementation was merged through [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
 Use the normal GitHub checkout for continued work:
 
 ```sh
-git clone --branch codex/project-planning https://github.com/Dan-Popescu/sm-trending-products.git
+git clone https://github.com/Dan-Popescu/sm-trending-products.git
 ```
 
 Original archive commits and published commits have identical trees but different
