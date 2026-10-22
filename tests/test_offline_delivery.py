@@ -104,19 +104,6 @@ def test_dagster_collection_publishes_reviewable_evidence_and_a_frozen_decision(
         and "features" in value
     )
     assert published["features"]["interval_hours"] == pytest.approx([1.0], abs=1e-12)
-    status = next(
-        value
-        for element in app.json
-        if isinstance(value := json.loads(element.value), dict)
-        and "queues" in value
-        and "budgets" in value
-    )
-    assert status["budgets"] and all(
-        isinstance(row["remaining_request_units"], (int, float))
-        and 0 <= row["remaining_request_units"] <= row["capacity"]
-        for row in status["budgets"]
-    )
-    assert all("oldest_due_at" in row for row in status["queues"])
     evidence_frame = next(frame.value for frame in app.dataframe if "observation_id" in frame.value)
     assert len(evidence_frame) == 2
     observations = next(
@@ -137,6 +124,21 @@ def test_dagster_collection_publishes_reviewable_evidence_and_a_frozen_decision(
     assert {row["raw_dataset_id"] for row in observations} == {
         row["dataset_id"] for row in pipeline.datasets()
     }
+    app.radio(key="review_view").set_value("Health and coverage").run(timeout=20)
+    assert not app.exception
+    status = next(
+        value
+        for element in app.json
+        if isinstance(value := json.loads(element.value), dict)
+        and "queues" in value
+        and "budgets" in value
+    )
+    assert status["budgets"] and all(
+        isinstance(row["remaining_request_units"], (int, float))
+        and 0 <= row["remaining_request_units"] <= row["capacity"]
+        for row in status["budgets"]
+    )
+    assert all("oldest_due_at" in row for row in status["queues"])
     with Pipeline(pipeline.settings) as restarted:
         assert len(restarted.evidence("offline-product", now(), synthetic=True)) == 2
         assert restarted.latest_assessments(synthetic=True)[0]["product_id"] == "offline-product"

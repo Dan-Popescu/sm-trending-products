@@ -6,17 +6,19 @@ it to loopback; reach it through an authenticated SSH tunnel or a private proxy.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import re
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import streamlit as st
 
-from sm_trending_products.contracts import utc
+from sm_trending_products.contracts import canonical, utc
 
 Row = dict[str, Any]
 DIMENSIONS = ("attention", "demand", "competition", "feasibility")
@@ -31,19 +33,41 @@ class DashboardPipeline(Protocol):
 
     def status(self) -> Row: ...
 
-    def products(self, synthetic: bool = False) -> list[Row]: ...
+    def products(
+        self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
+    ) -> list[Row]: ...
 
-    def links(self, as_of: datetime, synthetic: bool = False) -> list[Row]: ...
+    def product_links(
+        self,
+        product_id: str,
+        as_of: datetime,
+        synthetic: bool = False,
+        *,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[Row]: ...
 
-    def latest_assessments(self, synthetic: bool = False) -> list[Row]: ...
+    def assessment_summaries(
+        self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
+    ) -> list[Row]: ...
 
-    def alerts(self, synthetic: bool = False) -> list[Row]: ...
+    def assessment(self, product_id: str, synthetic: bool = False) -> Row | None: ...
+
+    def alert_summaries(
+        self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
+    ) -> list[Row]: ...
+
+    def alert(self, alert_id: str, synthetic: bool = False) -> Row | None: ...
 
     def datasets(self, limit: int = 100) -> list[Row]: ...
 
     def capabilities(self) -> list[Row]: ...
 
-    def evaluations(self, synthetic: bool = False) -> list[Row]: ...
+    def evaluation_summaries(
+        self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
+    ) -> list[Row]: ...
+
+    def evaluation(self, evaluation_id: str, synthetic: bool = False) -> Row | None: ...
 
     def create_product(
         self, product_id: str, name: str, synthetic: bool = False, market: str | None = None
@@ -63,14 +87,15 @@ class DashboardPipeline(Protocol):
 
     def suggest_links(self, query: str, synthetic: bool = False, limit: int = 20) -> list[Row]: ...
 
-    def evidence(
+    def evidence_page(
         self,
         product_id: str,
         as_of: datetime,
         synthetic: bool = False,
+        *,
         limit: int = 100,
-        offset: int = 0,
-    ) -> list[Row]: ...
+        cursor: str | None = None,
+    ) -> Row: ...
 
 
 def display_safe(value: Any) -> Any:
@@ -122,7 +147,9 @@ def _mutate(operation: Callable[[], Any], success: str) -> None:
     except Exception:  # noqa: BLE001 - Failed operator actions show a redacted error.
         st.error("The change was not saved. Check the inputs and private operational logs.")
     else:
-        st.success(success)
+        st.session_state["_review_notice"] = success
+        st.session_state["_review_refresh_cutoff"] = True
+        st.rerun()
 
 
 def _dimension_label(row: Row, dimension: str) -> str:
@@ -164,6 +191,50 @@ def _records(label: str, records: Sequence[Row]) -> None:
         st.info(f"No {label} recorded in this workspace.")
 
 
+def _evidence(
+    pipeline: DashboardPipeline, product_id: str, as_of: datetime, synthetic: bool
+) -> None:
+    scope = canonical([product_id, as_of.isoformat(), synthetic])
+    if st.session_state.get("_evidence_scope") != scope:
+        st.session_state["_evidence_scope"] = scope
+        st.session_state["_evidence_cursors"] = [None]
+        st.session_state["_evidence_position"] = 0
+    position = st.session_state["_evidence_position"]
+    cursors = st.session_state["_evidence_cursors"]
+    if st.button("Previous evidence page", disabled=position == 0, key="evidence_previous"):
+        st.session_state["_evidence_position"] = position - 1
+        st.rerun()
+    page = _read(
+        "evidence",
+        lambda: pipeline.evidence_page(
+            product_id,
+            as_of,
+            synthetic=synthetic,
+            limit=EVIDENCE_PAGE_SIZE,
+            cursor=cursors[position],
+        ),
+        None,
+    )
+    if page is None:
+        return
+    if page["status"] == "indexing":
+        st.info("Historical evidence is being prepared. Continue loading to inspect it.")
+        if st.button("Continue loading evidence", key="evidence_continue"):
+            st.rerun()
+        return
+    evidence = page["records"]
+    st.caption(f"Evidence page {position + 1}")
+    _records("observations", evidence)
+    if evidence:
+        with st.expander("Inspect observation provenance, precision, and missing fields"):
+            st.json(display_safe(evidence), expanded=False)
+    next_cursor = page.get("next_cursor")
+    if st.button("Next evidence page", disabled=not next_cursor, key="evidence_next"):
+        st.session_state["_evidence_cursors"] = cursors[: position + 1] + [next_cursor]
+        st.session_state["_evidence_position"] = position + 1
+        st.rerun()
+
+
 def _opportunities(
     pipeline: DashboardPipeline, products: list[Row], as_of: datetime, synthetic: bool
 ) -> None:
@@ -173,15 +244,23 @@ def _opportunities(
         "These are published results. Refreshing this page does not query TikTok "
         "or recompute history."
     )
+    page = st.number_input("Assessment page", min_value=1, value=1, step=1, key="assessment_page")
     assessments: list[Row] = _read(
-        "published assessments", lambda: pipeline.latest_assessments(synthetic), []
+        "published assessments",
+        lambda: pipeline.assessment_summaries(
+            synthetic, limit=MAX_REVIEW_ROWS, offset=(int(page) - 1) * MAX_REVIEW_ROWS
+        ),
+        [],
     )
     if assessments:
         st.dataframe(opportunity_rows(assessments), hide_index=True, width="stretch")
         assessment_ids = [str(row["product_id"]) for row in assessments if row.get("product_id")]
         selected = st.selectbox("Inspect assessment", assessment_ids, key="assessment_product")
-        selected_row = next(row for row in assessments if row.get("product_id") == selected)
-        st.json(display_safe(selected_row), expanded=False)
+        selected_row = _read(
+            "assessment detail", lambda: pipeline.assessment(selected, synthetic), None
+        )
+        if selected_row is not None:
+            st.json(display_safe(selected_row), expanded=False)
     else:
         st.info(
             "No published assessments. Run the analytical batch after collecting "
@@ -196,31 +275,27 @@ def _opportunities(
     if products:
         product_ids = [str(row["product_id"]) for row in products if row.get("product_id")]
         selected_product = st.selectbox("Product", product_ids, key="evidence_product")
-        page = st.number_input("Evidence page", min_value=1, value=1, step=1, key="evidence_page")
-        evidence: list[Row] = _read(
-            "evidence",
-            lambda: pipeline.evidence(
-                selected_product,
-                as_of,
-                synthetic=synthetic,
-                limit=EVIDENCE_PAGE_SIZE,
-                offset=(int(page) - 1) * EVIDENCE_PAGE_SIZE,
-            ),
-            [],
-        )
-        _records("observations", evidence)
-        if evidence:
-            with st.expander("Inspect observation provenance, precision, and missing fields"):
-                st.json(display_safe(evidence), expanded=False)
+        _evidence(pipeline, selected_product, as_of, synthetic)
     else:
         st.info("Create a product and review evidence links to inspect its history.")
 
     st.subheader("Frozen alerts")
-    alerts: list[Row] = _read("alerts", lambda: pipeline.alerts(synthetic), [])
+    alert_page = st.number_input("Alert page", min_value=1, value=1, step=1, key="alert_page")
+    alerts: list[Row] = _read(
+        "alerts",
+        lambda: pipeline.alert_summaries(
+            synthetic, limit=MAX_REVIEW_ROWS, offset=(int(alert_page) - 1) * MAX_REVIEW_ROWS
+        ),
+        [],
+    )
     _records("alerts", alerts)
     if alerts:
-        with st.expander("Alert snapshots and original reasons"):
-            st.json(display_safe(alerts[:MAX_REVIEW_ROWS]), expanded=False)
+        selected_alert = st.selectbox(
+            "Inspect frozen alert", [str(row["alert_id"]) for row in alerts], key="alert_id"
+        )
+        detail = _read("alert detail", lambda: pipeline.alert(selected_alert, synthetic), None)
+        if detail is not None:
+            st.json(display_safe(detail), expanded=False)
 
 
 def _catalog(
@@ -294,7 +369,19 @@ def _catalog(
                 )
 
     st.subheader("Product links at cutoff")
-    links: list[Row] = _read("product links", lambda: pipeline.links(as_of, synthetic), [])
+    reviewed_product = st.selectbox("Inspect product links", product_ids, key="links_product")
+    link_page = st.number_input("Link page", min_value=1, value=1, step=1, key="links_page")
+    links: list[Row] = _read(
+        "product links",
+        lambda: pipeline.product_links(
+            reviewed_product,
+            as_of,
+            synthetic,
+            limit=MAX_REVIEW_ROWS,
+            offset=(int(link_page) - 1) * MAX_REVIEW_ROWS,
+        ),
+        [],
+    )
     _records("product links", links)
     with st.form("suggest_links"):
         query = st.text_input("Find text-based link candidates")
@@ -332,7 +419,14 @@ def _history(pipeline: DashboardPipeline, synthetic: bool) -> None:
         "Backtests replay past knowledge. Forward tests freeze decisions before "
         "outcomes mature. Neither establishes business profit without actual costs and outcomes."
     )
-    evaluations: list[Row] = _read("evaluations", lambda: pipeline.evaluations(synthetic), [])
+    page = st.number_input("Evaluation page", min_value=1, value=1, step=1, key="evaluation_page")
+    evaluations: list[Row] = _read(
+        "evaluations",
+        lambda: pipeline.evaluation_summaries(
+            synthetic, limit=MAX_REVIEW_ROWS, offset=(int(page) - 1) * MAX_REVIEW_ROWS
+        ),
+        [],
+    )
     _records("evaluations", evaluations)
     if evaluations:
         selected_index = st.selectbox(
@@ -343,7 +437,15 @@ def _history(pipeline: DashboardPipeline, synthetic: bool) -> None:
             ),
         )
         if selected_index is not None:
-            st.json(display_safe(evaluations[selected_index]), expanded=False)
+            detail = _read(
+                "evaluation detail",
+                lambda: pipeline.evaluation(
+                    evaluations[selected_index]["evaluation_id"], synthetic
+                ),
+                None,
+            )
+            if detail is not None:
+                st.json(display_safe(detail), expanded=False)
 
 
 def _health(status: Row, capabilities: list[Row], synthetic: bool = False) -> None:
@@ -400,6 +502,8 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
     """Render a review workspace using only the public application boundary."""
     st.set_page_config(page_title="Product trend intelligence", page_icon="📈", layout="wide")
     st.title("Product trend intelligence")
+    if st.session_state.pop("_review_refresh_cutoff", False):
+        st.session_state["review_cutoff"] = datetime.now(UTC).isoformat()
     with st.sidebar:
         st.header("Review workspace")
         synthetic = st.toggle("Include synthetic workspace", value=False, key="synthetic_workspace")
@@ -408,11 +512,17 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
             "mixed with live evidence."
         )
         if st.button("Refresh published results"):
+            st.session_state["_review_refresh_cutoff"] = True
             st.rerun()
         cutoff = st.text_input(
             "Evidence and link cutoff (UTC)",
             value=datetime.now(UTC).isoformat(),
             key="review_cutoff",
+        )
+        view = st.radio(
+            "Review view",
+            ["Opportunities", "Catalog", "Datasets and evaluations", "Health and coverage"],
+            key="review_view",
         )
         st.caption(
             "Private operator surface. Use the configured private network or authenticated tunnel."
@@ -429,21 +539,95 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
         )
     else:
         st.caption("Live workspace: synthetic records are excluded.")
-    status: Row = _read("operational status", pipeline.status, {})
-    capabilities: list[Row] = _read("source capabilities", pipeline.capabilities, [])
-    products: list[Row] = _read("products", lambda: pipeline.products(synthetic), [])
-    products = products[:MAX_REVIEW_ROWS]
-    opportunities, catalog, history, health = st.tabs(
-        ["Opportunities", "Catalog", "Datasets and evaluations", "Health and coverage"]
-    )
-    with opportunities:
-        _opportunities(pipeline, products, as_of, synthetic)
-    with catalog:
-        _catalog(pipeline, products, as_of, synthetic)
-    with history:
+    notice = st.session_state.pop("_review_notice", None)
+    if notice:
+        st.success(notice)
+    # Read results on every interaction, but only for the selected view. No result
+    # cache can retain pre-mutation identity or source-capability state.
+    if view in {"Opportunities", "Catalog"}:
+        product_page = st.number_input(
+            "Product page", min_value=1, value=1, step=1, key="product_page"
+        )
+        products: list[Row] = _read(
+            "products",
+            lambda: pipeline.products(
+                synthetic, limit=MAX_REVIEW_ROWS, offset=(int(product_page) - 1) * MAX_REVIEW_ROWS
+            ),
+            [],
+        )
+        if view == "Opportunities":
+            _opportunities(pipeline, products, as_of, synthetic)
+        else:
+            _catalog(pipeline, products, as_of, synthetic)
+    elif view == "Datasets and evaluations":
         _history(pipeline, synthetic)
-    with health:
-        _health(status, capabilities, synthetic)
+    else:
+        status: Row = _read("operational status", pipeline.status, {})
+        _health(status, status.get("capabilities", []), synthetic)
+
+
+def _release_pipeline(pipeline: Any) -> None:
+    try:
+        pipeline.close()
+    except Exception:
+        # Cleanup callbacks can run after session teardown; never expose a DSN.
+        pass
+
+
+@st.cache_resource(max_entries=1, scope="session", show_spinner=False, on_release=_release_pipeline)
+def _review_pipeline(configuration_fingerprint: str):
+    from sm_trending_products.pipeline import Pipeline
+
+    return Pipeline.from_env()
+
+
+def _provider_file_identity(selector: str | None) -> Row | None:
+    """Observe provider-file identity without reading credential contents."""
+    if selector is None:
+        return None
+    path = Path(os.path.expandvars(selector)).expanduser()
+    try:
+        metadata = path.stat()
+    except OSError as error:
+        return {"path": str(path), "error": error.errno}
+    return {
+        "path": str(path),
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "size": metadata.st_size,
+        "mtime_ns": metadata.st_mtime_ns,
+        "ctime_ns": metadata.st_ctime_ns,
+    }
+
+
+def _configuration_fingerprint() -> str:
+    """Invalidate resources on configuration/credential rotation without caching secrets."""
+    from sm_trending_products.settings import Settings
+
+    settings = Settings()  # type: ignore[call-arg]
+    configuration = settings.model_dump(mode="json")
+    configuration["database_url"] = settings.database_url.get_secret_value()
+    for key in (
+        "AWS_PROFILE",
+        "AWS_DEFAULT_PROFILE",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_ROLE_ARN",
+        "AWS_ROLE_SESSION_NAME",
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+        "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+    ):
+        configuration[key] = os.environ.get(key)
+    for key, default in (
+        ("AWS_CONFIG_FILE", "~/.aws/config"),
+        ("AWS_SHARED_CREDENTIALS_FILE", "~/.aws/credentials"),
+        ("AWS_WEB_IDENTITY_TOKEN_FILE", None),
+        ("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", None),
+    ):
+        configuration[key] = _provider_file_identity(os.environ.get(key, default))
+    return hashlib.sha256(canonical(configuration).encode()).hexdigest()
 
 
 def main() -> None:
@@ -456,21 +640,14 @@ def main() -> None:
         )
         return
     try:
-        from sm_trending_products.pipeline import Pipeline
-
-        pipeline = Pipeline.from_env()
+        pipeline = _review_pipeline(_configuration_fingerprint())
     except Exception:  # noqa: BLE001 - Initialization failures may contain a secret DSN.
         st.error(
             "The pipeline is unavailable. Verify private database/object-store "
             "configuration and initialization; connection details are not displayed here."
         )
         return
-    try:
-        render_dashboard(pipeline)
-    finally:
-        close = getattr(pipeline, "close", None)
-        if callable(close):
-            _read("pipeline cleanup", close, None)
+    render_dashboard(pipeline)
 
 
 if __name__ == "__main__":
