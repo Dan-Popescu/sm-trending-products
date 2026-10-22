@@ -301,6 +301,28 @@ class Identity:
             (synthetic, cutoff, cutoff),
         )
 
+    def product_links(
+        self,
+        product_id: str,
+        as_of: datetime,
+        synthetic: bool = False,
+        *,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[Row]:
+        """Bound operator output after resolving ownership across all products."""
+        if offset < 0:
+            raise ValueError("Offset must be nonnegative")
+        cutoff = utc(as_of)
+        return self.catalog.all(
+            "WITH "
+            + LINK_STATE_CTES
+            + f"SELECT {LINK_FIELDS} FROM current_link_pairs WHERE product_id=%s AND "
+            "(status<>'confirmed' OR decision_id IN(SELECT decision_id FROM resolved_link_owners)) "
+            "ORDER BY available_at,id LIMIT %s OFFSET %s",
+            (synthetic, cutoff, cutoff, product_id, _limit(limit, 200), offset),
+        )
+
     def entity_keys_for_product(
         self, product_id: str, as_of: datetime, synthetic: bool = False
     ) -> set[str]:

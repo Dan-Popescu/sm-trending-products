@@ -88,6 +88,7 @@ class Pipeline:
             "SELECT state,synthetic,count(*) AS dataset_count,sum(row_count) AS observation_count,"
             "sum(quarantine_count) AS quarantined_records FROM datasets GROUP BY state,synthetic"
         )
+        capabilities = self.capabilities()
         return {
             "ok": True,
             "checked_at": now(),
@@ -99,7 +100,7 @@ class Pipeline:
             ),
             "sources": sources,
             "datasets": datasets,
-            "capabilities": self.capabilities(),
+            "capabilities": capabilities,
             "budgets": self.catalog.all("SELECT * FROM request_budgets ORDER BY source,account_id"),
             "storage_metrics": {"scope": "current_process", **self.history.metrics},
             "persisted_storage_metrics": self.catalog.one(
@@ -111,9 +112,7 @@ class Pipeline:
                 "FROM operational_usage"
             ),
             "coverage_warning": "Only granted sources and actually sampled entities are covered",
-            "pending_live_acceptance": not any(
-                cap["state"] == "available" for cap in self.capabilities()
-            ),
+            "pending_live_acceptance": not any(cap["state"] == "available" for cap in capabilities),
         }
 
     def products(
@@ -126,6 +125,19 @@ class Pipeline:
 
     def links(self, as_of: datetime, synthetic: bool = False) -> list[dict]:
         return self.identity.links(as_of, synthetic=synthetic)
+
+    def product_links(
+        self,
+        product_id: str,
+        as_of: datetime,
+        synthetic: bool = False,
+        *,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[dict]:
+        return self.identity.product_links(
+            product_id, as_of, synthetic=synthetic, limit=limit, offset=offset
+        )
 
     def create_product(
         self, product_id: str, name: str, synthetic: bool = False, market: str | None = None
@@ -438,10 +450,65 @@ class Pipeline:
             )
         ]
 
+    def assessment_summaries(
+        self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
+    ) -> list[dict]:
+        """Project list fields before transferring any full assessment evidence."""
+        limit, offset = self._review_page(limit, offset)
+        fields = ["product_id", "name", "market", "score", "as_of", "policy_version"]
+        projection = ",".join(f"'{field}',c.payload->'{field}'" for field in fields)
+        for dimension in ("attention", "demand", "competition", "feasibility"):
+            projection += (
+                f",'{dimension}',jsonb_build_object("
+                f"'score',c.payload#>'{{{dimension},score}}',"
+                f"'status',c.payload#>'{{{dimension},status}}')"
+            )
+        return [
+            row["summary"]
+            for row in self.catalog.all(
+                f"SELECT jsonb_build_object({projection}) AS summary "
+                "FROM current_assessments c JOIN assessment_runs r USING(run_id) "
+                "WHERE c.synthetic=%s AND NOT r.invalidated "
+                "ORDER BY c.score DESC NULLS LAST,c.product_id LIMIT %s OFFSET %s",
+                (synthetic, limit, offset),
+            )
+        ]
+
+    def assessment(self, product_id: str, synthetic: bool = False) -> dict | None:
+        row = self.catalog.one(
+            "SELECT c.payload FROM current_assessments c JOIN assessment_runs r USING(run_id) "
+            "WHERE c.product_id=%s AND c.synthetic=%s AND NOT r.invalidated",
+            (product_id, synthetic),
+        )
+        return row["payload"] if row else None
+
+    @staticmethod
+    def _review_page(limit: int, offset: int) -> tuple[int, int]:
+        if not 1 <= limit <= 200 or offset < 0:
+            raise ValueError(
+                "Review pages require a limit between 1 and 200 and nonnegative offset"
+            )
+        return limit, offset
+
     def alerts(self, synthetic: bool = False) -> list[dict]:
         return self.catalog.all(
             "SELECT * FROM alerts WHERE synthetic=%s ORDER BY created_at DESC LIMIT 1000",
             (synthetic,),
+        )
+
+    def alert_summaries(
+        self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
+    ) -> list[dict]:
+        limit, offset = self._review_page(limit, offset)
+        return self.catalog.all(
+            "SELECT alert_id,product_id,run_id,synthetic,created_at,invalidated "
+            "FROM alerts WHERE synthetic=%s ORDER BY created_at DESC,alert_id LIMIT %s OFFSET %s",
+            (synthetic, limit, offset),
+        )
+
+    def alert(self, alert_id: str, synthetic: bool = False) -> dict | None:
+        return self.catalog.one(
+            "SELECT * FROM alerts WHERE alert_id=%s AND synthetic=%s", (alert_id, synthetic)
         )
 
     def evidence(
@@ -546,6 +613,23 @@ class Pipeline:
         return self.catalog.all(
             "SELECT * FROM evaluation_runs WHERE synthetic=%s ORDER BY created_at DESC LIMIT 1000",
             (synthetic,),
+        )
+
+    def evaluation_summaries(
+        self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
+    ) -> list[dict]:
+        limit, offset = self._review_page(limit, offset)
+        return self.catalog.all(
+            "SELECT evaluation_id,kind,synthetic,decision_time,parent_id,invalidated,created_at,"
+            "payload->>'status' AS status FROM evaluation_runs WHERE synthetic=%s "
+            "ORDER BY created_at DESC,evaluation_id LIMIT %s OFFSET %s",
+            (synthetic, limit, offset),
+        )
+
+    def evaluation(self, evaluation_id: str, synthetic: bool = False) -> dict | None:
+        return self.catalog.one(
+            "SELECT * FROM evaluation_runs WHERE evaluation_id=%s AND synthetic=%s",
+            (evaluation_id, synthetic),
         )
 
     def backtest(
