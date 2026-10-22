@@ -30,6 +30,7 @@ from .evaluation import (
     eligible_evidence,
     freeze_decision,
     mature_decision,
+    outcome_entity_keys,
     reviewed_links,
     summarize_backtest,
 )
@@ -117,9 +118,17 @@ class EvaluationService:
             and product.synthetic == synthetic
             and (config.market is None or product.market == config.market)
         ]
-        links = reviewed_links(
-            metadata["links"], cutoff, max(config.min_link_confidence, policy.min_link_confidence)
-        )
+        product_ids = {product.product_id for product in products}
+        links = [
+            link
+            for link in reviewed_links(
+                metadata["links"],
+                cutoff,
+                max(config.min_link_confidence, policy.min_link_confidence),
+            )
+            if link.product_id in product_ids
+        ]
+        config.validate_ledger_scope(links)
         counts: Counter[str] = Counter()
         refs: dict[str, list[str]] = defaultdict(list)
         rows: list[dict[str, Any]] = []
@@ -240,6 +249,7 @@ class EvaluationService:
     ) -> dict:
         cutoff = utc(as_of)
         configuration = EvaluationConfig.model_validate(config or {})
+        configuration.validate_creation()
         dates = sorted({utc(timestamp) for timestamp in decision_times})
         if any(timestamp > cutoff for timestamp in dates):
             raise ValueError("A backtest cannot contain a future decision")
@@ -282,11 +292,13 @@ class EvaluationService:
             raise ValueError("A live forward decision cannot be retrospectively backdated")
         if not synthetic and cutoff > now() + timedelta(seconds=30):
             raise ValueError("A live forward decision cannot be future dated")
+        configuration = EvaluationConfig.model_validate(config or {})
+        configuration.validate_creation()
         payload, datasets = self._prepare_decision(
             self._evaluation_inputs(cutoff, synthetic),
             cutoff,
             synthetic,
-            EvaluationConfig.model_validate(config or {}),
+            configuration,
             policy=policy,
         )
         return {
@@ -319,8 +331,8 @@ class EvaluationService:
         since, until = first_action - gap, min(cutoff, final_horizon + gap)
         datasets = set(dependencies)
         keys_by_product: dict[str, set[str]] = defaultdict(set)
-        for key, product_id in snapshot["entity_bindings"].items():
-            keys_by_product[product_id].add(key)
+        for key in outcome_entity_keys(snapshot["entity_bindings"], configuration):
+            keys_by_product[snapshot["entity_bindings"][key]].add(key)
 
         def load_product(product_id: str) -> list[Observation]:
             if frontier_token:

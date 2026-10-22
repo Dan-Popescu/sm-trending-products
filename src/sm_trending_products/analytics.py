@@ -375,6 +375,11 @@ def _demand(
         "sold_growth_per_hour": None,
         "sold_growth_upper_per_hour": None,
         "sold_counter_periods": {},
+        "sales_baseline_exclusion_reason": (
+            "incomplete_exact_transaction_coverage"
+            if windows
+            else "missing_exact_transaction_counts"
+        ),
     }
     if not latest:
         proxy_rows = [
@@ -424,6 +429,14 @@ def _demand(
             row["entity_key"]: row["counter_period"] for row in measured
         }
     periods = {row["counter_period"] for row in measured}
+    if (
+        len(measured) == len(latest) == len(windows)
+        and all(row["precision"] == "exact" for row in measured)
+        and None not in periods
+    ):
+        features["sales_baseline_exclusion_reason"] = (
+            None if len(periods) == 1 else "incompatible_sales_counter_periods"
+        )
     if (
         all(row["precision"] == "exact" for row in measured)
         and len(periods) == 1

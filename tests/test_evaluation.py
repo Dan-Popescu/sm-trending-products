@@ -13,6 +13,7 @@ from sm_trending_products.contracts import (
 )
 from sm_trending_products.evaluation import (
     EvaluationConfig,
+    ProfitContract,
     backtest,
     freeze_decision,
     mature_decision,
@@ -287,7 +288,12 @@ def test_realized_profit_requires_complete_actual_costs_and_currency() -> None:
         [link, cost_link],
         utc("2026-01-02T00:00:00Z"),
         EvaluationConfig(
-            target="profit", currency="EUR", threshold=30, horizon_days=(3,), launch_delay_days=(0,)
+            target="profit",
+            currency="EUR",
+            threshold=30,
+            horizon_days=(3,),
+            launch_delay_days=(0,),
+            profit_contract=ProfitContract(ledgers={cost_link.entity_key: ("goods", "other")}),
         ),
         synthetic=True,
     )

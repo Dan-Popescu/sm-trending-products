@@ -12,7 +12,7 @@ import random
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, DecimalException, InvalidOperation
 from typing import Any, Literal
 
 from pydantic import Field, model_validator
@@ -30,6 +30,27 @@ from .contracts import (
 )
 from .identity_rules import resolve_links
 from .outcome_timeline import EntityTimeline, _period
+
+
+class ProfitContract(Contract):
+    """Predeclared financial ledgers and their required actual-cost components."""
+
+    version: Literal["realized-profit-v1"] = "realized-profit-v1"
+    ledgers: dict[str, tuple[str, ...]] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_ledgers(self) -> ProfitContract:
+        for key, components in self.ledgers.items():
+            parts = key.split(":", 2)
+            if len(parts) != 3 or not parts[0] or parts[1] not in {"cost", "offer"} or not parts[2]:
+                raise ValueError("Profit ledgers require a source:cost|offer:entity key")
+            if (
+                not components
+                or len(set(components)) != len(components)
+                or any(not component or component != component.strip() for component in components)
+            ):
+                raise ValueError("Profit ledgers require nonempty, unique cost component names")
+        return self
 
 
 class EvaluationConfig(Contract):
@@ -53,6 +74,7 @@ class EvaluationConfig(Contract):
     missing_outcomes: Literal["censor"] = "censor"
     outcome_entity_scope: Literal["frozen_links"] = "frozen_links"
     horizon_anchor: Literal["decision"] = "decision"
+    profit_contract: ProfitContract | None = None
 
     @model_validator(mode="after")
     def validate_configuration(self) -> EvaluationConfig:
@@ -72,6 +94,47 @@ class EvaluationConfig(Contract):
             if value is not None:
                 utc(value)
         return self
+
+    def validate_creation(self) -> None:
+        """Require explicit new financial definitions without rejecting old snapshots."""
+        if self.target == "profit" and self.profit_contract is None:
+            raise ValueError("New profit decisions require a declared profit_contract")
+        if self.target != "profit" and self.profit_contract is not None:
+            raise ValueError("A profit_contract requires the profit target")
+
+    def validate_ledger_scope(self, links: Sequence[ProductLink]) -> None:
+        """Validate against already resolved, workspace/market-scoped reviewed links."""
+        if self.profit_contract is not None:
+            unknown = set(self.profit_contract.ledgers).difference(
+                link.entity_key for link in links
+            )
+            if unknown:
+                raise ValueError(
+                    "Profit ledger keys must have reviewed links in the decision scope: "
+                    + ", ".join(sorted(unknown))
+                )
+
+
+def outcome_entity_keys(bindings: Mapping[str, str], config: EvaluationConfig) -> set[str]:
+    """Scope declared ledger reads while preserving legacy outcome/lead-time context."""
+    if config.target == "profit" and config.profit_contract is not None:
+        return set(bindings).intersection(config.profit_contract.ledgers)
+    return set(bindings)
+
+
+def _entity_timeline(
+    key: str, rows: Sequence[Observation], config: EvaluationConfig
+) -> EntityTimeline:
+    return EntityTimeline(
+        rows,
+        config.target,
+        config.currency,
+        required_cost_components=(
+            config.profit_contract.ledgers[key]
+            if config.target == "profit" and config.profit_contract is not None
+            else None
+        ),
+    )
 
 
 def _eligible_observations(
@@ -223,6 +286,7 @@ def freeze_decision(
 
     cutoff = utc(decision_time)
     config = config or EvaluationConfig()
+    config.validate_creation()
     policy = policy or AssessmentPolicy()
     if config.minimum_decision_time and cutoff < config.minimum_decision_time:
         raise ValueError("Decision precedes the declared evaluation period")
@@ -254,6 +318,7 @@ def freeze_decision(
         if link.product_id in product_ids
     ]
     entities = {link.entity_key for link in known_links}
+    config.validate_ledger_scope(known_links)
     eligible = [row for row in eligible if row.entity_key in entities]
     prepared = precomputed_assessments is not None
     if prepared != (observation_counts is not None) or prepared != (
@@ -319,7 +384,27 @@ def freeze_decision(
         "random": random_selection,
     }
     sales_rows = [row for row in universe if row["features"].get("units_sold") is not None]
-    if sales_rows and len(sales_rows) == len(universe):
+    sales_periods = [row["features"].get("sold_counter_periods", {}) for row in universe]
+    common_periods = {period for periods in sales_periods for period in periods.values()}
+    exclusions = {
+        row["features"].get("sales_baseline_exclusion_reason", "missing_exact_transaction_counts")
+        for row in universe
+    }
+    sales_baseline_reason = (
+        "incomplete_exact_transaction_coverage"
+        if "incomplete_exact_transaction_coverage" in exclusions
+        else "missing_exact_transaction_counts"
+        if not sales_rows
+        or len(sales_rows) != len(universe)
+        or "missing_exact_transaction_counts" in exclusions
+        else "incompatible_sales_counter_periods"
+        if not all(sales_periods)
+        or len(common_periods) != 1
+        or None in common_periods
+        or "incompatible_sales_counter_periods" in exclusions
+        else None
+    )
+    if sales_baseline_reason is None:
         baselines["sales_popularity"] = _select_families(
             _baseline_order(sales_rows, "units_sold"),
             config.top_k,
@@ -342,6 +427,12 @@ def freeze_decision(
         "universe": universe,
         "selected": selected,
         "baselines": baselines,
+        "baseline_eligibility": {
+            "sales_popularity": {
+                "status": "included" if sales_baseline_reason is None else "excluded",
+                "reason": sales_baseline_reason,
+            }
+        },
         "entity_bindings": bindings,
         "evidence_refs": evidence_refs,
         "identity_decisions": [
@@ -399,19 +490,17 @@ def _product_outcome(
         if config.target == "attention"
         else ({"offer"} if config.target == "sales" else {"cost", "offer"})
     )
-    keys = [
-        key
-        for key, bound_product in bindings.items()
-        if bound_product == product_id
-        and len(key.split(":", 2)) == 3
-        and key.split(":", 2)[1] in kinds
-    ]
+    keys = outcome_entity_keys(
+        {key: owner for key, owner in bindings.items() if owner == product_id}, config
+    )
     results = []
     for key in sorted(keys):
+        if len(key.split(":", 2)) != 3 or key.split(":", 2)[1] not in kinds:
+            continue
         timeline = (
             timelines[key]
             if timelines is not None
-            else EntityTimeline(evidence.get(key, []), config.target, config.currency)
+            else _entity_timeline(key, evidence.get(key, []), config)
         )
         result = timeline.outcome(
             start,
@@ -435,8 +524,21 @@ def _product_outcome(
             "entities": results,
             "reason": "incompatible_outcome_units",
         }
-    lower = sum((Decimal(str(result["lower"])) for result in results), Decimal(0))
-    upper = sum((Decimal(str(result["upper"])) for result in results), Decimal(0))
+    strict_financial = config.target == "profit" and config.profit_contract is not None
+    try:
+        lower = sum((Decimal(str(result["lower"])) for result in results), Decimal(0))
+        upper = sum((Decimal(str(result["upper"])) for result in results), Decimal(0))
+        if strict_financial and (not lower.is_finite() or not upper.is_finite()):
+            raise InvalidOperation("Nonfinite product financial result")
+    except DecimalException:
+        if not strict_financial:
+            raise
+        return {
+            "product_id": product_id,
+            "status": "censored",
+            "entities": results,
+            "reason": "invalid_realized_product_amount",
+        }
     threshold = Decimal(str(config.threshold))
     precisions = {result["precision"] for result in results}
     precision = (
@@ -484,13 +586,15 @@ def _lead_time(
 ) -> dict[str, Any]:
     if timelines is None:
         timelines = {
-            key: EntityTimeline(values, config.target, config.currency)
-            for key, product in bindings.items()
-            if product == product_id
-            for values in [evidence.get(key, [])]
+            key: _entity_timeline(key, evidence.get(key, []), config)
+            for key in outcome_entity_keys(bindings, config)
+            if bindings[key] == product_id
         }
     rows = [
-        row for key, values in evidence.items() if bindings.get(key) == product_id for row in values
+        row
+        for key, values in evidence.items()
+        if key in timelines and bindings.get(key) == product_id
+        for row in values
     ]
     boundaries = set()
     for row in rows:
@@ -655,8 +759,8 @@ def mature_decision(
     if any(state == "matured" for _, _, state in windows):
         product_ids = sorted({product for selected in methods.values() for product in selected})
         bindings_by_product: dict[str, set[str]] = defaultdict(set)
-        for key, product in snapshot["entity_bindings"].items():
-            bindings_by_product[product].add(key)
+        for key in outcome_entity_keys(snapshot["entity_bindings"], config):
+            bindings_by_product[snapshot["entity_bindings"][key]].add(key)
         for product_id in product_ids:
             keys = bindings_by_product[product_id]
             product_evidence: dict[str, list[Observation]] = defaultdict(list)
@@ -673,8 +777,7 @@ def mature_decision(
                         product_evidence[item.entity_key].append(item)
             product_bindings = {key: product_id for key in keys}
             timelines = {
-                key: EntityTimeline(product_evidence.get(key, []), config.target, config.currency)
-                for key in keys
+                key: _entity_timeline(key, product_evidence.get(key, []), config) for key in keys
             }
             for index, (start, end, state) in sorted(
                 enumerate(windows), key=lambda item: (item[1][0], item[1][1])
@@ -771,6 +874,7 @@ def backtest(
 ) -> dict[str, Any]:
     """Replay deterministic policy and baseline decisions over recorded knowledge."""
     config = config or EvaluationConfig()
+    config.validate_creation()
     cutoff = utc(as_of)
     dates = sorted({utc(timestamp) for timestamp in decision_times})
     if any(timestamp > cutoff for timestamp in dates):
@@ -831,6 +935,16 @@ def summarize_backtest(
         }
         for (horizon, delay, method), outcomes in sorted(groups.items())
     ]
+    measured_financial_outcomes = (
+        sum(
+            outcome.get("precision") == "exact" and outcome["status"] in {"success", "failure"}
+            for report in reports
+            for scenario in report["scenarios"]
+            for outcome in scenario["methods"]["policy"]["outcomes"]
+        )
+        if config.target == "profit"
+        else 0
+    )
     result: dict[str, Any] = {
         "schema_version": "1",
         "kind": "backtest",
@@ -856,7 +970,12 @@ def summarize_backtest(
             "split": config.split,
             "family_grouping": "as_of_each_decision",
             "missing_outcomes": "censor",
-            "profit_claim": config.target == "profit",
+            "target": config.target,
+            "measured_financial_outcome_count": measured_financial_outcomes,
+            "profit_contract_version": (
+                config.profit_contract.version if config.profit_contract is not None else None
+            ),
+            "profit_claim": False,
         },
     }
     result["evaluation_id"] = digest(result)
