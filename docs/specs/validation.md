@@ -25,6 +25,10 @@ Replay recorded knowledge at each decision time, compare policies with simple ba
 ## Implementation Decisions
 
 - Eligibility is based on availability time for observations, source capabilities, links, features, policies, and cost inputs. Source timestamps alone cannot establish historical eligibility. Corrections create later versions.
+- Minimum source-history sampling points, features and frozen evidence references
+  use the ranking policy's same lookback window in both raw and bounded persisted
+  decisions. SQL reads prune that window, and the shared eligibility filter
+  enforces it before counting or freezing references.
 - An evaluation configuration freezes candidate universe, market scope, minimum evidence, top-K, ranking and identity versions, target metric, threshold, horizon, action delay, and missing-outcome treatment before measuring results.
 - Initial outcome horizons are 3, 7, and 14 days; launch-delay scenarios include 2 and 10 days. These are scenarios, not profitability assumptions. Future attention or observed sales outcomes remain distinct targets.
 - Compare with contemporaneous popularity, recent observed growth, and a seeded random baseline matched to the same eligible universe and coverage. Sales-popularity baselines run only when relevant transaction evidence exists.

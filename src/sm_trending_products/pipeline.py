@@ -16,7 +16,7 @@ from psycopg.types.json import Jsonb
 from .analysis_batches import bounded_product_batches
 from .catalog import Catalog
 from .collection import SourceCollection
-from .collector import CollectionError, Collector, redact
+from .collector import Collector, redact
 from .contracts import (
     AssessmentPolicy,
     Observation,
@@ -29,6 +29,7 @@ from .contracts import (
 )
 from .evaluation_service import EvaluationService
 from .history import History, HistoryIndexPending
+from .replay import ReplayService
 from .settings import Settings
 
 
@@ -44,6 +45,7 @@ class Pipeline:
             settings, self.catalog, self.history, self.collector, self.worker_id
         )
         self._evaluation = EvaluationService(self.catalog, self.history, self.identity)
+        self._replay = ReplayService(self.catalog, self.history, self.collector)
 
     @classmethod
     def from_env(cls) -> Pipeline:
@@ -264,61 +266,7 @@ class Pipeline:
         return {"datasets": datasets, "synthetic": synthetic}
 
     def replay(self, dataset_id: str, transform_version: str = "1") -> dict:
-        if transform_version != "1":
-            raise ValueError("This binary implements normalizer version 1 only")
-        dataset = self.catalog.one(
-            "SELECT * FROM datasets WHERE dataset_id=%s AND state='committed'", (dataset_id,)
-        )
-        if not dataset:
-            raise ValueError("No completed dataset found")
-        raw = self.history.raw(dataset)
-        quarantine = raw.get("quarantine", [])
-        if raw.get("kind") in {"import", "compaction"}:
-            observations = [Observation.model_validate(item) for item in raw["records"]]
-        else:
-            try:
-                result = self.collector.run(
-                    {
-                        "request": raw["request"],
-                        "raw": raw["response"],
-                        "observed_at": raw["observed_at"],
-                    },
-                    normalize=True,
-                )
-            except CollectionError as error:
-                if error.category != "schema" or error.artifact is None:
-                    raise
-                observations = []
-                quarantine = [{"reason": error.category}]
-            else:
-                if result["normalizer_version"] != transform_version:
-                    raise ValueError("Collector normalizer version differs from requested replay")
-                observations = [Observation.model_validate(item) for item in result["records"]]
-                quarantine = result.get("quarantine", [])
-        replay_identity = {"replay_of": dataset_id, "version": transform_version}
-        if quarantine:
-            # Older replay publications lost these rejects. Corrected metadata
-            # needs a distinct immutable publication, not an overwrite or reuse.
-            replay_identity["quarantine"] = quarantine
-        replay_id = digest(replay_identity)
-        self.history.publish(
-            observations,
-            raw,
-            source=dataset["source"],
-            synthetic=dataset["synthetic"],
-            dataset_id=replay_id,
-            transform_version=transform_version,
-            supersedes=dataset_id,
-            quarantine=quarantine,
-        )
-        return {
-            "dataset_id": replay_id,
-            "replayed_from": dataset_id,
-            "records": len(observations),
-            "quarantine_count": len(quarantine),
-            "status": "quarantined" if quarantine else "complete",
-            "transform_version": transform_version,
-        }
+        return self._replay.replay(dataset_id, transform_version)
 
     def _observations(
         self,
@@ -489,6 +437,54 @@ class Pipeline:
                 "Review pages require a limit between 1 and 200 and nonnegative offset"
             )
         return limit, offset
+
+    def collection_summaries(
+        self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
+    ) -> list[dict]:
+        limit, offset = self._review_page(limit, offset)
+        return self.catalog.all(
+            "SELECT task_id,source,account_id,operation,synthetic,state,created_at,due_at,"
+            "completed_at,last_error,schedule_reason->>'policy_version' AS policy_version,"
+            "schedule_reason->>'bucket' AS bucket,schedule_reason->>'tier' AS tier,"
+            "schedule_reason->>'scope' AS scope,"
+            "schedule_reason->'planned_interval_hours' AS planned_interval_hours,"
+            "CASE WHEN jsonb_typeof(schedule_reason->'entity_keys')='array' "
+            "THEN jsonb_array_length(schedule_reason->'entity_keys') "
+            "WHEN schedule_reason ? 'entity_key' THEN 1 ELSE 0 END AS entity_count "
+            "FROM collection_tasks WHERE synthetic=%s AND schedule_reason<>'{}'::jsonb "
+            "ORDER BY created_at DESC,task_id LIMIT %s OFFSET %s",
+            (synthetic, limit, offset),
+        )
+
+    def collection_decision(
+        self, task_id: str, synthetic: bool = False, *, limit: int = 200, offset: int = 0
+    ) -> dict | None:
+        """Read one decision and a bounded member page in the same SQL snapshot."""
+        limit, offset = self._review_page(limit, offset)
+        row = self.catalog.one(
+            "WITH planned AS (SELECT *,CASE "
+            "WHEN jsonb_typeof(schedule_reason->'entity_reasons')='array' "
+            "THEN schedule_reason->'entity_reasons' "
+            "WHEN schedule_reason ? 'entity_key' THEN jsonb_build_array(schedule_reason) "
+            "ELSE '[]'::jsonb END AS reasons FROM collection_tasks "
+            "WHERE task_id=%s AND synthetic=%s AND schedule_reason<>'{}'::jsonb) "
+            "SELECT p.task_id,p.source,p.account_id,p.operation,p.synthetic,p.state,"
+            "p.created_at,p.due_at,p.completed_at,p.last_error,p.page_index,"
+            "p.payload AS request_context,"
+            "p.schedule_reason-'entity_reasons'-'entity_keys' AS decision,"
+            "jsonb_array_length(p.reasons) AS member_count,"
+            "COALESCE((SELECT jsonb_agg(jsonb_build_object('reason',page.reason,"
+            "'candidate',jsonb_build_object('discovered_at',e.discovered_at,"
+            "'last_observed_at',e.last_observed_at,'next_due_at',e.next_due_at,"
+            "'origin_dataset_id',e.origin->>'dataset_id')) ORDER BY page.position) "
+            "FROM (SELECT value AS reason,ordinality AS position "
+            "FROM jsonb_array_elements(p.reasons) WITH ORDINALITY "
+            "ORDER BY ordinality LIMIT %s OFFSET %s) page "
+            "LEFT JOIN entities e ON e.entity_key=(page.reason->>'entity_key') "
+            "AND e.synthetic=p.synthetic),'[]'::jsonb) AS members FROM planned p",
+            (task_id, synthetic, limit, offset),
+        )
+        return redact(row) if row else None
 
     def alerts(self, synthetic: bool = False) -> list[dict]:
         return self.catalog.all(

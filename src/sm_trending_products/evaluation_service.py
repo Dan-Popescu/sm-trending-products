@@ -138,9 +138,15 @@ class EvaluationService:
                 synthetic,
                 config.market,
                 metadata["capabilities"],
+                since=since,
             )
             datasets.update(dependencies)
-            counts.update(row.entity_key for row in eligible)
+            counts.update(
+                entity_key
+                for entity_key, _observed_at in {
+                    (row.entity_key, utc(row.observed_at)) for row in eligible
+                }
+            )
             for row in eligible:
                 refs[row.entity_key].append(row.observation_id)
             rows.extend(assess(eligible, batch, links, cutoff, synthetic, policy, normalize=False))

@@ -7,7 +7,8 @@ from datetime import timedelta
 
 import pytest
 
-from sm_trending_products.contracts import now
+from sm_trending_products.contracts import Product, ProductLink, now
+from sm_trending_products.evaluation import EvaluationConfig, freeze_decision
 
 pytestmark = pytest.mark.integration
 
@@ -171,6 +172,65 @@ def test_normalization_replay_does_not_duplicate_or_change_backtest_evidence(pip
     assert len(after["result"]["snapshots"][0]["evidence_refs"]) == 2
 
 
+def test_prepared_history_adequacy_matches_raw_decisions_with_metadata_revisions(pipeline):
+    cutoff = now() + timedelta(minutes=1)
+    entity_id, entity_key, _ = seed_product(pipeline, "revision-history", base=cutoff)
+    config = outcome_config(minimum_history_observations=3)
+    original = pipeline.freeze(cutoff, synthetic=True, config=config)["result"]
+    assert original["status"] == "insufficient_history"
+
+    revisions = []
+    for hours, views in ((2, 100), (1, 200)):
+        row = record(
+            entity_id,
+            cutoff - timedelta(hours=hours),
+            views,
+            available_at=cutoff - timedelta(seconds=1),
+        )
+        row["observation_id"] += "-normalizer-v2"
+        row["attributes"]["normalizer_version"] = "2"
+        revisions.append(row)
+    pipeline.import_records(revisions, synthetic=True)
+    assert pipeline.freeze(cutoff, synthetic=True, config=config)["result"] == original
+
+    late = record(
+        entity_id,
+        cutoff - timedelta(minutes=30),
+        300,
+        available_at=cutoff + timedelta(days=1),
+    )
+    pipeline.import_records([late], synthetic=True)
+    assert pipeline.freeze(cutoff, synthetic=True, config=config)["result"] == original
+    genuine = {
+        **late,
+        "observation_id": "genuine-third-known-time",
+        "available_at": (cutoff - timedelta(microseconds=1)).isoformat(),
+    }
+    pipeline.import_records([genuine], synthetic=True)
+    persisted = pipeline.freeze(cutoff, synthetic=True, config=config)["result"]
+    evidence, _ = pipeline.history.observations(cutoff, synthetic=True, entity_keys={entity_key})
+    direct = freeze_decision(
+        evidence,
+        [Product.model_validate(row) for row in pipeline.products(synthetic=True)],
+        [ProductLink.model_validate(row) for row in pipeline.links(cutoff, synthetic=True)],
+        cutoff,
+        EvaluationConfig.model_validate(config),
+        synthetic=True,
+    )
+    assert persisted == direct
+    assert persisted["status"] == "frozen"
+    assert persisted["selected"] == ["revision-history"]
+    assert set(persisted["evidence_refs"]) == {row.observation_id for row in evidence}
+    assert len(persisted["evidence_refs"]) == 5
+    assert late["observation_id"] not in persisted["evidence_refs"]
+    assert set(persisted["universe"][0]["attention"]["evidence_refs"]) == {
+        row["observation_id"] for row in [*revisions, genuine]
+    }
+    assert persisted["universe"][0]["features"]["view_count"] == 300
+    assert persisted["config"]["minimum_history_observations"] == 3
+    assert persisted["policy"]["min_observations"] == 2
+
+
 def test_live_forward_decisions_cannot_be_backdated_or_populated_by_synthetic_history(pipeline):
     seed_product(pipeline, "synthetic-product")
     with pytest.raises(ValueError, match="cannot be retrospectively backdated"):
@@ -272,6 +332,46 @@ def test_missing_outcomes_retry_until_the_frozen_boundary_grace_then_finish_cens
         pipeline.mature_due(limit=10, synthetic=True, as_of=cutoff + timedelta(days=5))["processed"]
         == 0
     )
+
+
+@pytest.mark.parametrize(
+    "minimum_history,lookback_days,older_days", [(2, 30, 40), (3, 30, 40), (3, 1, 2)]
+)
+def test_direct_and_persisted_decisions_use_the_same_declared_history_window(
+    pipeline, minimum_history, lookback_days, older_days
+):
+    from sm_trending_products.contracts import AssessmentPolicy, Product, ProductLink
+    from sm_trending_products.evaluation import EvaluationConfig, freeze_decision
+
+    cutoff = now() + timedelta(minutes=1)
+    pipeline.import_records(
+        [
+            record("windowed", cutoff - timedelta(days=older_days), 1),
+            record("windowed", cutoff - timedelta(hours=2), 100),
+            record("windowed", cutoff - timedelta(hours=1), 500),
+        ],
+        synthetic=True,
+    )
+    pipeline.create_product("windowed", "Declared history window", synthetic=True)
+    pipeline.review_link("windowed", "fixture_import:video:windowed")
+    observations, _ = pipeline.history.observations(cutoff, True)
+    assert len(observations) == 3
+    config = EvaluationConfig(minimum_history_observations=minimum_history)
+    policy = AssessmentPolicy(version=f"history-{lookback_days}-v1", lookback_days=lookback_days)
+    direct = freeze_decision(
+        observations,
+        [Product.model_validate(row) for row in pipeline.products(True)],
+        [ProductLink.model_validate(row) for row in pipeline.links(cutoff, True)],
+        cutoff,
+        config,
+        synthetic=True,
+        policy=policy,
+    )
+    stored = pipeline.freeze(cutoff, True, config.model_dump(mode="json"), policy=policy)["result"]
+    assert direct == stored
+    oldest = min(observations, key=lambda row: row.observed_at).observation_id
+    assert oldest not in direct["evidence_refs"]
+    assert direct["selected"] == (["windowed"] if minimum_history == 2 else [])
 
 
 def test_native_postgres_claims_forward_frontier_without_duplicate_workers(pipeline):
