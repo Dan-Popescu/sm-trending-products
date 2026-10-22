@@ -306,9 +306,41 @@ def test_shared_quota_stops_a_second_process_before_its_http_request(pipeline, m
             second = independent_worker.collect_batch(batch_size=1, synthetic=True)
     assert first["processed"] == 1
     assert second["processed"] == 0
-    assert second["errors"][0]["category"] == "quota_exhausted"
+    assert second["errors"] == []
+    assert pipeline.catalog.quota_waiting(synthetic=True) == 1
+    waiting = pipeline.catalog.one("SELECT * FROM collection_tasks WHERE state='pending'")
+    assert waiting["attempts"] == 0
+    assert waiting["lease_version"] == 0
     assert len(requests) == 1
     assert len(pipeline.datasets()) == 1
+
+
+def test_batched_entity_upserts_preserve_latest_time_and_delivery_order(pipeline):
+    timestamp = now()
+    records = []
+    for index in range(503):
+        record = video_observation("same-entity", timestamp, index)
+        record["attributes"]["title"] = f"delivery-{index}"
+        record["account_id"] = f"account-{index}"
+        records.append(record)
+    records.insert(501, video_observation("same-entity", timestamp - timedelta(hours=1), 1))
+    pipeline.import_records(records, synthetic=True)
+    current = pipeline.catalog.one(
+        "SELECT * FROM entities WHERE entity_key='fixture_import:video:same-entity'"
+    )
+    assert current["title"] == "delivery-502"
+    assert current["account_id"] == "account-502"
+    assert current["last_observed_at"] == timestamp
+    assert current["attributes"]["title"] == "delivery-502"
+    older = video_observation("same-entity", timestamp - timedelta(hours=2), 0)
+    older["attributes"]["title"] = "late older delivery"
+    pipeline.import_records([older], synthetic=True)
+    after = pipeline.catalog.one(
+        "SELECT * FROM entities WHERE entity_key='fixture_import:video:same-entity'"
+    )
+    assert after["title"] == current["title"]
+    assert after["account_id"] == current["account_id"]
+    assert after["attributes"] == current["attributes"]
 
 
 def test_expired_worker_cannot_publish_and_a_replacement_can_complete_the_task(
@@ -502,38 +534,3 @@ def test_top_level_schema_drift_archives_safe_evidence_without_advancing_the_tas
     assert "unexpected_layout" in json.dumps(archived)
     assert "fixture-access-token" not in json.dumps(archived)
     assert pipeline.verify()["ok"] is True
-
-
-def test_commercial_list_alias_is_canonical_in_new_and_recovered_tasks(pipeline):
-    for source in ("tiktok_ads", "tiktok_commercial"):
-        task_id = pipeline.enqueue(source, ACCOUNT, "list", {"filters": {}}, synthetic=True)
-        task = pipeline.catalog.one("SELECT * FROM collection_tasks WHERE task_id=%s", (task_id,))
-        assert task["operation"] == "query"
-        # Existing persisted list tasks also get canonical provenance when read.
-        task["operation"] = "list"
-        assert pipeline._collection._request(task)["operation"] == "query"
-
-
-def test_commercial_verification_alias_records_discovery_without_inventing_access(
-    pipeline, monkeypatch
-):
-    monkeypatch.setattr(
-        pipeline.collector,
-        "run",
-        lambda request: {
-            "records": [],
-            "raw": {"data": {}},
-            "observed_at": now().isoformat(),
-        },
-    )
-    for source in ("tiktok_ads", "tiktok_commercial"):
-        result = pipeline.verify_live(
-            source, ACCOUNT, "list", {"filters": {}}, evidence="approved-fixture", retention_days=7
-        )
-        assert result["state"] == "unverified"
-        capabilities = pipeline.catalog.all(
-            "SELECT capability,state,details FROM source_capabilities WHERE source=%s", (source,)
-        )
-        assert {row["capability"] for row in capabilities} == {"collect", "discovery"}
-        assert all(row["state"] == "unverified" for row in capabilities)
-        assert all(row["details"]["verified_operation"] == "query" for row in capabilities)

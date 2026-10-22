@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -20,6 +21,7 @@ from .contracts import canonical, digest
 # Shared protocol with the literal in SQL migration 003_maintenance.sql triggers.
 # Changing the key requires coordinating both Python writers and database guards.
 RETENTION_GUARD_KEY = 492371205
+ENTITY_WRITE_BATCH_SIZE = 500
 
 
 class LeaseLost(RuntimeError):
@@ -134,7 +136,13 @@ class Catalog:
         return task_id
 
     def claim(
-        self, worker_id: str, lease_seconds: int, synthetic: bool, max_attempts: int
+        self,
+        worker_id: str,
+        lease_seconds: int,
+        synthetic: bool,
+        max_attempts: int,
+        *,
+        credential_keys: dict[str, str] | None = None,
     ) -> dict[str, Any] | None:
         with self.transaction() as connection:
             connection.execute(
@@ -147,16 +155,35 @@ class Catalog:
                 (synthetic, max_attempts),
             )
             return connection.execute(
-                "WITH next_task AS (SELECT task_id FROM collection_tasks WHERE synthetic=%s "
+                "WITH next_task AS (SELECT t.task_id FROM collection_tasks t WHERE synthetic=%s "
                 "AND attempts<%s AND due_at<=clock_timestamp() AND "
                 "(state='pending' OR (state='leased' AND lease_until<clock_timestamp())) "
-                "ORDER BY priority DESC,due_at,task_id FOR UPDATE SKIP LOCKED LIMIT 1) "
+                "AND request_budget_ready(t.source,t.account_id,"
+                "CASE WHEN t.synthetic THEN NULL ELSE %s::jsonb->>t.source END) "
+                "ORDER BY priority DESC,due_at,t.task_id FOR UPDATE OF t SKIP LOCKED LIMIT 1) "
                 "UPDATE collection_tasks t SET state='leased',lease_owner=%s,"
                 "lease_version=t.lease_version+1,lease_until=clock_timestamp()+%s*interval '1 "
                 "second',"
                 "attempts=t.attempts+1 FROM next_task n WHERE t.task_id=n.task_id RETURNING t.*",
-                (synthetic, max_attempts, worker_id, lease_seconds),
+                (synthetic, max_attempts, Jsonb(credential_keys or {}), worker_id, lease_seconds),
             ).fetchone()
+
+    def quota_waiting(
+        self,
+        synthetic: bool,
+        max_attempts: int = 8,
+        *,
+        credential_keys: dict[str, str] | None = None,
+    ) -> int:
+        row = self.one(
+            "SELECT count(*) AS count FROM collection_tasks t WHERE synthetic=%s "
+            "AND attempts<%s AND due_at<=clock_timestamp() AND "
+            "(state='pending' OR (state='leased' AND lease_until<clock_timestamp())) "
+            "AND NOT request_budget_ready(t.source,t.account_id,"
+            "CASE WHEN t.synthetic THEN NULL ELSE %s::jsonb->>t.source END)",
+            (synthetic, max_attempts, Jsonb(credential_keys or {})),
+        )
+        return row["count"] if row else 0
 
     @staticmethod
     def assert_lease(connection: psycopg.Connection[dict[str, Any]], task: dict) -> None:
@@ -207,28 +234,22 @@ class Catalog:
     def configure_budget(
         self, source: str, account_id: str, capacity: float, refill_per_second: float
     ) -> None:
-        if capacity < 1 or refill_per_second <= 0:
+        if (
+            not math.isfinite(capacity)
+            or not math.isfinite(refill_per_second)
+            or capacity < 1
+            or refill_per_second <= 0
+        ):
             raise ValueError("Request budget must have positive capacity and refill")
         self.execute(
-            "INSERT INTO request_budgets(source,account_id,capacity,refill_per_second,tokens) "
-            "VALUES(%s,%s,%s,%s,%s) ON CONFLICT(source,account_id) DO UPDATE SET "
-            "capacity=EXCLUDED.capacity,refill_per_second=EXCLUDED.refill_per_second,"
-            "tokens=LEAST(request_budgets.tokens,EXCLUDED.capacity)",
-            (source, account_id, capacity, refill_per_second, capacity),
+            "SELECT configure_request_budget(%s,%s,%s,%s)",
+            (source, account_id, capacity, refill_per_second),
         )
 
     def block_budget(self, source: str, account_id: str, seconds: float) -> None:
         self.execute(
-            "UPDATE request_budgets SET blocked_until=GREATEST(COALESCE(blocked_until,"
-            "clock_timestamp()),clock_timestamp()+%s*interval '1 second') "
-            "WHERE source=%s AND account_id=%s",
-            (seconds, source, account_id),
-        )
-        self.execute(
-            "UPDATE credential_budgets SET blocked_until=GREATEST(COALESCE(blocked_until,"
-            "clock_timestamp()),clock_timestamp()+%s*interval '1 second') WHERE credential_key IN "
-            "(SELECT credential_key FROM credential_bindings WHERE source=%s AND account_id=%s)",
-            (seconds, source, account_id),
+            "SELECT block_request_budget(%s,%s,%s)",
+            (source, account_id, seconds),
         )
 
     def manifests(
@@ -355,40 +376,49 @@ class Catalog:
                         dataset_id,
                     ),
                 )
-                for obs in observations:
-                    attributes = obs.attributes
-                    title = str(attributes.get("title", attributes.get("description", "")))[:1000]
-                    connection.execute(
-                        "INSERT INTO "
-                        "entities(entity_key,synthetic,source,account_id,entity_type,title,"
-                        "attributes,last_observed_at,origin) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) "
-                        "ON CONFLICT(entity_key,synthetic) DO UPDATE SET "
-                        "last_observed_at=GREATEST(entities.last_observed_at,EXCLUDED.last_observed_at),"
-                        "title=CASE WHEN EXCLUDED.last_observed_at>=entities.last_observed_at THEN "
-                        "EXCLUDED.title ELSE entities.title END,"
-                        "attributes=CASE WHEN entities.last_observed_at IS NULL OR "
-                        "EXCLUDED.last_observed_at>=entities.last_observed_at "
-                        "THEN EXCLUDED.attributes "
-                        "ELSE entities.attributes END,"
-                        "origin=CASE WHEN entities.last_observed_at IS NULL OR "
-                        "EXCLUDED.last_observed_at>=entities.last_observed_at THEN EXCLUDED.origin "
-                        "ELSE entities.origin END,"
-                        "account_id=CASE WHEN entities.last_observed_at IS NULL OR "
-                        "EXCLUDED.last_observed_at>=entities.last_observed_at "
-                        "THEN EXCLUDED.account_id "
-                        "ELSE entities.account_id END",
-                        (
-                            obs.entity_key,
-                            obs.synthetic,
-                            obs.source,
-                            obs.account_id or "",
-                            obs.entity_type,
-                            title,
-                            Jsonb(attributes),
-                            obs.observed_at,
-                            Jsonb({"dataset_id": dataset_id, "source": obs.source}),
-                        ),
-                    )
+                # Bound each ordered pipeline; the outer transaction stays atomic.
+                for start in range(0, len(observations), ENTITY_WRITE_BATCH_SIZE):
+                    with connection.pipeline():
+                        for obs in observations[start : start + ENTITY_WRITE_BATCH_SIZE]:
+                            attributes = obs.attributes
+                            title = str(attributes.get("title", attributes.get("description", "")))[
+                                :1000
+                            ]
+                            connection.execute(
+                                "INSERT INTO "
+                                "entities(entity_key,synthetic,source,account_id,entity_type,title,"
+                                "attributes,last_observed_at,origin) "
+                                "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                                "ON CONFLICT(entity_key,synthetic) DO UPDATE SET "
+                                "last_observed_at=GREATEST(entities.last_observed_at,EXCLUDED.last_observed_at),"
+                                "title=CASE WHEN "
+                                "EXCLUDED.last_observed_at>=entities.last_observed_at "
+                                "THEN "
+                                "EXCLUDED.title ELSE entities.title END,"
+                                "attributes=CASE WHEN entities.last_observed_at IS NULL OR "
+                                "EXCLUDED.last_observed_at>=entities.last_observed_at "
+                                "THEN EXCLUDED.attributes "
+                                "ELSE entities.attributes END,"
+                                "origin=CASE WHEN entities.last_observed_at IS NULL OR "
+                                "EXCLUDED.last_observed_at>=entities.last_observed_at "
+                                "THEN EXCLUDED.origin "
+                                "ELSE entities.origin END,"
+                                "account_id=CASE WHEN entities.last_observed_at IS NULL OR "
+                                "EXCLUDED.last_observed_at>=entities.last_observed_at "
+                                "THEN EXCLUDED.account_id "
+                                "ELSE entities.account_id END",
+                                (
+                                    obs.entity_key,
+                                    obs.synthetic,
+                                    obs.source,
+                                    obs.account_id or "",
+                                    obs.entity_type,
+                                    title,
+                                    Jsonb(attributes),
+                                    obs.observed_at,
+                                    Jsonb({"dataset_id": dataset_id, "source": obs.source}),
+                                ),
+                            )
             if task and advance_task:
                 connection.execute(
                     "UPDATE collection_tasks SET "
