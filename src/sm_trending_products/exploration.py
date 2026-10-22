@@ -235,7 +235,7 @@ def explore(
     ids = sorted({item["dataset_id"] for item in manifests})
     before = dict(history.metrics)
     with history.catalog.transaction() as transaction:
-        transaction.execute("SELECT pg_advisory_xact_lock_shared(492371205)")
+        history.catalog.guard_retention(transaction)
         actual = transaction.execute(
             "SELECT * FROM datasets WHERE dataset_id=ANY(%s) ORDER BY created_at,dataset_id",
             (ids,),

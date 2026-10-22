@@ -15,6 +15,7 @@ from psycopg.types.json import Jsonb
 
 from .catalog import Catalog
 from .contracts import FamilyMembership, Product, ProductLink, utc
+from .identity_rules import LINK_STATE_CTES
 
 Row = dict[str, Any]
 PRODUCT_FIELDS = "product_id,name,created_at,synthetic,market"
@@ -48,6 +49,20 @@ def _limit(value: int, maximum: int) -> int:
 class Identity:
     def __init__(self, catalog: Catalog):
         self.catalog = catalog
+
+    def all_products(self, as_of: datetime, synthetic: bool = False) -> list[Row]:
+        result: list[Row] = []
+        last_id = ""
+        while True:
+            rows = self.catalog.all(
+                "SELECT * FROM products WHERE synthetic=%s AND created_at<=%s AND product_id>%s "
+                "ORDER BY product_id LIMIT 1000",
+                (synthetic, utc(as_of), last_id),
+            )
+            result.extend(rows)
+            if len(rows) < 1000:
+                return result
+            last_id = rows[-1]["product_id"]
 
     def products(self, synthetic: bool = False, *, limit: int = 1000, offset: int = 0) -> list[Row]:
         if offset < 0:
@@ -226,6 +241,8 @@ class Identity:
     ) -> Row:
         if status == "confirmed":
             # A rejection for a different product is not a global unlink operation.
+            # Writes clear every active claim, including ambiguous owners that the
+            # shared read resolver intentionally excludes from trusted evidence.
             owners = connection.execute(
                 "WITH latest AS (SELECT DISTINCT ON(l.product_id) l.* "
                 "FROM product_links l JOIN products p USING(product_id) "
@@ -276,14 +293,10 @@ class Identity:
         """Current reviewed hypotheses at a cutoff; use link_history for replay."""
         cutoff = utc(as_of)
         return self.catalog.all(
-            "WITH latest AS (SELECT DISTINCT ON(l.product_id,l.entity_key) l.* "
-            "FROM product_links l JOIN products p USING(product_id) "
-            "WHERE p.synthetic=%s AND p.created_at<=%s AND l.available_at<=%s "
-            "ORDER BY l.product_id,l.entity_key,l.available_at DESC,l.id DESC), "
-            "owners AS (SELECT DISTINCT ON(entity_key) decision_id FROM latest "
-            "WHERE status='confirmed' ORDER BY entity_key,available_at DESC,id DESC) "
-            f"SELECT {LINK_FIELDS} FROM latest WHERE status<>'confirmed' "
-            "OR decision_id IN(SELECT decision_id FROM owners) "
+            "WITH "
+            + LINK_STATE_CTES
+            + f"SELECT {LINK_FIELDS} FROM current_link_pairs WHERE status<>'confirmed' "
+            "OR decision_id IN(SELECT decision_id FROM resolved_link_owners) "
             "ORDER BY available_at,id",
             (synthetic, cutoff, cutoff),
         )

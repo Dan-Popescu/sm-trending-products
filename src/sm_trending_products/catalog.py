@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -14,7 +15,11 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-from .contracts import digest
+from .contracts import canonical, digest
+
+# Shared protocol with the literal in SQL migration 003_maintenance.sql triggers.
+# Changing the key requires coordinating both Python writers and database guards.
+RETENTION_GUARD_KEY = 492371205
 
 
 class LeaseLost(RuntimeError):
@@ -87,6 +92,18 @@ class Catalog:
     def execute(self, query: str, params: Sequence[Any] = ()) -> None:
         with self.transaction() as connection:
             connection.execute(query, params)
+
+    @staticmethod
+    def guard_retention(
+        connection: psycopg.Connection[dict[str, Any]], *, exclusive: bool = False
+    ) -> None:
+        """Fence evidence access/publication against retention before taking row locks."""
+        statement = (
+            "SELECT pg_advisory_xact_lock(%s)"
+            if exclusive
+            else "SELECT pg_advisory_xact_lock_shared(%s)"
+        )
+        connection.execute(statement, (RETENTION_GUARD_KEY,))
 
     def enqueue(
         self,
@@ -248,7 +265,7 @@ class Catalog:
         supersedes: str | None = None,
     ) -> dict:
         with self.transaction() as connection:
-            connection.execute("SELECT pg_advisory_xact_lock_shared(492371205)")
+            self.guard_retention(connection)
             if task:
                 self.assert_lease(connection, task)
             connection.execute(
@@ -280,7 +297,7 @@ class Catalog:
     def guard_inputs(
         connection: psycopg.Connection[dict[str, Any]], dataset_ids: Sequence[str]
     ) -> None:
-        connection.execute("SELECT pg_advisory_xact_lock_shared(492371205)")
+        Catalog.guard_retention(connection)
         expected = sorted(set(dataset_ids))
         if expected:
             row = connection.execute(
@@ -311,7 +328,7 @@ class Catalog:
         advance_task: bool = True,
     ) -> None:
         with self.transaction() as connection:
-            connection.execute("SELECT pg_advisory_xact_lock_shared(492371205)")
+            self.guard_retention(connection)
             if task:
                 self.assert_lease(connection, task)
             row = connection.execute(
@@ -345,7 +362,18 @@ class Catalog:
                         "ON CONFLICT(entity_key,synthetic) DO UPDATE SET "
                         "last_observed_at=GREATEST(entities.last_observed_at,EXCLUDED.last_observed_at),"
                         "title=CASE WHEN EXCLUDED.last_observed_at>=entities.last_observed_at THEN "
-                        "EXCLUDED.title ELSE entities.title END",
+                        "EXCLUDED.title ELSE entities.title END,"
+                        "attributes=CASE WHEN entities.last_observed_at IS NULL OR "
+                        "EXCLUDED.last_observed_at>=entities.last_observed_at "
+                        "THEN EXCLUDED.attributes "
+                        "ELSE entities.attributes END,"
+                        "origin=CASE WHEN entities.last_observed_at IS NULL OR "
+                        "EXCLUDED.last_observed_at>=entities.last_observed_at THEN EXCLUDED.origin "
+                        "ELSE entities.origin END,"
+                        "account_id=CASE WHEN entities.last_observed_at IS NULL OR "
+                        "EXCLUDED.last_observed_at>=entities.last_observed_at "
+                        "THEN EXCLUDED.account_id "
+                        "ELSE entities.account_id END",
                         (
                             obs.entity_key,
                             obs.synthetic,
@@ -409,11 +437,21 @@ class Catalog:
             "evaluation_runs",
             "source_capabilities",
         )
-        return {
-            table: digest(
-                self.all(
-                    f"SELECT row_to_json(t) AS row FROM {table} t ORDER BY row_to_json(t)::text"
-                )
-            )
-            for table in tables
-        }
+        result = {}
+        with self.transaction() as connection:
+            for table in tables:
+                hasher = hashlib.sha256(b"[")
+                separator = b""
+                # Server-side cursors keep backup verification independent of history size.
+                with connection.cursor(name="evidence_state") as cursor:
+                    cursor.itersize = 256
+                    cursor.execute(
+                        f"SELECT row_to_json(t) AS row FROM {table} t ORDER BY row_to_json(t)::text"
+                    )
+                    for row in cursor:
+                        hasher.update(separator)
+                        hasher.update(canonical(row).encode())
+                        separator = b","
+                hasher.update(b"]")
+                result[table] = hasher.hexdigest()
+        return result

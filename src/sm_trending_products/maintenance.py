@@ -9,6 +9,7 @@ import io
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
+from psycopg import Connection
 from psycopg.types.json import Jsonb
 
 from .contracts import Observation, canonical, digest
@@ -16,7 +17,6 @@ from .contracts import Observation, canonical, digest
 if TYPE_CHECKING:
     from .pipeline import Pipeline
 
-MAINTENANCE_LOCK = 492371205
 COMPACTION_MAX_ROWS = 100_000
 
 
@@ -81,7 +81,7 @@ class Maintenance:
             manifest["manifest_key"], canonical(manifest).encode(), content_type="application/json"
         )
         with self.catalog.transaction() as connection:
-            connection.execute("SELECT pg_advisory_xact_lock_shared(%s)", (MAINTENANCE_LOCK,))
+            self.catalog.guard_retention(connection)
             parents = connection.execute(
                 "SELECT * FROM datasets WHERE dataset_id=ANY(%s) ORDER BY dataset_id FOR UPDATE",
                 (parent_ids,),
@@ -258,7 +258,7 @@ class Maintenance:
             result["pending_objects"] = pending["count"] if pending else 0
             return result
         with self.catalog.transaction() as connection:
-            connection.execute("SELECT pg_advisory_xact_lock(%s)", (MAINTENANCE_LOCK,))
+            self.catalog.guard_retention(connection, exclusive=True)
             connection.execute("CREATE TEMP TABLE retention_targets ON COMMIT DROP AS " + closure)
             # Guarded writers cannot publish new derivatives between this closure and tombstones.
             connection.execute(
@@ -320,11 +320,6 @@ class Maintenance:
                 (tombstone,),
             )
             connection.execute(
-                "UPDATE entities SET title='',attributes='{}',"
-                "origin='{\"retention_purged\":true}'::jsonb "
-                "WHERE origin->>'dataset_id' IN (SELECT dataset_id FROM retention_targets)"
-            )
-            connection.execute(
                 "UPDATE datasets SET manifest=manifest-'quarantine'-'task_request' "
                 "WHERE dataset_id IN (SELECT dataset_id FROM retention_targets) "
                 "AND state='invalidated'"
@@ -334,6 +329,7 @@ class Maintenance:
                 "UPDATE datasets SET compacted_into=NULL WHERE state='committed' "
                 "AND compacted_into IN (SELECT dataset_id FROM retention_targets)"
             )
+            result["restored_entity_origins"] = self._repair_entity_origins(connection)
             actual = connection.execute(
                 "SELECT dataset_id,count(*) OVER() AS total FROM retention_targets "
                 "ORDER BY dataset_id LIMIT 1000"
@@ -364,6 +360,48 @@ class Maintenance:
             pending_objects=pending["count"] if pending else 0,
         )
         return result
+
+    @staticmethod
+    def _repair_entity_origins(connection: Connection[dict[str, Any]]) -> int:
+        # Use manifest metadata only; do not materialize historical Parquet under this lock.
+        connection.execute(
+            "CREATE TEMP TABLE retention_entity_replacements ON COMMIT DROP AS "
+            "SELECT e.entity_key,e.synthetic,replacement.dataset_id,replacement.account_id "
+            "FROM entities e JOIN retention_targets expired "
+            "ON expired.dataset_id=e.origin->>'dataset_id' "
+            "CROSS JOIN LATERAL ("
+            "SELECT d.dataset_id,CASE WHEN d.manifest->'task_request'->>'source'=e.source "
+            "THEN COALESCE(NULLIF(d.manifest->'task_request'->>'account_id',''),e.account_id) "
+            "ELSE e.account_id END AS account_id "
+            "FROM datasets d JOIN source_policies policy ON policy.source=d.source "
+            "WHERE d.state='committed' AND d.source=e.source AND d.synthetic=e.synthetic "
+            "AND policy.verified AND d.created_at>=clock_timestamp()-"
+            "policy.retention_days*interval '1 day' "
+            "AND d.manifest @> jsonb_build_object('normalized',jsonb_build_array("
+            "jsonb_build_object('entity_keys',jsonb_build_array(e.entity_key)))) "
+            "ORDER BY COALESCE(d.manifest->'task_request'->>'source'=e.source "
+            "AND NULLIF(d.manifest->'task_request'->>'account_id','') IS NOT NULL "
+            "AND ((e.source IN ('tiktok_ads','tiktok_commercial') "
+            "AND d.manifest->'task_request'->>'operation'='query') "
+            "OR (e.source='tiktok_display' "
+            "AND d.manifest->'task_request'->>'operation' IN ('query','list'))),false) DESC,"
+            "d.max_available_at DESC NULLS LAST,d.committed_at DESC,d.dataset_id LIMIT 1"
+            ") replacement"
+        )
+        restored = connection.execute(
+            "UPDATE entities e SET account_id=replacement.account_id,"
+            "title='',attributes='{}',origin=jsonb_build_object("
+            "'dataset_id',replacement.dataset_id,'source',e.source) "
+            "FROM retention_entity_replacements replacement "
+            "WHERE e.entity_key=replacement.entity_key AND e.synthetic=replacement.synthetic"
+        ).rowcount
+        # Current fresh origins are untouched. Expired metadata has no remaining provenance.
+        connection.execute(
+            "UPDATE entities SET title='',attributes='{}',"
+            "origin='{\"retention_purged\":true}'::jsonb "
+            "WHERE origin->>'dataset_id' IN (SELECT dataset_id FROM retention_targets)"
+        )
+        return restored
 
     def _delete_pending_objects(self) -> tuple[int, int]:
         from botocore.exceptions import BotoCoreError, ClientError

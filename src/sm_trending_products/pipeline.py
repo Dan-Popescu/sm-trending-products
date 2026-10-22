@@ -9,16 +9,14 @@ import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from .catalog import Catalog, LeaseLost
-from .collector import CollectionError, Collector, redact
+from .catalog import Catalog
+from .collection import SourceCollection
+from .collector import Collector, redact
 from .contracts import (
     AssessmentPolicy,
-    Capability,
-    FamilyMembership,
     Observation,
     Product,
     ProductLink,
@@ -27,6 +25,7 @@ from .contracts import (
     now,
     utc,
 )
+from .evaluation_service import EvaluationService
 from .history import History
 from .settings import Settings
 
@@ -39,6 +38,10 @@ class Pipeline:
         self.history = History(settings, self.catalog)
         self.collector = Collector(settings)
         self.worker_id = settings.worker_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:12]}"
+        self._collection = SourceCollection(
+            settings, self.catalog, self.history, self.collector, self.worker_id
+        )
+        self._evaluation = EvaluationService(self.catalog, self.history, self.identity)
 
     @classmethod
     def from_env(cls) -> Pipeline:
@@ -117,18 +120,7 @@ class Pipeline:
         return self.identity.products(synthetic=synthetic, limit=limit, offset=offset)
 
     def _all_products(self, synthetic: bool, as_of: datetime) -> list[dict]:
-        result: list[dict] = []
-        last_id = ""
-        while True:
-            rows = self.catalog.all(
-                "SELECT * FROM products WHERE synthetic=%s AND created_at<=%s AND product_id>%s "
-                "ORDER BY product_id LIMIT 1000",
-                (synthetic, as_of, last_id),
-            )
-            result.extend(rows)
-            if len(rows) < 1000:
-                return result
-            last_id = rows[-1]["product_id"]
+        return self.identity.all_products(as_of, synthetic=synthetic)
 
     def links(self, as_of: datetime, synthetic: bool = False) -> list[dict]:
         return self.identity.links(as_of, synthetic=synthetic)
@@ -177,16 +169,6 @@ class Pipeline:
             "ORDER BY source,account_id,capability,available_at DESC,id DESC"
         )
 
-    def _require_access(self, source: str, account_id: str) -> None:
-        cap = self.catalog.one(
-            "SELECT state FROM source_capabilities WHERE source=%s AND account_id=%s "
-            "AND capability='collect' ORDER BY available_at DESC,id DESC LIMIT 1",
-            (source, account_id),
-        )
-        policy = self.catalog.one("SELECT verified FROM source_policies WHERE source=%s", (source,))
-        if not cap or cap["state"] != "available" or not policy or not policy["verified"]:
-            raise CollectionError("source_access_unverified", 3600)
-
     def enqueue(
         self,
         source: str,
@@ -196,197 +178,17 @@ class Pipeline:
         synthetic: bool = False,
         idempotency_key: str | None = None,
     ) -> str:
-        if source not in {"tiktok_display", "tiktok_ads", "tiktok_commercial"}:
-            raise ValueError("Unsupported source")
-        if not synthetic:
-            self._require_access(source, account_id)
-            if any(
-                key in payload
-                for key in ("endpoint_override", "observed_at", "fixture_observed_at")
-            ):
-                raise ValueError("Fixture overrides cannot enter live collection")
-        return self.catalog.enqueue(
-            source,
-            account_id,
-            operation,
-            redact(payload),
-            synthetic,
-            due_at=now(),
+        return self._collection.enqueue(
+            source=source,
+            account_id=account_id,
+            operation=operation,
+            payload=payload,
+            synthetic=synthetic,
             idempotency_key=idempotency_key,
         )
 
-    def _request(self, task: dict) -> dict:
-        payload = dict(task["payload"])
-        request = {
-            "source": task["source"],
-            "account_id": task["account_id"],
-            "operation": task["operation"],
-            "synthetic": task["synthetic"],
-            "payload": payload,
-        }
-        if task["synthetic"]:
-            for source, target in (
-                ("endpoint_override", "endpoint_override"),
-                ("fixture_observed_at", "observed_at"),
-            ):
-                if source in payload:
-                    request[target] = payload.pop(source)
-        return request
-
     def collect_batch(self, batch_size: int = 20, synthetic: bool = False) -> dict:
-        if not 1 <= batch_size <= 1000:
-            raise ValueError("Batch size must be between 1 and 1000")
-        result: dict[str, Any] = {
-            "processed": 0,
-            "datasets": [],
-            "errors": [],
-            "synthetic": synthetic,
-        }
-        for _ in range(batch_size):
-            task = self.catalog.claim(
-                self.worker_id, self.settings.lease_seconds, synthetic, self.settings.max_attempts
-            )
-            if task is None:
-                break
-            dataset_id = digest({"task": task["task_id"], "page_index": task["page_index"]})
-            try:
-                if not synthetic:
-                    self._require_access(task["source"], task["account_id"])
-                prior = self.catalog.one(
-                    "SELECT * FROM datasets WHERE dataset_id=%s", (dataset_id,)
-                )
-                if prior and prior["state"] == "committed":
-                    raw = self.history.raw(prior)
-                    self.catalog.commit_dataset(
-                        dataset_id,
-                        prior["manifest"],
-                        (),
-                        task=task,
-                        next_payload=raw.get("next_payload"),
-                    )
-                else:
-                    raw = None
-                    if prior and prior["state"] == "staged":
-                        try:
-                            raw = self.history.raw(prior)
-                        except Exception:
-                            # No completed observation exists; a bounded refetch is allowed.
-                            raw = None
-                    if raw is None:
-                        request = self._request(task)
-                        envelope = self.collector.run(request)
-                        raw = {
-                            "schema_version": "1",
-                            "request": request,
-                            "response": envelope["raw"],
-                            "records": envelope["records"],
-                            "observed_at": envelope["observed_at"],
-                            "next_payload": envelope.get("next_payload"),
-                            "quarantine": envelope.get("quarantine", []),
-                        }
-                    observations = [Observation.model_validate(item) for item in raw["records"]]
-                    if any(
-                        obs.source != task["source"] or obs.synthetic != synthetic
-                        for obs in observations
-                    ):
-                        raise CollectionError("collector_scope_mismatch")
-                    self.catalog.renew(task, self.settings.lease_seconds)
-                    next_payload = raw.get("next_payload")
-                    if (
-                        next_payload is not None
-                        and task["page_index"] + 1 >= self.settings.collection_max_pages
-                    ):
-                        task["pagination_limit_reached"] = True
-                        next_payload = None
-                    if next_payload is not None and synthetic:
-                        next_payload = dict(next_payload)
-                        for key in ("endpoint_override", "fixture_observed_at"):
-                            if key in task["payload"]:
-                                next_payload[key] = task["payload"][key]
-                    self.history.publish(
-                        observations,
-                        redact(raw),
-                        source=task["source"],
-                        synthetic=synthetic,
-                        dataset_id=dataset_id,
-                        task=task,
-                        next_payload=next_payload,
-                        quarantine=raw.get("quarantine", ()),
-                    )
-                result["processed"] += 1
-                result["datasets"].append(dataset_id)
-            except LeaseLost:
-                result["errors"].append({"task_id": task["task_id"], "category": "lease_lost"})
-            except Exception as error:
-                category = (
-                    error.category if isinstance(error, CollectionError) else "publication_failed"
-                )
-                delay = (
-                    error.retry_after_seconds
-                    if isinstance(error, CollectionError)
-                    else min(300, 2 ** task["attempts"])
-                )
-                if isinstance(error, CollectionError) and error.artifact is not None:
-                    artifact = {
-                        "kind": "schema_quarantine",
-                        "request": self._request(task),
-                        "observed_at": error.artifact.get("observed_at", now().isoformat()),
-                        "response": error.artifact.get("raw"),
-                        "records": [],
-                        "category": category,
-                    }
-                    try:
-                        artifact_id = digest(
-                            {
-                                "task": task["task_id"],
-                                "page": task["page_index"],
-                                "artifact": artifact,
-                            }
-                        )
-                        self.history.publish(
-                            [],
-                            redact(artifact),
-                            source=task["source"],
-                            synthetic=synthetic,
-                            dataset_id=artifact_id,
-                            task=task,
-                            advance_task=False,
-                            quarantine=[{"reason": category}],
-                        )
-                        result.setdefault("quarantine_datasets", []).append(artifact_id)
-                    except LeaseLost:
-                        category = "lease_lost"
-                denied = category in {
-                    "source_access_unverified",
-                    "credentials_missing",
-                    "missing_token",
-                    "unauthorized",
-                    "access_denied",
-                    "invalid_request",
-                    "schema",
-                }
-                if not synthetic and category == "access_denied":
-                    self.catalog.execute(
-                        "INSERT INTO "
-                        "source_capabilities(source,account_id,capability,state,details) "
-                        "VALUES(%s,%s,'collect','denied',%s)",
-                        (task["source"], task["account_id"], Jsonb({"category": category})),
-                    )
-                if category in {"rate_limited", "quota_exhausted"}:
-                    self.catalog.block_budget(task["source"], task["account_id"], delay)
-                try:
-                    self.catalog.reschedule(
-                        task,
-                        category,
-                        delay,
-                        quarantine=denied,
-                        no_attempt=category in {"rate_limited", "quota_exhausted"},
-                    )
-                except LeaseLost:
-                    category = "lease_lost"
-                result["errors"].append({"task_id": task["task_id"], "category": category})
-        self.history.flush_usage()
-        return result
+        return self._collection.collect_batch(batch_size=batch_size, synthetic=synthetic)
 
     def import_records(
         self, records: list[dict], synthetic: bool = False, origin: str = "explicit_import"
@@ -488,15 +290,7 @@ class Pipeline:
         entity_keys: set[str] | None = None,
         since: datetime | None = None,
     ) -> tuple[list[Observation], list[dict]]:
-        manifests = self.catalog.manifests(synthetic=synthetic, as_of=as_of, since=since)
-        observations = self.history.read(
-            manifests,
-            as_of=as_of,
-            since=since,
-            entity_keys=entity_keys,
-            max_rows=self.settings.analysis_max_rows_per_batch,
-        )
-        return observations, manifests
+        return self.history.observations(as_of, synthetic, entity_keys=entity_keys, since=since)
 
     def assess(
         self,
@@ -662,59 +456,6 @@ class Pipeline:
             (synthetic,),
         )
 
-    def _evaluation_inputs(self, as_of: datetime, synthetic: bool) -> dict:
-        observations, manifests = self._observations(as_of, synthetic)
-        caps = self.catalog.all(
-            "SELECT source,account_id,capability,state,available_at,details "
-            "FROM source_capabilities WHERE available_at<=%s ORDER BY available_at,id",
-            (as_of,),
-        )
-        families = self.identity.family_history(as_of, synthetic=synthetic)
-        return {
-            "observations": observations,
-            "products": [
-                Product.model_validate(item) for item in self._all_products(synthetic, as_of)
-            ],
-            "links": [
-                ProductLink.model_validate(item)
-                for item in self.identity.link_history(as_of, synthetic)
-            ],
-            "families": [FamilyMembership.model_validate(item) for item in families],
-            "capabilities": [Capability.model_validate(item) for item in caps],
-            "dataset_ids": [item["dataset_id"] for item in manifests],
-        }
-
-    def _save_evaluation(
-        self,
-        payload: dict,
-        kind: str,
-        synthetic: bool,
-        decision_time: datetime | None = None,
-        parent_id: str | None = None,
-        dataset_ids: list[str] | None = None,
-    ) -> str:
-        evaluation_id = digest({"kind": kind, "synthetic": synthetic, "payload": payload})
-        with self.catalog.transaction() as connection:
-            self.catalog.guard_inputs(connection, dataset_ids or [])
-            if parent_id:
-                parent = connection.execute(
-                    "SELECT invalidated FROM evaluation_runs WHERE evaluation_id=%s", (parent_id,)
-                ).fetchone()
-                if not parent or parent["invalidated"]:
-                    raise ValueError("Frozen decision was invalidated during computation")
-            connection.execute(
-                "INSERT INTO evaluation_runs(evaluation_id,kind,synthetic,decision_time,payload,"
-                "parent_id) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
-                (evaluation_id, kind, synthetic, decision_time, Jsonb(redact(payload)), parent_id),
-            )
-            for dataset_id in sorted(set(dataset_ids or [])):
-                connection.execute(
-                    "INSERT INTO evaluation_dependencies(evaluation_id,dataset_id) "
-                    "VALUES(%s,%s) ON CONFLICT DO NOTHING",
-                    (evaluation_id, dataset_id),
-                )
-        return evaluation_id
-
     def backtest(
         self,
         decision_times: list[datetime],
@@ -722,68 +463,20 @@ class Pipeline:
         synthetic: bool = False,
         config: dict | None = None,
     ) -> dict:
-        from .evaluation import EvaluationConfig, backtest
-
-        inputs = self._evaluation_inputs(as_of, synthetic)
-        dataset_ids = inputs.pop("dataset_ids")
-        payload = backtest(
-            **inputs,
-            decision_times=decision_times,
-            as_of=as_of,
-            config=EvaluationConfig.model_validate(config or {}),
-            synthetic=synthetic,
+        return self._evaluation.backtest(
+            decision_times=decision_times, as_of=as_of, synthetic=synthetic, config=config
         )
-        return {
-            "evaluation_id": self._save_evaluation(
-                payload, "backtest", synthetic, dataset_ids=dataset_ids
-            ),
-            "result": payload,
-        }
 
     def freeze(self, as_of: datetime, synthetic: bool = False, config: dict | None = None) -> dict:
-        from .evaluation import EvaluationConfig, freeze_decision
-
-        if not synthetic and as_of < now() - timedelta(minutes=5):
-            raise ValueError("A live forward decision cannot be retrospectively backdated")
-        if not synthetic and as_of > now() + timedelta(seconds=30):
-            raise ValueError("A live forward decision cannot be future dated")
-        inputs = self._evaluation_inputs(as_of, synthetic)
-        dataset_ids = inputs.pop("dataset_ids")
-        payload = freeze_decision(
-            **inputs,
-            decision_time=as_of,
-            config=EvaluationConfig.model_validate(config or {}),
-            synthetic=synthetic,
-        )
-        return {
-            "evaluation_id": self._save_evaluation(
-                payload, "forward", synthetic, as_of, dataset_ids=dataset_ids
-            ),
-            "result": payload,
-        }
+        return self._evaluation.freeze(as_of=as_of, synthetic=synthetic, config=config)
 
     def mature(self, evaluation_id: str, as_of: datetime) -> dict:
-        from .evaluation import mature_decision
+        return self._evaluation.mature(evaluation_id=evaluation_id, as_of=as_of)
 
-        row = self.catalog.one(
-            "SELECT * FROM evaluation_runs WHERE evaluation_id=%s AND kind='forward' "
-            "AND NOT invalidated",
-            (evaluation_id,),
-        )
-        if not row:
-            raise ValueError("No valid frozen decision found")
-        observations, manifests = self._observations(as_of, row["synthetic"])
-        payload = mature_decision(row["payload"], observations, as_of)
-        return {
-            "evaluation_id": self._save_evaluation(
-                payload,
-                "outcome",
-                row["synthetic"],
-                parent_id=evaluation_id,
-                dataset_ids=[item["dataset_id"] for item in manifests],
-            ),
-            "result": payload,
-        }
+    def mature_due(
+        self, limit: int = 100, synthetic: bool = False, as_of: datetime | None = None
+    ) -> dict:
+        return self._evaluation.mature_due(limit=limit, synthetic=synthetic, as_of=as_of)
 
     def verify_live(
         self,
@@ -795,81 +488,14 @@ class Pipeline:
         evidence: str,
         retention_days: int,
     ) -> dict:
-        if not evidence.strip() or retention_days < 1:
-            raise ValueError("Source approval evidence and positive retention are required")
-        request = {
-            "source": source,
-            "account_id": account_id,
-            "operation": operation,
-            "synthetic": False,
-            "payload": payload,
-        }
-        if any(
-            key in payload for key in ("endpoint_override", "observed_at", "fixture_observed_at")
-        ):
-            raise ValueError("Fixture configuration is forbidden for live acceptance")
-        try:
-            envelope = self.collector.run(request)
-            state, details = (
-                "available",
-                {
-                    "approval_evidence": evidence,
-                    "intended_use_approval": "operator_attested_explicit_permission",
-                    "verified_operation": operation,
-                    "scope": "authorized_account"
-                    if source == "tiktok_display"
-                    else "commercial_content_only",
-                    "normalizer_version": envelope.get("normalizer_version", "1"),
-                },
-            )
-            observations = [Observation.model_validate(record) for record in envelope["records"]]
-            raw = {
-                "request": request,
-                "response": envelope["raw"],
-                "records": envelope["records"],
-                "observed_at": envelope["observed_at"],
-                "next_payload": envelope.get("next_payload"),
-            }
-            dataset_id = self.history.publish(
-                observations, redact(raw), source=source, synthetic=False
-            )
-            details["acceptance_dataset_id"] = dataset_id
-        except CollectionError as error:
-            state = (
-                "unverified"
-                if error.category in {"missing_token", "credentials_missing"}
-                else "denied"
-            )
-            details = {"category": error.category, "approval_evidence": evidence}
-        with self.catalog.transaction() as connection:
-            connection.execute(
-                "INSERT INTO source_capabilities(source,account_id,capability,state,details) "
-                "VALUES(%s,%s,'collect',%s,%s)",
-                (source, account_id, state, Jsonb(redact(details))),
-            )
-            if (source == "tiktok_display" and operation == "list") or (
-                source in {"tiktok_ads", "tiktok_commercial"} and operation == "query"
-            ):
-                connection.execute(
-                    "INSERT INTO source_capabilities(source,account_id,capability,state,details) "
-                    "VALUES(%s,%s,'discovery',%s,%s)",
-                    (source, account_id, state, Jsonb(redact(details))),
-                )
-            connection.execute(
-                "INSERT INTO source_policies(source,retention_days,verified,details) "
-                "VALUES(%s,%s,%s,%s) ON CONFLICT(source) DO UPDATE SET "
-                "retention_days=EXCLUDED.retention_days,"
-                "verified=source_policies.verified OR EXCLUDED.verified,"
-                "details=EXCLUDED.details,updated_at=clock_timestamp()",
-                (source, retention_days, state == "available", Jsonb(redact(details))),
-            )
-        return {
-            "source": source,
-            "account_id": account_id,
-            "state": state,
-            "details": details,
-            "ok": state == "available",
-        }
+        return self._collection.verify_live(
+            source=source,
+            account_id=account_id,
+            operation=operation,
+            payload=payload,
+            evidence=evidence,
+            retention_days=retention_days,
+        )
 
     def explore(
         self,

@@ -486,3 +486,68 @@ def test_rejecting_another_product_hypothesis_preserves_the_confirmed_owner() ->
         synthetic=True,
     )
     assert snapshot["selected"] == ["p1"]
+
+
+def test_precomputed_partitions_and_lazy_outcomes_preserve_evaluation_results() -> None:
+    from collections import Counter, defaultdict
+
+    from sm_trending_products.analytics import assess, normalize_assessments
+
+    first, first_link = catalog()
+    second, second_link = catalog("v2", "p2")
+    products, links = [first, second], [first_link, second_link]
+    cutoff = utc("2026-01-02T00:00:00Z")
+    before = [
+        observation(entity, timestamp, value * multiplier)
+        for entity, multiplier in [("v1", 1), ("v2", 2)]
+        for timestamp, value in [("2026-01-01T00:00:00Z", 100), ("2026-01-02T00:00:00Z", 200)]
+    ]
+    rows = []
+    for product in products:
+        rows.extend(assess(before, [product], links, cutoff, True, normalize=False))
+    rows = normalize_assessments(rows)
+    counts = Counter(row.entity_key for row in before)
+    refs = defaultdict(list)
+    for row in before:
+        refs[row.entity_key].append(row.observation_id)
+    config = EvaluationConfig(top_k=1, horizon_days=(3,), launch_delay_days=(0,))
+    raw = freeze_decision(before, products, links, cutoff, config, synthetic=True)
+    prepared = freeze_decision(
+        [],
+        products,
+        links,
+        cutoff,
+        config,
+        synthetic=True,
+        precomputed_assessments=rows,
+        observation_counts=counts,
+        evidence_refs_by_entity=refs,
+    )
+    assert prepared == raw
+    observations = [
+        *before,
+        observation("v1", "2026-01-05T00:00:00Z", 1700),
+        observation("v2", "2026-01-05T00:00:00Z", 2000),
+    ]
+    as_of = utc("2026-01-05T00:00:00Z")
+    loaded = []
+
+    def load_product(product_id):
+        loaded.append(product_id)
+        return [
+            row
+            for row in observations
+            if prepared["entity_bindings"].get(row.entity_key) == product_id
+        ]
+
+    lazy = mature_decision(
+        prepared,
+        [],
+        as_of,
+        product_evidence_loader=load_product,
+        verified_evidence_refs=prepared["evidence_refs"],
+    )
+    assert lazy == mature_decision(raw, observations, as_of)
+    assert set(loaded) == set(prepared["selected"]) | {
+        product for selected in prepared["baselines"].values() for product in selected
+    }

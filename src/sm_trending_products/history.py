@@ -111,7 +111,7 @@ class History:
             return self._guarded_put(connection, key, body, content_type=content_type)
 
     def _guarded_put(self, connection, key: str, body: bytes, *, content_type: str) -> dict:
-        connection.execute("SELECT pg_advisory_xact_lock_shared(492371205)")
+        self.catalog.guard_retention(connection)
         tombstone = connection.execute(
             "SELECT 1 FROM retention_objects WHERE object_key=%s", (key,)
         ).fetchone()
@@ -324,6 +324,8 @@ class History:
         *,
         as_of: datetime,
         since: datetime | None = None,
+        until: datetime | None = None,
+        period_window: tuple[datetime, datetime] | None = None,
         entity_keys: set[str] | None = None,
         max_rows: int | None = None,
     ) -> list[Observation]:
@@ -341,10 +343,30 @@ class History:
                     query = pl.scan_parquet(path).filter(
                         pl.col("available_at").str.to_datetime(time_zone="UTC") <= utc(as_of)
                     )
+                    observed = pl.col("observed_at").str.to_datetime(time_zone="UTC")
+                    in_window = pl.lit(True)
                     if since:
-                        query = query.filter(
-                            pl.col("observed_at").str.to_datetime(time_zone="UTC") >= utc(since)
-                        )
+                        in_window &= observed >= utc(since)
+                    if until:
+                        in_window &= observed <= utc(until)
+                    if period_window:
+                        # Late interval reports may describe an earlier outcome window.
+                        # Keep these rows without relaxing the availability cutoff.
+                        attributes = pl.col("attributes_json")
+                        start = pl.coalesce(
+                            attributes.str.json_path_match("$.period_start"),
+                            attributes.str.json_path_match("$.source_period_start"),
+                        ).str.to_datetime(time_zone="UTC", strict=False)
+                        end = pl.coalesce(
+                            attributes.str.json_path_match("$.period_end"),
+                            attributes.str.json_path_match("$.source_period_end"),
+                        ).str.to_datetime(time_zone="UTC", strict=False)
+                        in_window |= (
+                            (start >= utc(period_window[0]))
+                            & (end <= utc(period_window[1]))
+                            & (start < end)
+                        ).fill_null(False)
+                    query = query.filter(in_window)
                     if entity_keys is not None:
                         query = query.filter(pl.col("entity_key").is_in(sorted(entity_keys)))
                     # Push the hard materialization bound into the native query.
@@ -378,6 +400,39 @@ class History:
             with gzip.open(path, "rt") as handle:
                 return json.load(handle)
 
+    def observations(
+        self,
+        as_of: datetime,
+        synthetic: bool,
+        *,
+        entity_keys: set[str] | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        period_window: tuple[datetime, datetime] | None = None,
+    ) -> tuple[list[Observation], list[dict]]:
+        manifests = self.catalog.manifests(synthetic=synthetic, as_of=as_of, since=since)
+        return self.read(
+            manifests,
+            as_of=as_of,
+            since=since,
+            until=until,
+            period_window=period_window,
+            entity_keys=entity_keys,
+            max_rows=self.settings.analysis_max_rows_per_batch,
+        ), manifests
+
+    def _verify_remote_object(self, obj: dict) -> None:
+        # Bypass cache: verify the backup/remote object itself with bounded memory.
+        self.metrics["get_requests"] += 1
+        response = self.client.get_object(Bucket=self.bucket, Key=obj["key"])
+        hasher = hashlib.sha256()
+        with response["Body"] as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                hasher.update(chunk)
+                self.metrics["download_bytes"] += len(chunk)
+        if hasher.hexdigest() != obj["sha256"]:
+            raise ValueError("checksum_mismatch")
+
     def verify(self, dataset_id: str | None = None) -> dict:
         rows = self.catalog.all(
             "SELECT * FROM datasets WHERE state='committed'"
@@ -399,16 +454,7 @@ class History:
             ]
             for obj in objects:
                 try:
-                    # Verification bypasses cache: the backup/remote object itself must exist.
-                    self.metrics["get_requests"] += 1
-                    response = self.client.get_object(Bucket=self.bucket, Key=obj["key"])
-                    hasher = hashlib.sha256()
-                    with response["Body"] as stream:
-                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                            hasher.update(chunk)
-                            self.metrics["download_bytes"] += len(chunk)
-                    if hasher.hexdigest() != obj["sha256"]:
-                        raise ValueError("checksum_mismatch")
+                    self._verify_remote_object(obj)
                     checked += 1
                 except (ClientError, ValueError, OSError):
                     failures.append(
@@ -420,9 +466,27 @@ class History:
                     )
         if dataset_id and not rows:
             failures.append({"dataset_id": dataset_id, "category": "unknown_committed_dataset"})
+        assessments_checked = 0
+        if dataset_id is None:
+            for row in self.catalog.all(
+                "SELECT run_id,object_key FROM assessment_runs WHERE NOT invalidated"
+            ):
+                try:
+                    self._verify_remote_object({"key": row["object_key"], "sha256": row["run_id"]})
+                    checked += 1
+                    assessments_checked += 1
+                except (ClientError, ValueError, OSError):
+                    failures.append(
+                        {
+                            "run_id": row["run_id"],
+                            "object_key": row["object_key"],
+                            "category": "missing_or_corrupt_assessment",
+                        }
+                    )
         return {
             "ok": not failures,
             "datasets": len(rows),
             "objects_checked": checked,
+            "assessments_checked": assessments_checked,
             "failures": failures,
         }

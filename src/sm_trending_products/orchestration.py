@@ -4,6 +4,7 @@ from dagster import (
     AssetExecutionContext,
     AssetSelection,
     Config,
+    DefaultScheduleStatus,
     Definitions,
     ScheduleDefinition,
     asset,
@@ -58,17 +59,17 @@ def prospective_decisions(context: AssetExecutionContext, config: BatchConfig) -
 @asset
 def outcome_maturation(context: AssetExecutionContext, config: BatchConfig) -> dict:
     with Pipeline.from_env() as pipeline:
-        # One bounded pass; later runs continue the remaining frontier.
-        frontier = pipeline.catalog.all(
-            "SELECT evaluation_id FROM evaluation_runs WHERE kind='forward' "
-            "AND synthetic=%s AND NOT invalidated ORDER BY created_at DESC LIMIT 100",
-            (config.synthetic,),
+        result = pipeline.mature_due(
+            limit=config.batch_size, synthetic=config.synthetic, as_of=now()
         )
-        completed = [
-            pipeline.mature(item["evaluation_id"], now())["evaluation_id"] for item in frontier
-        ]
-    context.add_output_metadata({"evaluated_decisions": len(completed)})
-    return {"evaluations": completed}
+    context.add_output_metadata(
+        {
+            "evaluated_decisions": result["processed"],
+            "completed_decisions": result["completed"],
+            "failed_decisions": len(result["errors"]),
+        }
+    )
+    return result
 
 
 @asset
@@ -106,9 +107,25 @@ defs = Definitions(
     ],
     jobs=[collection_job, forward_job, outcomes_job, retention_job],
     schedules=[
-        ScheduleDefinition(job=collection_job, cron_schedule="*/15 * * * *"),
-        ScheduleDefinition(job=forward_job, cron_schedule="0 */6 * * *"),
-        ScheduleDefinition(job=outcomes_job, cron_schedule="30 */6 * * *"),
-        ScheduleDefinition(job=retention_job, cron_schedule="15 3 * * *"),
+        ScheduleDefinition(
+            job=collection_job,
+            cron_schedule="*/15 * * * *",
+            default_status=DefaultScheduleStatus.RUNNING,
+        ),
+        ScheduleDefinition(
+            job=forward_job,
+            cron_schedule="0 */6 * * *",
+            default_status=DefaultScheduleStatus.RUNNING,
+        ),
+        ScheduleDefinition(
+            job=outcomes_job,
+            cron_schedule="30 */6 * * *",
+            default_status=DefaultScheduleStatus.RUNNING,
+        ),
+        ScheduleDefinition(
+            job=retention_job,
+            cron_schedule="15 3 * * *",
+            default_status=DefaultScheduleStatus.RUNNING,
+        ),
     ],
 )

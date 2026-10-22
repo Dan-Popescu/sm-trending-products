@@ -8,6 +8,7 @@ bounded by product/entity count and produces small inspectable review records.
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict
 from collections.abc import Sequence
 from copy import deepcopy
@@ -18,6 +19,7 @@ from typing import Any
 import polars as pl
 
 from .contracts import AssessmentPolicy, Observation, Product, ProductLink, utc
+from .identity_rules import resolve_links
 
 METRIC_ALIASES = {
     "view_count": ("view_count", "views"),
@@ -28,29 +30,6 @@ METRIC_ALIASES = {
 
 def _unknown(reason: str, status: str = "unknown") -> dict[str, Any]:
     return {"score": None, "status": status, "reasons": [reason], "evidence_refs": []}
-
-
-def _latest_links(
-    links: Sequence[ProductLink],
-    as_of: datetime,
-    policy: AssessmentPolicy,
-) -> dict[str, ProductLink]:
-    pairs: dict[tuple[str, str], ProductLink] = {}
-    # Availability ties retain the supplied database event order, not UUID order.
-    for link in sorted(links, key=lambda item: item.available_at):
-        if utc(link.available_at) <= as_of:
-            pairs[(link.product_id, link.entity_key)] = link
-    confirmed: dict[str, list[ProductLink]] = defaultdict(list)
-    for link in pairs.values():
-        if link.status == "confirmed" and link.confidence >= policy.min_link_confidence:
-            confirmed[link.entity_key].append(link)
-    result = {}
-    for key, candidates in confirmed.items():
-        latest = max(item.available_at for item in candidates)
-        owners = [item for item in candidates if item.available_at == latest]
-        if len(owners) == 1:
-            result[key] = owners[0]
-    return result
 
 
 def _metric_windows(
@@ -75,6 +54,8 @@ def _metric_windows(
                 "precision": value.precision,
                 "semantics": value.semantics,
                 "counter_scope": str(observation.attributes.get("counter_scope", "unspecified")),
+                "counter_period": _counter_period(observation, metric),
+                "unit": value.unit,
             }
         )
     if not rows:
@@ -90,6 +71,8 @@ def _metric_windows(
             pl.col("semantics").shift(1).over("entity_key").alias("previous_semantics"),
             pl.col("precision").shift(1).over("entity_key").alias("previous_precision"),
             pl.col("counter_scope").shift(1).over("entity_key").alias("previous_scope"),
+            pl.col("counter_period").shift(1).over("entity_key").alias("previous_period"),
+            pl.col("unit").shift(1).over("entity_key").alias("previous_unit"),
             (pl.col("observed_at") - pl.col("observed_at").shift(1).over("entity_key"))
             .dt.total_milliseconds()
             .truediv(3_600_000)
@@ -100,6 +83,9 @@ def _metric_windows(
                 (pl.col("semantics") == "cumulative")
                 & (pl.col("previous_semantics") == "cumulative")
                 & (pl.col("counter_scope") == pl.col("previous_scope"))
+                & pl.col("counter_period").is_not_null()
+                & (pl.col("counter_period") == pl.col("previous_period"))
+                & (pl.col("unit") == pl.col("previous_unit"))
                 & (pl.col("precision") != "estimated")
                 & (pl.col("previous_precision") != "estimated")
                 & (pl.col("interval_hours") > 0)
@@ -130,6 +116,33 @@ def _metric_windows(
     for row in frame.iter_rows(named=True):
         output[row["entity_key"]].append(row)
     return dict(output)
+
+
+def _counter_period(observation: Observation, metric: str) -> str | None:
+    if metric != "units_sold":
+        return str(observation.attributes.get("view_count_period", "lifetime"))
+    # Sales counters are not intrinsically lifetime counters. Explicit period
+    # declarations override generic counter scope, including an old lifetime hint.
+    declarations = [
+        observation.attributes[name]
+        for name in ("units_sold_period", "sold_period")
+        if name in observation.attributes
+    ]
+    if not declarations:
+        return "lifetime" if observation.attributes.get("counter_scope") == "lifetime" else None
+    if any(not isinstance(value, str) for value in declarations):
+        return None
+    periods = {value.strip().lower() for value in declarations}
+    if len(periods) != 1:
+        return None
+    period = periods.pop()
+    if period in {"", "unknown", "unspecified", "none", "null", "?"}:
+        return None
+    if period.startswith(("rolling", "last_", "last ", "past_", "past ")) or re.fullmatch(
+        r"\d+\s*(d|days?|h|hours?|w|weeks?|months?)", period
+    ):
+        return None
+    return period
 
 
 def _attention(
@@ -361,6 +374,7 @@ def _demand(
         "sold_period_seconds": None,
         "sold_growth_per_hour": None,
         "sold_growth_upper_per_hour": None,
+        "sold_counter_periods": {},
     }
     if not latest:
         proxy_rows = [
@@ -406,9 +420,14 @@ def _demand(
     if measured:
         features["sold_lower"] = sum(row["lower"] for row in measured)
         features["sold_upper"] = sum(row["upper"] for row in measured)
-    scopes = {row["counter_scope"] for row in measured}
-    if all(row["precision"] == "exact" for row in measured) and (
-        len(measured) == 1 or (len(scopes) == 1 and "unspecified" not in scopes)
+        features["sold_counter_periods"] = {
+            row["entity_key"]: row["counter_period"] for row in measured
+        }
+    periods = {row["counter_period"] for row in measured}
+    if (
+        all(row["precision"] == "exact" for row in measured)
+        and len(periods) == 1
+        and None not in periods
     ):
         features["units_sold"] = features["sold_lower"]
     intervals = [
@@ -451,6 +470,13 @@ def _demand(
     ]
     if len(intervals) != len(latest):
         reasons.append("Some counters lack a comparable fresh interval")
+    if any(
+        row["counter_period"] is None or row["counter_period"] != row["previous_period"]
+        for row in measured
+    ):
+        reasons.append(
+            "Unknown or changed sales-counter periods cannot establish transaction growth"
+        )
     return {
         "score": score,
         "status": "bounded" if bounded else "observed",
@@ -674,8 +700,10 @@ def assess(
     }
     # Unknown IDs may belong to another bounded product partition. Their newer
     # decisions must still supersede old links into this partition.
-    link_map = _latest_links(
-        [link for link in links if link.product_id not in other_namespace_ids], cutoff, policy
+    link_map = resolve_links(
+        [link for link in links if link.product_id not in other_namespace_ids],
+        cutoff,
+        min_confidence=policy.min_link_confidence,
     )
     grouped: dict[str, list[Observation]] = defaultdict(list)
     excluded: dict[str, int] = defaultdict(int)

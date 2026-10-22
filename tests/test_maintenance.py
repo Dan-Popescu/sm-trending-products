@@ -1,5 +1,6 @@
 """Public maintenance behaviors against SQL and HTTP object storage."""
 
+import json
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -210,3 +211,106 @@ def test_retention_removes_all_source_versions_in_a_versioned_bucket(pipeline):
     remaining = client.list_object_versions(Bucket=bucket, Prefix=raw_key)
     assert not remaining.get("Versions")
     assert not remaining.get("DeleteMarkers")
+
+
+@pytest.mark.parametrize(
+    ("source", "entity_type"),
+    [("tiktok_ads", "ad"), ("tiktok_commercial", "commercial_content")],
+)
+def test_retention_rebinds_legacy_expired_origin_to_surviving_refresh_context(
+    pipeline, source, entity_type
+):
+    timestamp = now()
+    requests = []
+
+    class AdSource(BaseHTTPRequestHandler):
+        def do_POST(self):
+            requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            if source == "tiktok_ads":
+                data = {
+                    "ads": [
+                        {
+                            "ad": {"id": 123, "reach": {"unique_users_seen": "10000-19999"}},
+                            "advertiser": {"business_id": len(requests)},
+                        }
+                    ]
+                }
+            else:
+                data = {
+                    "commercial_contents": [
+                        {
+                            "id": 123,
+                            "creator": {"username": f"creator-{len(requests)}"},
+                            "brand_names": ["Physical product"],
+                        }
+                    ]
+                }
+            body = json.dumps(
+                {
+                    "data": {**data, "has_more": False},
+                    "error": {"code": "ok"},
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), AdSource)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        ids = []
+        for hours in (2, 1):
+            pipeline.enqueue(
+                source,
+                "fixture-account",
+                "query",
+                {
+                    "filters": {},
+                    "endpoint_override": f"http://127.0.0.1:{server.server_port}",
+                    "fixture_observed_at": (timestamp - timedelta(hours=hours)).isoformat(),
+                },
+                synthetic=True,
+            )
+            ids.extend(pipeline.collect_batch(batch_size=1, synthetic=True)["datasets"])
+        assert len(ids) == 2
+        pipeline.create_product("ad-product", "Ad product", synthetic=True)
+        pipeline.review_link("ad-product", f"{source}:{entity_type}:123")
+        pipeline.catalog.execute(
+            "INSERT INTO source_policies(source,retention_days,verified) VALUES(%s,1,true)",
+            (source,),
+        )
+        pipeline.catalog.execute(
+            "UPDATE datasets SET created_at=clock_timestamp()-interval '2 days' "
+            "WHERE dataset_id=%s",
+            (ids[0],),
+        )
+        # Reproduce the legacy first-observation origin, independently of new catalog upserts.
+        pipeline.catalog.execute(
+            "UPDATE entities SET origin="
+            "jsonb_build_object('dataset_id',%s::text,'source',%s::text) "
+            "WHERE entity_key=%s",
+            (ids[0], source, f"{source}:{entity_type}:123"),
+        )
+        pipeline.retention(apply=True)
+        evidence = pipeline.evidence("ad-product", now(), synthetic=True)
+        assert len(evidence) == 1
+        assert evidence[0]["raw_dataset_id"] == ids[1]
+        scheduled = pipeline.schedule(1, synthetic=True)
+        assert scheduled["scheduled"] == 1
+        assert not any(
+            item["category"] == "refresh_origin_unavailable" for item in scheduled["warnings"]
+        )
+        refreshed = pipeline.collect_batch(batch_size=1, synthetic=True)
+        assert refreshed["processed"] == 1
+        assert refreshed["errors"] == []
+        assert len(requests) == 3
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()

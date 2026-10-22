@@ -388,3 +388,81 @@ def test_documented_interval_sales_are_not_treated_as_lifetime_counters() -> Non
     assert row["features"]["sold_delta_lower"] == 24
     assert row["features"]["sold_period_seconds"] == 86400
     assert row["features"]["sold_growth_per_hour"] == pytest.approx(1)
+
+
+@pytest.mark.parametrize("period_field", ["units_sold_period", "sold_period"])
+def test_changed_sold_reporting_period_is_not_sales_growth(period_field: str) -> None:
+    from sm_trending_products.analytics import assess
+
+    start = datetime(2026, 10, 21, 23, tzinfo=UTC)
+    product = Product(product_id="p1", name="Desk lamp", created_at=start)
+    link = ProductLink(product_id="p1", entity_key="offer_import:offer:o1", available_at=start)
+    observations = [
+        Observation(
+            observation_id=f"sold-{index}",
+            source="offer_import",
+            entity_type="offer",
+            entity_id="o1",
+            observed_at=at,
+            available_at=at,
+            metrics={"units_sold": Measurement(lower=value, upper=value)},
+            attributes={period_field: period},
+        )
+        for index, (at, value, period) in enumerate(
+            [(start, 100, "2026-09"), (start + timedelta(hours=1), 200, "2026-10")]
+        )
+    ]
+    row = assess(observations, [product], [link], start + timedelta(hours=1))[0]
+    assert row["demand"]["score"] is None
+    assert row["features"]["sold_delta_lower"] is None
+    assert row["features"]["sold_growth_per_hour"] is None
+    assert row["demand"]["intervals"] == []
+
+
+def test_undocumented_sold_period_is_not_assumed_lifetime() -> None:
+    from sm_trending_products.analytics import assess
+
+    product = Product(product_id="p1", name="Desk lamp", created_at=BASE)
+    link = ProductLink(product_id="p1", entity_key="offer_import:offer:o1", available_at=BASE)
+    records = [
+        offer("o1", hour, value, value).model_copy(update={"attributes": {}})
+        for hour, value in [(1, 100), (3, 200)]
+    ]
+    row = assess(records, [product], [link], BASE + timedelta(hours=3))[0]
+    assert row["demand"]["score"] is None
+    assert row["features"]["sold_delta_lower"] is None
+    assert row["features"]["sold_growth_per_hour"] is None
+    assert row["features"]["units_sold"] is None
+
+
+@pytest.mark.parametrize("period", ["lifetime", "2026-01"])
+def test_documented_matching_sold_period_remains_comparable(period: str) -> None:
+    from sm_trending_products.analytics import assess
+
+    product = Product(product_id="p1", name="Desk lamp", created_at=BASE)
+    link = ProductLink(product_id="p1", entity_key="offer_import:offer:o1", available_at=BASE)
+    records = [
+        offer("o1", hour, value, value).model_copy(update={"attributes": {"sold_period": period}})
+        for hour, value in [(1, 100), (3, 200)]
+    ]
+    row = assess(records, [product], [link], BASE + timedelta(hours=3))[0]
+    assert row["demand"]["score"] is not None
+    assert row["features"]["sold_delta_lower"] == 100
+    assert row["features"]["sold_growth_per_hour"] == pytest.approx(50)
+    assert row["features"]["sold_counter_periods"] == {"offer_import:offer:o1": period}
+
+
+@pytest.mark.parametrize("period", ["unknown", "last_30_days", "30d"])
+def test_unknown_or_rolling_period_overrides_generic_lifetime_hint(period: str) -> None:
+    from sm_trending_products.analytics import assess
+
+    product = Product(product_id="p1", name="Desk lamp", created_at=BASE)
+    link = ProductLink(product_id="p1", entity_key="offer_import:offer:o1", available_at=BASE)
+    records = [
+        offer("o1", hour, value, value, units_sold_period=period)
+        for hour, value in [(1, 100), (3, 200)]
+    ]
+    row = assess(records, [product], [link], BASE + timedelta(hours=3))[0]
+    assert row["demand"]["score"] is None
+    assert row["features"]["sold_delta_lower"] is None
+    assert row["features"]["units_sold"] is None

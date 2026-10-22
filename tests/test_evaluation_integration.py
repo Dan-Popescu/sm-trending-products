@@ -179,3 +179,118 @@ def test_live_forward_decisions_cannot_be_backdated_or_populated_by_synthetic_hi
     assert frozen["result"]["status"] == "insufficient_history"
     assert frozen["result"]["selected"] == []
     assert frozen["result"]["evidence_refs"] == []
+
+
+def test_evaluation_partitions_ignore_unrelated_history_under_a_small_row_budget(pipeline):
+    pipeline.settings.analysis_max_rows_per_batch = 100
+    pipeline.settings.analysis_product_batch_size = 100
+    cutoff = now() + timedelta(minutes=1)
+    records = []
+    for product in range(3):
+        entity = f"partition-video-{product}"
+        records.extend(
+            record(entity, cutoff - timedelta(hours=39 - index), 100 + index * (product + 1))
+            for index in range(40)
+        )
+        records.append(record(entity, cutoff + timedelta(days=3), 2100 + 39 * (product + 1)))
+    records.extend(
+        record("unrelated-unlinked-video", cutoff - timedelta(minutes=index), 1000 - index)
+        for index in range(200)
+    )
+    pipeline.import_records(records, synthetic=True)
+    for product in range(3):
+        product_id = f"partition-product-{product}"
+        pipeline.create_product(product_id, product_id, synthetic=True)
+        pipeline.review_link(product_id, f"fixture_import:video:partition-video-{product}")
+    frozen = pipeline.freeze(cutoff, synthetic=True, config=outcome_config())
+    assert len(frozen["result"]["universe"]) == 3
+    assert frozen["result"]["selected"] == ["partition-product-2"]
+    assert len(frozen["result"]["evidence_refs"]) == 120
+    matured = pipeline.mature(frozen["evaluation_id"], cutoff + timedelta(days=4))
+    assert matured["result"]["scenarios"][0]["methods"]["policy"]["precision_at_k"] == 1
+    replayed = pipeline.backtest(
+        [cutoff], cutoff + timedelta(days=4), synthetic=True, config=outcome_config()
+    )
+    assert replayed["result"]["snapshots"][0] == frozen["result"]
+    assert replayed["result"]["reports"][0] == matured["result"]
+    assert sum(row["row_count"] for row in pipeline.datasets()) > 300
+
+
+def test_durable_maturation_frontier_advances_old_decisions_beyond_one_hundred(pipeline):
+    cutoff = now() + timedelta(minutes=1)
+    decisions = [
+        pipeline.freeze(cutoff + timedelta(seconds=index), synthetic=True, config=outcome_config())[
+            "evaluation_id"
+        ]
+        for index in range(105)
+    ]
+    first = pipeline.mature_due(limit=100, synthetic=True, as_of=cutoff + timedelta(days=1))
+    assert first["errors"] == []
+    assert first["completed"] == 100
+    assert first["decisions"] == decisions[:100]
+    second = pipeline.mature_due(limit=100, synthetic=True, as_of=cutoff + timedelta(days=1))
+    assert second["errors"] == []
+    assert second["completed"] == 5
+    assert second["decisions"] == decisions[100:]
+    assert (
+        pipeline.mature_due(limit=100, synthetic=True, as_of=cutoff + timedelta(days=1))[
+            "processed"
+        ]
+        == 0
+    )
+
+
+def test_missing_outcomes_retry_until_the_frozen_boundary_grace_then_finish_censored(pipeline):
+    seed_product(pipeline, "missing-outcome-product")
+    cutoff = now() + timedelta(seconds=1)
+    frozen = pipeline.freeze(cutoff, synthetic=True, config=outcome_config())
+    first = pipeline.mature_due(limit=10, synthetic=True, as_of=cutoff + timedelta(days=3))
+    assert first["errors"] == []
+    assert first["pending"] == 1
+    assert first["completed"] == 0
+    assert first["decisions"] == [frozen["evaluation_id"]]
+    assert (
+        pipeline.mature_due(limit=10, synthetic=True, as_of=cutoff + timedelta(days=3, minutes=30))[
+            "processed"
+        ]
+        == 0
+    )
+    finished = pipeline.mature_due(
+        limit=10, synthetic=True, as_of=cutoff + timedelta(days=4, hours=1)
+    )
+    assert finished["errors"] == []
+    assert finished["completed"] == 1
+    evaluations = {row["evaluation_id"]: row for row in pipeline.evaluations(synthetic=True)}
+    report = evaluations[finished["evaluations"][0]]["payload"]
+    assert report["scenarios"][0]["methods"]["policy"]["status_counts"] == {"censored": 1}
+    assert (
+        pipeline.mature_due(limit=10, synthetic=True, as_of=cutoff + timedelta(days=5))["processed"]
+        == 0
+    )
+
+
+def test_native_postgres_claims_forward_frontier_without_duplicate_workers(pipeline):
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sm_trending_products.pipeline import Pipeline
+
+    if os.environ.get("TEST_DATABASE_ENGINE") == "pglite":
+        pytest.skip("Forward SKIP LOCKED concurrency requires native PostgreSQL CI")
+    cutoff = now() + timedelta(minutes=1)
+    decisions = {
+        pipeline.freeze(cutoff + timedelta(seconds=index), synthetic=True, config=outcome_config())[
+            "evaluation_id"
+        ]
+        for index in range(20)
+    }
+
+    def run_worker():
+        with Pipeline(pipeline.settings) as worker:
+            return worker.mature_due(limit=10, synthetic=True, as_of=cutoff + timedelta(days=1))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first, second = list(executor.map(lambda _: run_worker(), range(2)))
+    assert first["errors"] == second["errors"] == []
+    assert set(first["decisions"]).isdisjoint(second["decisions"])
+    assert set(first["decisions"]) | set(second["decisions"]) == decisions

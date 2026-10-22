@@ -62,6 +62,53 @@ def video_observation(entity_id, timestamp, count, *, synthetic=True):
     }
 
 
+def test_history_bounds_native_reads_but_keeps_available_late_interval_reports(pipeline):
+    start = utc("2026-01-02T00:00:00Z")
+    end = start + timedelta(days=1)
+    late = end + timedelta(days=2)
+    records = [
+        video_observation("bounded", start - timedelta(days=1), 10),
+        video_observation("bounded", start, 20),
+        video_observation("bounded", late, 30),
+        video_observation("bounded", late + timedelta(days=1), 40),
+    ]
+    records[2]["attributes"].update(period_start=start.isoformat(), period_end=end.isoformat())
+    records[3]["attributes"].update(period_start=start.isoformat(), period_end=end.isoformat())
+    pipeline.import_records(records, synthetic=True)
+    manifests = pipeline.catalog.manifests(synthetic=True, as_of=late)
+    rows = pipeline.history.read(
+        manifests,
+        as_of=late,
+        since=start,
+        until=end,
+        period_window=(start, end),
+        max_rows=2,
+    )
+    assert [row.observed_at for row in rows] == [start, late]
+    plain, _ = pipeline.history.observations(late, True, since=start, until=end)
+    assert [row.observed_at for row in plain] == [start]
+
+
+def test_verification_detects_corrupted_assessment_objects_without_using_cache(pipeline):
+    cutoff = now()
+    pipeline.import_records([video_observation("verify", cutoff, 100)], synthetic=True)
+    pipeline.create_product("verify-product", "Verified product", synthetic=True)
+    pipeline.review_link("verify-product", "fixture_import:video:verify")
+    assessment = pipeline.assess(now() + timedelta(seconds=1), synthetic=True)
+    assert pipeline.verify()["assessments_checked"] == 1
+    key = f"assessments/synthetic/{assessment['run_id']}.json"
+    pipeline.history.client.put_object(Bucket=pipeline.history.bucket, Key=key, Body=b"corrupt")
+    result = pipeline.verify()
+    assert result["ok"] is False
+    assert result["failures"] == [
+        {
+            "run_id": assessment["run_id"],
+            "object_key": key,
+            "category": "missing_or_corrupt_assessment",
+        }
+    ]
+
+
 def test_import_review_assess_replay_and_restart_preserve_the_same_evidence(pipeline):
     cutoff = now()
     records = [

@@ -130,6 +130,11 @@ def parser() -> argparse.ArgumentParser:
     mature = command("mature", "Measure pending or mature outcomes of a frozen decision")
     mature.add_argument("evaluation_id")
     mature.add_argument("--as-of")
+    due = command(
+        "mature-due", "Advance a fair bounded batch of due forward decisions", synthetic=True
+    )
+    due.add_argument("--limit", type=int, default=100)
+    due.add_argument("--as-of")
     benchmark = command("benchmark", "Measure an isolated synthetic full-pipeline workload")
     benchmark.add_argument("--records", type=int, default=1000)
     benchmark.add_argument("--output", type=Path, required=True)
@@ -274,6 +279,8 @@ def dispatch(pipeline, args):
             return pipeline.freeze(cutoff, synthetic=synthetic, config=read_json(args.config_file))
         case "mature":
             return pipeline.mature(args.evaluation_id, cutoff)
+        case "mature-due":
+            return pipeline.mature_due(limit=args.limit, synthetic=synthetic, as_of=cutoff)
         case "benchmark":
             from .benchmark import benchmark
 

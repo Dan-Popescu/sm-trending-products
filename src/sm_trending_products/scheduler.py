@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .catalog import Catalog
 from .contracts import digest
+from .identity_rules import LINK_STATE_CTES
 
 SOURCES = {"tiktok_display", "tiktok_ads", "tiktok_commercial"}
 
@@ -209,14 +210,10 @@ class Scheduler:
                 return True
 
             entity_rows = connection.execute(
-                "WITH pairs AS (SELECT DISTINCT ON(l.product_id,l.entity_key) "
-                "l.entity_key,l.product_id,l.status,l.confidence,l.available_at,l.id "
-                "FROM product_links l JOIN products p USING(product_id) WHERE p.synthetic=%s "
-                "AND l.available_at<=%s "
-                "ORDER BY l.product_id,l.entity_key,l.available_at DESC,l.id DESC), "
-                "identity AS (SELECT DISTINCT ON(entity_key) entity_key,product_id FROM pairs "
-                "WHERE status='confirmed' AND confidence>=%s "
-                "ORDER BY entity_key,available_at DESC,id DESC) "
+                "WITH "
+                + LINK_STATE_CTES
+                + ", identity AS (SELECT entity_key,product_id FROM resolved_link_owners "
+                "WHERE confidence>=%s) "
                 "SELECT e.*,c.score AS assessment_score,c.payload AS assessment_payload,"
                 "d.manifest AS origin_manifest FROM entities e "
                 "LEFT JOIN identity i ON i.entity_key=e.entity_key "
@@ -230,6 +227,7 @@ class Scheduler:
                 "ORDER BY e.next_due_at,e.entity_key FOR UPDATE OF e SKIP LOCKED LIMIT %s",
                 (
                     synthetic,
+                    checked_at,
                     checked_at,
                     config.min_link_confidence,
                     checked_at,

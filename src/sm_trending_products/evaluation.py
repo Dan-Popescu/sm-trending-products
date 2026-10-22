@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 import random
 from collections import Counter, defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
@@ -29,6 +29,7 @@ from .contracts import (
     digest,
     utc,
 )
+from .identity_rules import resolve_links
 
 
 class EvaluationConfig(Contract):
@@ -124,29 +125,28 @@ def _source_scope(
     return allowed
 
 
-def _latest_links(
+def eligible_evidence(
+    observations: Sequence[Observation],
+    cutoff: datetime,
+    synthetic: bool,
+    market: str | None = None,
+    capabilities: Sequence[Capability] = (),
+) -> list[Observation]:
+    """Apply the same knowledge and capability gates to a bounded evidence partition."""
+    return _source_scope(
+        _eligible_observations(observations, utc(cutoff), synthetic, market),
+        capabilities,
+        utc(cutoff),
+    )
+
+
+def reviewed_links(
     links: Sequence[ProductLink],
     cutoff: datetime,
     confidence: float,
 ) -> list[ProductLink]:
-    latest: dict[tuple[str, str], ProductLink] = {}
-    for link in sorted(links, key=lambda row: row.available_at):
-        if link.available_at <= cutoff:
-            latest[(link.product_id, link.entity_key)] = link
-    candidates: dict[str, list[ProductLink]] = defaultdict(list)
-    for link in latest.values():
-        if link.status == "confirmed" and link.confidence >= confidence:
-            candidates[link.entity_key].append(link)
-    owners = []
-    for entity_key in sorted(candidates):
-        latest_time = max(link.available_at for link in candidates[entity_key])
-        latest_owners = [
-            link for link in candidates[entity_key] if link.available_at == latest_time
-        ]
-        # Conflicting simultaneous confirmations are ambiguous rather than UUID-ordered truth.
-        if len(latest_owners) == 1:
-            owners.append(latest_owners[0])
-    return owners
+    """Resolve reviewed ownership using the shared temporal identity rules."""
+    return list(resolve_links(links, cutoff, min_confidence=confidence).values())
 
 
 def _family_map(
@@ -197,6 +197,9 @@ def freeze_decision(
     policy: AssessmentPolicy | None = None,
     families: Sequence[FamilyMembership] = (),
     capabilities: Sequence[Capability] = (),
+    precomputed_assessments: Sequence[dict[str, Any]] | None = None,
+    observation_counts: Mapping[str, int] | None = None,
+    evidence_refs_by_entity: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, Any]:
     """Freeze policy and baseline selections using knowledge available at cutoff.
 
@@ -227,7 +230,7 @@ def freeze_decision(
     product_ids = {product.product_id for product in scoped_products}
     known_links = [
         link
-        for link in _latest_links(
+        for link in reviewed_links(
             links,
             cutoff,
             max(config.min_link_confidence, policy.min_link_confidence),
@@ -236,14 +239,31 @@ def freeze_decision(
     ]
     entities = {link.entity_key for link in known_links}
     eligible = [row for row in eligible if row.entity_key in entities]
-    observation_counts = Counter(row.entity_key for row in eligible)
+    prepared = precomputed_assessments is not None
+    if prepared != (observation_counts is not None) or prepared != (
+        evidence_refs_by_entity is not None
+    ):
+        raise ValueError("Precomputed assessments require counts and evidence references together")
+    if prepared and observations:
+        raise ValueError("Supply raw evidence or precomputed partitions, not both")
+    counts = observation_counts if prepared else Counter(row.entity_key for row in eligible)
+    assert counts is not None
     adequate_entities = {
-        key
-        for key, count in observation_counts.items()
-        if count >= config.minimum_history_observations
+        key for key, count in counts.items() if count >= config.minimum_history_observations
     }
     candidates = {link.product_id for link in known_links if link.entity_key in adequate_entities}
-    rows = assess(eligible, scoped_products, known_links, cutoff, synthetic, policy)
+    rows = (
+        list(precomputed_assessments or ())
+        if prepared
+        else assess(
+            eligible,
+            scoped_products,
+            known_links,
+            cutoff,
+            synthetic,
+            policy,
+        )
+    )
     families_at_cutoff = _family_map(families, cutoff)
     universe = []
     for row in rows:
@@ -279,7 +299,15 @@ def freeze_decision(
             _baseline_order(sales_rows, "units_sold"),
             config.top_k,
         )
-    evidence_refs = sorted({row.observation_id for row in eligible if row.entity_key in bindings})
+    evidence_refs = sorted(
+        {
+            reference
+            for key in bindings
+            for reference in (evidence_refs_by_entity or {}).get(key, ())
+        }
+        if prepared
+        else {row.observation_id for row in eligible if row.entity_key in bindings}
+    )
     snapshot: dict[str, Any] = {
         "schema_version": "1",
         "decision_time": cutoff.isoformat(),
@@ -734,8 +762,15 @@ def mature_decision(
     snapshot: dict[str, Any],
     observations: Sequence[Observation],
     as_of: datetime,
+    *,
+    product_evidence_loader: Callable[[str], Sequence[Observation]] | None = None,
+    verified_evidence_refs: Sequence[str] | None = None,
 ) -> dict[str, Any]:
-    """Measure only matured horizons; reject edits to a previously frozen decision."""
+    """Measure matured horizons, optionally loading one selected product at a time.
+
+    A partitioned caller must validate the frozen dataset dependencies before
+    supplying verified_evidence_refs and again atomically when persisting results.
+    """
     snapshot_body = {key: value for key, value in snapshot.items() if key != "snapshot_id"}
     if snapshot.get("snapshot_id") != digest(snapshot_body):
         raise ValueError("Frozen decision integrity check failed")
@@ -745,13 +780,19 @@ def mature_decision(
     cutoff, decision_time = utc(as_of), utc(snapshot["decision_time"])
     if cutoff < decision_time:
         raise ValueError("Evaluation cannot precede the decision")
+    if product_evidence_loader is not None and (observations or verified_evidence_refs is None):
+        raise ValueError("Partitioned maturation requires validated references and no raw history")
     eligible = _eligible_observations(
         observations, cutoff, bool(snapshot["synthetic"]), config.market
     )
     evidence: dict[str, list[Observation]] = defaultdict(list)
     for row in eligible:
         evidence[row.entity_key].append(row)
-    available_ids = {row.observation_id for row in eligible}
+    available_ids = (
+        set(verified_evidence_refs or ())
+        if product_evidence_loader is not None
+        else {row.observation_id for row in eligible}
+    )
     missing_references = sorted(set(snapshot["evidence_refs"]) - available_ids)
     methods = {"policy": snapshot["selected"], **snapshot["baselines"]}
     scenarios: list[dict[str, Any]] = []
@@ -777,9 +818,23 @@ def mature_decision(
                         outcome = {"product_id": product_id, "status": state}
                     else:
                         if product_id not in measured:
+                            product_evidence = evidence
+                            if product_evidence_loader is not None:
+                                product_evidence = defaultdict(list)
+                                for item in _eligible_observations(
+                                    product_evidence_loader(product_id),
+                                    cutoff,
+                                    bool(snapshot["synthetic"]),
+                                    config.market,
+                                ):
+                                    if (
+                                        snapshot["entity_bindings"].get(item.entity_key)
+                                        == product_id
+                                    ):
+                                        product_evidence[item.entity_key].append(item)
                             measured[product_id] = _product_outcome(
                                 product_id,
-                                evidence,
+                                product_evidence,
                                 snapshot["entity_bindings"],
                                 start,
                                 end,
@@ -789,7 +844,7 @@ def mature_decision(
                                 measured[product_id].update(
                                     _lead_time(
                                         product_id,
-                                        evidence,
+                                        product_evidence,
                                         snapshot["entity_bindings"],
                                         start,
                                         end,
@@ -881,6 +936,24 @@ def backtest(
         for timestamp in dates
     ]
     reports = [mature_decision(snapshot, observations, cutoff) for snapshot in snapshots]
+    return summarize_backtest(snapshots, reports, cutoff, config, synthetic=synthetic)
+
+
+def summarize_backtest(
+    snapshots: Sequence[dict[str, Any]],
+    reports: Sequence[dict[str, Any]],
+    as_of: datetime,
+    config: EvaluationConfig,
+    *,
+    synthetic: bool = False,
+) -> dict[str, Any]:
+    """Aggregate completed decision partitions without materializing their raw history."""
+    cutoff = utc(as_of)
+    if len(snapshots) != len(reports) or any(
+        report["snapshot_id"] != snapshot["snapshot_id"]
+        for snapshot, report in zip(snapshots, reports, strict=True)
+    ):
+        raise ValueError("Backtest reports must match their frozen decision partitions")
     selected = [product_id for snapshot in snapshots for product_id in snapshot["selected"]]
     family_alerts = [
         row["family_id"]
@@ -910,8 +983,8 @@ def backtest(
         "as_of": cutoff.isoformat(),
         "synthetic": synthetic,
         "config": config.model_dump(mode="json"),
-        "snapshots": snapshots,
-        "reports": reports,
+        "snapshots": list(snapshots),
+        "reports": list(reports),
         "comparisons": comparisons,
         "status": "evaluated"
         if any(snapshot["universe"] for snapshot in snapshots)

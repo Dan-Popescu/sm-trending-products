@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import psycopg
@@ -165,3 +165,52 @@ def test_text_candidates_are_bounded_deterministic_and_never_confirmed(identity:
     assert first[0]["entity_key"] in {"tiktok_display:video:one", "tiktok_display:video:two"}
     assert first[0]["requires_review"] is True
     assert identity.links(datetime.now(UTC)) == []
+
+
+def test_sql_and_python_resolve_the_same_historical_ownership(identity: Identity) -> None:
+    from sm_trending_products.identity_rules import resolve_links
+
+    identity.create_product("first", "First product")
+    identity.create_product("second", "Second product")
+    base = identity.catalog.one("SELECT clock_timestamp() AS ts")["ts"]
+    cases = {
+        "ambiguous": [("first", 0, "confirmed", 1), ("second", 0, "confirmed", 0.2)],
+        "takeover": [("first", 0, "confirmed", 1), ("second", 1, "confirmed", 0.2)],
+        "alternative": [("first", 0, "confirmed", 1), ("second", 1, "rejected", 1)],
+        "downgraded": [("first", 0, "confirmed", 1), ("first", 1, "confirmed", 0.2)],
+        "future": [("first", 0, "confirmed", 1), ("second", 2, "confirmed", 1)],
+        "event-order": [("first", 0, "confirmed", 1), ("first", 0, "rejected", 1)],
+    }
+    for name, events in cases.items():
+        entity_key = f"tiktok_display:video:{name}"
+        add_entity(identity, entity_key)
+        for index, (product_id, hour, status, confidence) in enumerate(events):
+            identity.catalog.execute(
+                "INSERT INTO product_links(decision_id,product_id,entity_key,available_at,"
+                "status,confidence,method) VALUES(%s,%s,%s,%s,%s,%s,'fixture')",
+                (
+                    f"{name}-{index}",
+                    product_id,
+                    entity_key,
+                    base + timedelta(hours=hour),
+                    status,
+                    confidence,
+                ),
+            )
+    cutoff = base + timedelta(hours=1)
+    expected = {
+        "tiktok_display:video:takeover": "second",
+        "tiktok_display:video:alternative": "first",
+        "tiktok_display:video:downgraded": "first",
+        "tiktok_display:video:future": "first",
+    }
+    history = [ProductLink.model_validate(row) for row in identity.link_history(cutoff)]
+    assert confirmed_owners(identity, cutoff) == expected
+    assert {key: row.product_id for key, row in resolve_links(history, cutoff).items()} == expected
+    assert {
+        key: row.product_id
+        for key, row in resolve_links(history, cutoff, min_confidence=0.9).items()
+    } == {
+        "tiktok_display:video:alternative": "first",
+        "tiktok_display:video:future": "first",
+    }

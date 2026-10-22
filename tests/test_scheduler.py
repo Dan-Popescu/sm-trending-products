@@ -205,11 +205,25 @@ def test_pending_queue_backpressure_is_visible(catalog: object) -> None:
 
 
 @pytest.mark.integration
-def test_rejected_hypothesis_preserves_confirmed_product_refresh_priority(catalog: object) -> None:
+@pytest.mark.parametrize(
+    ("alternative_status", "alternative_confidence", "simultaneous", "expected_score"),
+    [
+        ("rejected", 1.0, False, 99),
+        ("confirmed", 0.2, False, None),
+        ("confirmed", 0.2, True, None),
+    ],
+)
+def test_refresh_priority_uses_unique_latest_owner_before_confidence(
+    catalog: object,
+    alternative_status: str,
+    alternative_confidence: float,
+    simultaneous: bool,
+    expected_score: int | None,
+) -> None:
     from sm_trending_products.scheduler import Scheduler
 
     catalog.configure_budget("tiktok_display", "creator", capacity=100, refill_per_second=1)
-    for product_id in ["owner", "rejected"]:
+    for product_id in ["owner", "alternative"]:
         catalog.execute(
             "INSERT INTO products(product_id,name,synthetic) VALUES(%s,%s,true)",
             (product_id, product_id),
@@ -223,8 +237,10 @@ def test_rejected_hypothesis_preserves_confirmed_product_refresh_priority(catalo
         "VALUES('confirmed','owner','tiktok_display:video:v1','confirmed',1,'manual')"
     )
     catalog.execute(
-        "INSERT INTO product_links(decision_id,product_id,entity_key,status,confidence,method) "
-        "VALUES('alternative','rejected','tiktok_display:video:v1','rejected',1,'manual')"
+        "INSERT INTO product_links(decision_id,product_id,entity_key,status,confidence,"
+        "method,available_at) SELECT 'alternative','alternative',entity_key,%s,%s,'manual',"
+        "available_at+%s*interval '1 microsecond' FROM product_links WHERE decision_id='confirmed'",
+        (alternative_status, alternative_confidence, 0 if simultaneous else 1),
     )
     catalog.execute(
         "INSERT INTO assessment_runs(run_id,as_of,synthetic,policy,object_key,evidence_datasets) "
@@ -236,5 +252,7 @@ def test_rejected_hypothesis_preserves_confirmed_product_refresh_priority(catalo
     )
     result = Scheduler(catalog).schedule(1, synthetic=True)
     assert result["scheduled"] == 1
-    assert result["decisions"][0]["tier"] == "hot"
-    assert result["decisions"][0]["priority_inputs"]["assessment_score"] == 99
+    assert result["decisions"][0]["tier"] == (
+        "hot" if expected_score is not None else "exploration"
+    )
+    assert result["decisions"][0]["priority_inputs"]["assessment_score"] == expected_score
