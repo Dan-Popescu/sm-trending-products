@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
 import psycopg
@@ -114,7 +114,13 @@ def pipeline(sql_engine, s3_endpoint, tmp_path, monkeypatch):
     query = dict(parse_qsl(parsed.query))
     query["options"] = f"-c search_path={schema}"
     scoped_url = urlunsplit(
-        (parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(query, quote_via=quote),
+            parsed.fragment,
+        )
     )
     for key, value in {
         "AWS_ACCESS_KEY_ID": "fixture-access",
