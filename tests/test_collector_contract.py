@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import threading
 from contextlib import contextmanager
@@ -18,8 +19,11 @@ BINARY = ROOT / "collector/target/debug/sm-collector"
 
 @pytest.fixture(scope="module", autouse=True)
 def collector_binary():
-    cargo = Path("/root/.cargo/bin/cargo")
-    executable = str(cargo) if cargo.exists() else "cargo"
+    executable = shutil.which(
+        "cargo", path=os.pathsep.join([os.environ.get("PATH", ""), str(Path.home() / ".cargo/bin")])
+    )
+    if executable is None:
+        pytest.fail("Rust Cargo is required; install the toolchain or add cargo to PATH")
     subprocess.run(
         [executable, "build", "--locked", "--manifest-path", str(ROOT / "collector/Cargo.toml")],
         check=True,
