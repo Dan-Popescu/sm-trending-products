@@ -42,6 +42,7 @@ jobs:
       POLARS_MAX_THREADS: "2"
       RAYON_NUM_THREADS: "2"
       DUCKDB_THREADS: "2"
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
@@ -54,6 +55,18 @@ jobs:
         with:
           toolchain: 1.99.1
           components: rustfmt, clippy
+      - name: Restore Rust build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            collector/target
+          key: rust-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/workflows/ci.yml', 'collector/Cargo.lock', 'collector/Cargo.toml') }}-${{ hashFiles('collector/src/**') }}
+          restore-keys: |
+            rust-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/workflows/ci.yml', 'collector/Cargo.lock', 'collector/Cargo.toml') }}-
       - name: Verify Rust collector
         run: |
           cargo fmt --manifest-path collector/Cargo.toml --check

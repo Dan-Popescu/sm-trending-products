@@ -142,7 +142,74 @@ def test_inflight_reservations_prevent_concurrent_disk_overcommit(tmp_path):
             source.release.set()
         assert filling.result(timeout=2).read_bytes() == first
     assert retained_bytes(tmp_path) <= BUDGET
+
+
+def test_reduced_budget_reconciles_warm_payloads_without_refetching_kept_input(tmp_path):
+    first, second = b"a" * LARGE, b"b" * LARGE
+    source = Source({"first": first, "second": second})
+    previous = history_at(tmp_path, source)
+    previous.settings.cache_max_bytes = 2 * BUDGET
+    previous.cached(reference("first", first))
+    previous.cached(reference("second", second))
+    assert retained_bytes(tmp_path) > BUDGET
+    restarted = history_at(tmp_path, source)
+    with pin_cached(restarted, reference("second", second)) as pinned:
+        assert pinned.read_bytes() == second
+        assert retained_bytes(tmp_path) <= BUDGET
+    assert source.requests == ["first", "second"]
+
+
+def test_reduced_budget_waits_for_existing_readers_without_removing_their_pins(tmp_path):
+    first, second = b"a" * LARGE, b"b" * LARGE
+    source = Source({"first": first, "second": second})
+    previous = history_at(tmp_path, source)
+    previous.settings.cache_max_bytes = 2 * BUDGET
+    restarted = history_at(tmp_path, source)
+    with pin_cached(previous, reference("first", first)) as first_pin:
+        with pin_cached(previous, reference("second", second)) as second_pin:
+            with pytest.raises(CacheCapacityError):
+                restarted.cached(reference("second", second))
+            assert first_pin.read_bytes() == first
+            assert second_pin.read_bytes() == second
+    assert restarted.cached(reference("second", second)).read_bytes() == second
+    assert retained_bytes(tmp_path) <= BUDGET
+
+
+def test_legacy_unknown_size_cannot_keep_an_oversized_warm_payload_after_restart(tmp_path):
+    body = b"x" * (BUDGET + 1)
+    source = Source({"large": body})
+    previous = history_at(tmp_path, source)
+    previous.settings.cache_max_bytes = 2 * BUDGET
+    previous.cached(reference("large", body))
+    legacy_reference = reference("large", body)
+    legacy_reference.pop("bytes")
+    with pytest.raises(ValueError):
+        history_at(tmp_path, source).cached(legacy_reference)
+    assert retained_bytes(tmp_path) <= BUDGET
     assert not list((tmp_path / ".downloads").iterdir())
+
+
+def test_reduced_budget_waits_for_a_larger_existing_download(tmp_path):
+    warm, large = b"w" * 4096, b"x" * (BUDGET + LARGE)
+    source = Source({"warm": warm, "large": large})
+    previous = history_at(tmp_path, source)
+    previous.settings.cache_max_bytes = 2 * BUDGET
+    previous.cached(reference("warm", warm))
+    source.block_key = "large"
+    restarted = history_at(tmp_path, source)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        filling = executor.submit(previous.cached, reference("large", large))
+        assert source.waiting.wait(timeout=2)
+        try:
+            with pytest.raises(CacheCapacityError, match="downloads"):
+                restarted.cached(reference("warm", warm))
+            assert source.requests == ["warm", "large"]
+        finally:
+            source.release.set()
+        assert filling.result(timeout=2).read_bytes() == large
+    assert restarted.cached(reference("warm", warm)).read_bytes() == warm
+    assert retained_bytes(tmp_path) <= BUDGET
+    assert source.requests == ["warm", "large"]
 
 
 CRASH_READER = """
