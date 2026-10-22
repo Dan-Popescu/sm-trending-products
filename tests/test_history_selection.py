@@ -414,6 +414,61 @@ def test_staged_compaction_retries_after_sizing_change(pipeline, monkeypatch):
     assert len(records) == 20
 
 
+@pytest.mark.parametrize("interrupted_legacy_compaction", [False, True])
+def test_compaction_keeps_oldest_delivery_when_smaller_replay_is_selected_first(
+    pipeline, monkeypatch, interrupted_legacy_compaction
+):
+    timestamp = now() - timedelta(hours=1)
+    shared = record("shared", timestamp, observation_id="shared-delivery")
+    original = pipeline.import_records(
+        [shared, record("original-extra-a", timestamp), record("original-extra-b", timestamp)],
+        synthetic=True,
+    )[0]
+    replay = pipeline.import_records([shared], synthetic=True)[0]
+    before, _ = pipeline.history.observations(now(), True)
+    assert len(before) == 3
+    assert (
+        next(row for row in before if row.observation_id == "shared-delivery").raw_dataset_id
+        == original
+    )
+    staged = None
+    if interrupted_legacy_compaction:
+        read = pipeline.history.read
+
+        def chronological_read(parents, **kwargs):
+            # Earlier releases read compaction parents in catalog creation order.
+            return read(
+                sorted(parents, key=lambda row: (row["created_at"], row["dataset_id"])), **kwargs
+            )
+
+        def interrupted_index(*args, **kwargs):
+            raise RuntimeError("controlled interruption after legacy manifest upload")
+
+        with monkeypatch.context() as legacy:
+            legacy.setattr(pipeline.history, "read", chronological_read)
+            legacy.setattr(pipeline.catalog, "index_observations", interrupted_index)
+            with pytest.raises(RuntimeError, match="controlled interruption"):
+                pipeline.compact(synthetic=True)
+        staged = pipeline.catalog.one(
+            "SELECT dataset_id,manifest FROM datasets WHERE state='staged'"
+        )
+        assert staged is not None
+
+    result = pipeline.compact(synthetic=True)
+    assert result["status"] == "compacted"
+    assert set(result["parent_dataset_ids"]) == {original, replay}
+    assert result["rows"] == 3
+    if staged:
+        committed = pipeline.catalog.one(
+            "SELECT dataset_id,manifest FROM datasets WHERE dataset_id=%s",
+            (result["dataset_id"],),
+        )
+        assert committed == staged
+    after, _ = pipeline.history.observations(now(), True)
+    assert after == before
+    assert pipeline.verify()["ok"]
+
+
 @pytest.mark.parametrize("observed_at", [None, 123, []])
 def test_malformed_cursor_fields_raise_controlled_validation_error(pipeline, observed_at):
     cursor = base64.urlsafe_b64encode(

@@ -71,6 +71,10 @@ class Maintenance:
                 "reason": "fewer_than_two_eligible_datasets",
                 "row_limit": row_limit,
             }
+        # Size determines membership, not delivery precedence. Deduplication
+        # must retain the same oldest provenance as ordinary catalog reads,
+        # including when recovering an already-uploaded legacy compaction.
+        selected.sort(key=lambda dataset: (dataset["created_at"], dataset["dataset_id"]))
         cutoff = max(dataset["max_available_at"] for dataset in selected)
         observations = self.history.read(selected, as_of=cutoff, max_rows=row_limit)
         parent_ids = sorted(dataset["dataset_id"] for dataset in selected)
