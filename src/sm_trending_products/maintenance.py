@@ -78,7 +78,10 @@ class Maintenance:
         cutoff = max(dataset["max_available_at"] for dataset in selected)
         observations = self.history.read(selected, as_of=cutoff, max_rows=row_limit)
         parent_ids = sorted(dataset["dataset_id"] for dataset in selected)
-        dataset_id = digest({"kind": "compaction", "parents": parent_ids, "version": "1"})
+        transform_version = selected[0]["transform_version"]
+        dataset_id = digest(
+            {"kind": "compaction", "parents": parent_ids, "version": transform_version}
+        )
         staged = self.catalog.one(
             "SELECT manifest FROM datasets WHERE dataset_id=%s AND state='staged'", (dataset_id,)
         )
@@ -92,6 +95,7 @@ class Maintenance:
             dataset_id,
             partition_buckets,
             recorded=staged["manifest"] if staged else None,
+            transform_version=transform_version,
         )
         self.catalog.stage_dataset(dataset_id, source, synthetic, manifest)
         self.history.put(manifest["raw"]["key"], raw_body, content_type="application/gzip")
@@ -163,6 +167,7 @@ class Maintenance:
         partition_buckets: int,
         *,
         recorded: dict | None = None,
+        transform_version: str = "1",
     ) -> tuple[list[tuple[dict, bytes]], bytes, dict]:
         namespace = "synthetic" if synthetic else "live"
         date = min(obs.observed_at for obs in observations).date().isoformat()
@@ -194,7 +199,7 @@ class Maintenance:
         manifest = {
             "schema_version": "1",
             "dataset_id": dataset_id,
-            "transform_version": "1",
+            "transform_version": transform_version,
             "source": source,
             "synthetic": synthetic,
             "partition_buckets": partition_buckets,
