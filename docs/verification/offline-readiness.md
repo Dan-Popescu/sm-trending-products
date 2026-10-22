@@ -6,9 +6,11 @@ production bucket or VPS were used.
 
 ## Executed application boundary
 
-The full suite passed **156 tests, zero failures, zero errors and zero skips**
-against native PostgreSQL 17.11 and temporary HTTP Moto 5.2.4 services in 44.77
-seconds. [JUnit evidence](offline/tests.xml) retains the executed scenarios.
+The full suite passed **159 tests, zero failures, zero errors and zero skips**
+against native PostgreSQL 17.11 and temporary HTTP Moto 5.2.4 services in 42.03
+seconds. [JUnit evidence](offline/tests.xml) retains the executed scenarios. The
+[source manifest](offline/source-manifest.json) fingerprints runtime, test,
+configuration and verification-driver files independently of documentation.
 Rust collection uses the compiled locked collector and controlled loopback HTTP
 responses. Ruff formatting/lint and mypy passed for the application.
 
@@ -41,6 +43,9 @@ New behavioral proofs include:
 The first full run had 140 passes and sixteen setup errors because the newly
 installed Cargo directory was missing from that command's PATH. Repeating with
 the documented toolchain selection produced the complete clean result above.
+A later full run also exposed a real UI cutoff precision bug: rounding the
+default time down to whole seconds could hide a link created in that second.
+The default now retains microseconds; the complete 159-test run passed afterward.
 No application failure was hidden or counted as a passing test.
 
 ## Measured finite workload

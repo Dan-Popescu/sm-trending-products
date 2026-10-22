@@ -392,7 +392,7 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
             st.rerun()
         cutoff = st.text_input(
             "Evidence and link cutoff (UTC)",
-            value=datetime.now(UTC).isoformat(timespec="seconds"),
+            value=datetime.now(UTC).isoformat(),
             key="review_cutoff",
         )
         st.caption(
