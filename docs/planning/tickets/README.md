@@ -38,6 +38,8 @@ Each ticket is a narrow complete behavior with an operator-visible outcome and a
 - T08 has controlled commercial-adapter acceptance with
   [criterion evidence](../../verification/commercial-acceptance.md); T15 still
   owns live endpoint, scope and intended-use acceptance.
+- T09 has controlled offer/cost review acceptance in the
+  [commercial criterion matrix](../../verification/commercial-acceptance.md#t09-commercial-dimensions-in-published-review).
 - T13 has deployment, backup, and isolated-restore tooling. The Docker image build and full native container restore passed in CI; actual provider checks and VPS rollout remain pending.
 - T12 has controlled commercial-outcome acceptance with
   [criterion evidence](../../verification/commercial-outcome-acceptance.md).
