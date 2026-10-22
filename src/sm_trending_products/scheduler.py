@@ -93,6 +93,7 @@ class SchedulerPolicy(BaseModel):
     monitoring_threshold: float = Field(default=35, ge=0, le=100)
     min_link_confidence: float = Field(default=0.9, ge=0, le=1)
     max_candidate_scan: int = Field(default=10000, ge=1, le=100000)
+    candidate_retry_seconds: int = Field(default=300, ge=1, le=86400)
     max_pending_tasks: int = Field(default=10000, ge=1, le=1000000)
     discovery_queries: list[DiscoveryQuery] = Field(default_factory=list, max_length=1000)
 
@@ -209,6 +210,8 @@ class Scheduler:
                     return False
                 return True
 
+            # Inspect a blocked row once, then let later due rows advance before
+            # revisiting it. Its original due time still drives overdue priority.
             entity_rows = connection.execute(
                 "WITH "
                 + LINK_STATE_CTES
@@ -224,7 +227,10 @@ class Scheduler:
                 "AND d.state='committed' "
                 "WHERE e.synthetic=%s AND e.next_due_at<=%s AND e.source=ANY(%s) "
                 "AND e.entity_type IN ('video','ad','commercial_content') "
-                "ORDER BY e.next_due_at,e.entity_key FOR UPDATE OF e SKIP LOCKED LIMIT %s",
+                "AND COALESCE((e.schedule_reason->'deferred'->>'retry_after')::timestamptz,"
+                "'-infinity'::timestamptz)<=%s "
+                "ORDER BY GREATEST(e.next_due_at,e.last_scheduler_inspected_at),e.entity_key "
+                "FOR UPDATE OF e SKIP LOCKED LIMIT %s",
                 (
                     synthetic,
                     checked_at,
@@ -234,6 +240,7 @@ class Scheduler:
                     synthetic,
                     checked_at,
                     sorted(SOURCES),
+                    checked_at,
                     config.max_candidate_scan,
                 ),
             ).fetchall()
@@ -250,21 +257,49 @@ class Scheduler:
                     (synthetic,),
                 ).fetchall()
             }
+            deferred_count = 0
+            deferred_candidates: list[dict[str, Any]] = []
+
+            def defer(entity: dict, category: str) -> None:
+                nonlocal deferred_count
+                detail = {
+                    "category": category,
+                    "checked_at": checked_at.isoformat(),
+                    "retry_after": (
+                        checked_at + timedelta(seconds=config.candidate_retry_seconds)
+                    ).isoformat(),
+                    "original_due_at": entity["next_due_at"].isoformat(),
+                    "policy_id": policy_id,
+                }
+                connection.execute(
+                    "UPDATE entities SET schedule_reason=schedule_reason || %s,"
+                    "last_scheduler_inspected_at=%s "
+                    "WHERE entity_key=%s AND synthetic=%s",
+                    (Jsonb({"deferred": detail}), checked_at, entity["entity_key"], synthetic),
+                )
+                deferred_count += 1
+                if len(deferred_candidates) < 100:
+                    deferred_candidates.append({"entity_key": entity["entity_key"], **detail})
+
             candidates = []
             for entity in entity_rows:
                 source, account = entity["source"], entity["account_id"]
                 if not allowed(source, account):
+                    defer(entity, "source_unavailable")
                     continue
                 try:
                     refresh = self._refresh_request(entity, synthetic)
                 except ValueError:
                     warnings.add((source, account, "refresh_origin_invalid"))
+                    defer(entity, "refresh_origin_invalid")
                     continue
                 if refresh is None:
                     warnings.add((source, account, "refresh_origin_unavailable"))
+                    defer(entity, "refresh_origin_unavailable")
                     continue
                 operation, payload = refresh
                 if entity["entity_key"] in active_entities:
+                    defer(entity, "refresh_already_pending")
                     continue
                 score = entity["assessment_score"]
                 previous_inputs = entity["schedule_reason"].get("priority_inputs", {})
@@ -451,6 +486,10 @@ class Scheduler:
                 "policy_id": policy_id,
                 "policy": configuration,
                 "checked_at": checked_at.isoformat(),
+                "scanned_candidates": len(entity_rows),
+                "deferred_count": deferred_count,
+                "deferred_candidates": deferred_candidates,
+                "deferred_candidates_truncated": deferred_count > len(deferred_candidates),
                 "exploration_slots": slots,
                 "exploration_scheduled": sum(
                     row["bucket"].startswith("exploration_") for row in decisions

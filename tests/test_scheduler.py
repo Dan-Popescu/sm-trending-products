@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from collections.abc import Iterator
 
@@ -256,3 +257,67 @@ def test_refresh_priority_uses_unique_latest_owner_before_confidence(
         "hot" if expected_score is not None else "exploration"
     )
     assert result["decisions"][0]["priority_inputs"]["assessment_score"] == expected_score
+
+
+@pytest.mark.integration
+def test_bounded_scan_progresses_past_unrefreshable_old_candidates_and_retries_them(
+    pipeline: object,
+) -> None:
+    from psycopg.types.json import Jsonb
+
+    for source, account in [("tiktok_ads", "older-account"), ("tiktok_display", "later-account")]:
+        pipeline.catalog.configure_budget(source, account, 100, 1)
+    for key, source, account, kind, overdue_days in [
+        ("tiktok_ads:ad:old", "tiktok_ads", "older-account", "ad", 2),
+        ("tiktok_display:video:new", "tiktok_display", "later-account", "video", 1),
+    ]:
+        pipeline.catalog.execute(
+            "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type,next_due_at) "
+            "VALUES(%s,true,%s,%s,%s,clock_timestamp()-%s*interval '1 day')",
+            (key, source, account, kind, overdue_days),
+        )
+    original_due = pipeline.catalog.one(
+        "SELECT next_due_at FROM entities WHERE entity_key='tiktok_ads:ad:old' AND synthetic"
+    )["next_due_at"]
+    first = pipeline.schedule(
+        1, synthetic=True, policy={"max_candidate_scan": 1, "candidate_retry_seconds": 1}
+    )
+    assert first["scheduled"] == 0
+    assert first["deferred_count"] == 1
+    assert first["deferred_candidates"][0]["category"] == "refresh_origin_unavailable"
+    # Even after backoff expires, the scan frontier must reach later due work.
+    time.sleep(1.1)
+    second = pipeline.schedule(1, synthetic=True)
+    assert second["scheduled"] == 1
+    assert second["decisions"][0]["entity_key"] == "tiktok_display:video:new"
+    assert (
+        pipeline.catalog.one(
+            "SELECT next_due_at FROM entities WHERE entity_key='tiktok_ads:ad:old' AND synthetic"
+        )["next_due_at"]
+        == original_due
+    )
+
+    # Repair the missing refresh origin. It must be retried, not silently dropped.
+    pipeline.catalog.execute(
+        "INSERT INTO datasets(dataset_id,source,synthetic,state,manifest) "
+        "VALUES('repaired-origin','tiktok_ads',true,'committed',%s)",
+        (
+            Jsonb(
+                {
+                    "task_request": {
+                        "source": "tiktok_ads",
+                        "account_id": "older-account",
+                        "operation": "query",
+                        "payload": {"filters": {"country_code": "FR"}},
+                    }
+                }
+            ),
+        ),
+    )
+    pipeline.catalog.execute(
+        "UPDATE entities SET origin=%s WHERE entity_key='tiktok_ads:ad:old' AND synthetic",
+        (Jsonb({"dataset_id": "repaired-origin"}),),
+    )
+    retried = pipeline.schedule(1, synthetic=True)
+    assert retried["scheduled"] == 1
+    assert retried["decisions"][0]["entity_key"] == "tiktok_ads:ad:old"

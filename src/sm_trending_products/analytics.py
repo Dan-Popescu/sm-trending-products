@@ -486,6 +486,209 @@ def _demand(
     }, features
 
 
+def _price_quote(observation: Observation) -> tuple[dict[str, Any] | None, str | None]:
+    attributes = observation.attributes
+    currency = str(attributes.get("currency", "")).upper()
+    if len(currency) != 3 or not currency.isalpha():
+        return None, "missing_or_invalid_currency"
+    if str(attributes.get("price_currency", currency)).upper() != currency:
+        return None, "conflicting_price_currency"
+    precision = attributes.get("price_precision", "exact")
+    if not isinstance(precision, str):
+        return None, "invalid_price_precision"
+    bounded = "price_lower" in attributes or "price_upper" in attributes
+    try:
+        if bounded:
+            lower = Decimal(str(attributes["price_lower"]))
+            upper = Decimal(str(attributes["price_upper"]))
+            if "price_precision" not in attributes:
+                precision = "bounded"
+            if precision == "rounded":
+                precision = "bounded"
+        elif precision == "exact":
+            lower = upper = Decimal(str(attributes["price"]))
+        else:
+            return None, "uncertain_price_requires_explicit_bounds"
+    except (KeyError, InvalidOperation):
+        return None, "missing_or_invalid_price"
+    if (
+        precision not in {"exact", "bounded"}
+        or not lower.is_finite()
+        or not upper.is_finite()
+        or lower < 0
+        or upper < lower
+        or (precision == "exact" and lower != upper)
+    ):
+        return None, "invalid_or_estimated_price_bounds"
+    return {
+        "lower": lower,
+        "upper": upper,
+        "precision": precision,
+        "currency": currency,
+        "market": observation.market.upper() if observation.market else None,
+        "source": observation.source,
+        "entity_key": observation.entity_key,
+        "observed_at": observation.observed_at,
+        "observation_id": observation.observation_id,
+        "price_basis": str(attributes.get("price_basis", "per_offer")),
+        "variant_id": attributes.get("variant_id"),
+    }, None
+
+
+def _price_change(first: dict[str, Any], latest: dict[str, Any]) -> dict[str, Any]:
+    lower = latest["lower"] - first["upper"]
+    upper = latest["upper"] - first["lower"]
+    direction = (
+        "increase"
+        if lower > 0
+        else "decrease"
+        if upper < 0
+        else "unchanged"
+        if lower == upper == 0
+        else "uncertain"
+    )
+    return {
+        "change_lower": str(lower),
+        "change_upper": str(upper),
+        "direction": direction,
+        "change_precision": "exact"
+        if first["precision"] == latest["precision"] == "exact"
+        else "bounded",
+        "relative_change_lower": str(latest["lower"] / first["upper"] - 1)
+        if first["upper"] > 0
+        else None,
+        "relative_change_upper": str(latest["upper"] / first["lower"] - 1)
+        if first["lower"] > 0
+        else None,
+        "interval_hours": (latest["observed_at"] - first["observed_at"]).total_seconds() / 3600,
+        "evidence_refs": [first["observation_id"], latest["observation_id"]],
+    }
+
+
+def _price_evolution(
+    evidence: Sequence[Observation],
+    as_of: datetime,
+    policy: AssessmentPolicy,
+) -> dict[str, Any]:
+    timelines: dict[str, list[Observation]] = defaultdict(list)
+    for observation in evidence:
+        if observation.entity_type == "offer" and any(
+            field in observation.attributes for field in ("price", "price_lower", "price_upper")
+        ):
+            timelines[observation.entity_key].append(observation)
+    summaries = []
+    refs: set[str] = set()
+    for entity_key, timeline in sorted(timelines.items()):
+        versions: dict[datetime, Observation] = {}
+        for observation in sorted(
+            timeline, key=lambda row: (row.observed_at, row.available_at, row.observation_id)
+        ):
+            versions[observation.observed_at] = observation
+        ordered = list(versions.values())
+        last_observation = ordered[-1]
+        latest, reason = _price_quote(last_observation)
+        common: dict[str, Any] = {
+            "entity_key": entity_key,
+            "source": last_observation.source,
+            "market": last_observation.market,
+            "status": "unknown",
+            "observed_quote_count": len(ordered),
+            "revision_count": len(timeline) - len(ordered),
+            "evidence_refs": [last_observation.observation_id],
+        }
+        refs.add(last_observation.observation_id)
+        if latest is None:
+            summaries.append({**common, "reason": reason})
+            continue
+        common["currency"] = latest["currency"]
+        common["market"] = latest["market"]
+        common["latest_price"] = {
+            "lower": str(latest["lower"]),
+            "upper": str(latest["upper"]),
+            "precision": latest["precision"],
+            "observed_at": latest["observed_at"].isoformat(),
+        }
+        if (as_of - latest["observed_at"]).total_seconds() > policy.max_age_hours * 3600:
+            summaries.append({**common, "reason": "stale_latest_quote"})
+            continue
+        if latest["market"] is None:
+            summaries.append({**common, "reason": "unknown_market_scope"})
+            continue
+        first: dict[str, Any] | None = None
+        previous: dict[str, Any] | None = None
+        comparable_count = 0
+        directions: dict[str, int] = defaultdict(int)
+        latest_change: dict[str, Any] = {}
+        excluded = 0
+        for observation in ordered:
+            quote, _ = _price_quote(observation)
+            if quote is None or any(
+                quote[field] != latest[field]
+                for field in (
+                    "source",
+                    "entity_key",
+                    "currency",
+                    "market",
+                    "price_basis",
+                    "variant_id",
+                )
+            ):
+                excluded += 1
+                continue
+            if first is None:
+                first = quote
+            if previous is not None:
+                latest_change = _price_change(previous, quote)
+                directions[latest_change["direction"]] += 1
+            previous = quote
+            comparable_count += 1
+        if comparable_count < 2 or first is None:
+            summaries.append(
+                {**common, "reason": "insufficient_comparable_quotes", "excluded_quotes": excluded}
+            )
+            continue
+        summary = {
+            **common,
+            **_price_change(first, latest),
+            "status": "observed"
+            if first["precision"] == latest["precision"] == "exact"
+            else "bounded",
+            "first_price": {
+                "lower": str(first["lower"]),
+                "upper": str(first["upper"]),
+                "precision": first["precision"],
+                "observed_at": first["observed_at"].isoformat(),
+            },
+            "comparable_quote_count": comparable_count,
+            "excluded_quotes": excluded,
+            "latest_change": latest_change,
+            "observed_increases": directions["increase"],
+            "observed_decreases": directions["decrease"],
+            "uncertain_changes": directions["uncertain"],
+        }
+        refs.update(summary["evidence_refs"])
+        refs.update(latest_change["evidence_refs"])
+        summaries.append(summary)
+    known = [row for row in summaries if row["status"] != "unknown"]
+    return {
+        "status": "unknown"
+        if not known
+        else "bounded"
+        if any(row["status"] == "bounded" for row in known)
+        else "observed",
+        "offers": summaries,
+        "evidence_refs": sorted(refs),
+        "reasons": [
+            "Price changes compare like offer, source, known market, currency, "
+            "variant, and price basis",
+            "Bounds preserve quote uncertainty; source revisions at one observation "
+            "time are not extra price changes",
+            "Quote intervals show observed changes, not exact change timing "
+            "or causal evidence of a price war",
+        ],
+    }
+
+
 def _competition(
     evidence: Sequence[Observation],
     as_of: datetime,
@@ -494,8 +697,26 @@ def _competition(
     latest = _fresh_latest(evidence, as_of, policy)
     offers = [row for row in latest if row.entity_type == "offer"]
     ads = [row for row in latest if row.entity_type in {"ad", "commercial_content"}]
+    creatives = [row for row in latest if row.entity_type in {"video", "ad", "commercial_content"}]
+    fingerprinted = [
+        row
+        for row in creatives
+        if isinstance(row.attributes.get("creative_fingerprint"), str)
+        and row.attributes["creative_fingerprint"].strip()
+    ]
+    fingerprints = {str(row.attributes["creative_fingerprint"]) for row in fingerprinted}
+    prices = _price_evolution(evidence, as_of, policy)
+    extra = {
+        "observed_creative_count": len(fingerprints) if fingerprinted else None,
+        "creative_coverage": {
+            "fingerprinted_entities": len(fingerprinted),
+            "unknown_fingerprint_entities": len(creatives) - len(fingerprinted),
+            "scope": "explicit_fingerprints_only_not_inferred_from_ad_ids",
+        },
+        "price_evolution": prices,
+    }
     if not offers and not ads:
-        return _unknown("No scoped competitive evidence")
+        return {**_unknown("No scoped competitive evidence"), **extra}
     seller_ids = {
         str(row.attributes["seller_id"]) for row in offers if row.attributes.get("seller_id")
     }
@@ -504,14 +725,9 @@ def _competition(
     }
     by_currency: dict[str, list[str]] = defaultdict(list)
     for row in offers:
-        currency, price = row.attributes.get("currency"), row.attributes.get("price")
-        if currency and price is not None:
-            try:
-                amount = Decimal(str(price))
-                if amount.is_finite() and amount >= 0:
-                    by_currency[str(currency).upper()].append(str(amount))
-            except InvalidOperation:
-                continue
+        quote, _ = _price_quote(row)
+        if quote is not None:
+            by_currency[quote["currency"]].extend([str(quote["lower"]), str(quote["upper"])])
     price_ranges = {
         currency: {"lower": str(min(map(Decimal, prices))), "upper": str(max(map(Decimal, prices)))}
         for currency, prices in sorted(by_currency.items())
@@ -525,6 +741,7 @@ def _competition(
         "observed_seller_count": len(seller_ids),
         "observed_advertiser_count": len(advertiser_ids),
         "price_ranges": price_ranges,
+        **extra,
         "market_coverage": "unknown",
         "reasons": [
             "Higher score means fewer observed named sellers/advertisers; "
@@ -532,7 +749,10 @@ def _competition(
             "Missing sellers, ad launch dates, and market totals remain unknown; "
             "first observation is not first shown",
         ],
-        "evidence_refs": sorted(row.observation_id for row in offers + ads),
+        "evidence_refs": sorted(
+            {row.observation_id for row in offers + ads + fingerprinted}
+            | set(prices["evidence_refs"])
+        ),
     }
 
 

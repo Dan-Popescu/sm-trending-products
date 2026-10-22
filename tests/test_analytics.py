@@ -466,3 +466,204 @@ def test_unknown_or_rolling_period_overrides_generic_lifetime_hint(period: str) 
     assert row["demand"]["score"] is None
     assert row["features"]["sold_delta_lower"] is None
     assert row["features"]["units_sold"] is None
+
+
+def test_competition_retains_price_evolution_not_just_latest_price() -> None:
+    from sm_trending_products.analytics import assess
+
+    products = [
+        Product(product_id=key, name=key, created_at=BASE, market="US")
+        for key in ["falling", "stable"]
+    ]
+    links = [
+        ProductLink(product_id=key, entity_key=f"offer_import:offer:{key}", available_at=BASE)
+        for key in ["falling", "stable"]
+    ]
+    records = [
+        offer(key, hour, 0, 0, currency="USD", price=price).model_copy(update={"market": "US"})
+        for key, prices in [
+            ("falling", [(1, "20.00"), (3, "10.00")]),
+            ("stable", [(1, "10.00"), (3, "10.00")]),
+        ]
+        for hour, price in prices
+    ]
+    rows = {
+        row["product_id"]: row
+        for row in assess(records, products, links, BASE + timedelta(hours=3))
+    }
+    falling = rows["falling"]["competition"]["price_evolution"]["offers"][0]
+    stable = rows["stable"]["competition"]["price_evolution"]["offers"][0]
+    assert falling["direction"] == "decrease"
+    assert falling["change_lower"] == "-10.00"
+    assert falling["change_upper"] == "-10.00"
+    assert falling["currency"] == "USD"
+    assert falling["market"] == "US"
+    assert falling["source"] == "offer_import"
+    assert falling["evidence_refs"] == ["offer-falling-1", "offer-falling-3"]
+    assert stable["direction"] == "unchanged"
+    assert stable["change_lower"] == "0.00"
+    assert rows["falling"]["competition"]["score"] == rows["stable"]["competition"]["score"]
+
+
+def test_competition_deduplicates_only_verified_creative_fingerprints() -> None:
+    from sm_trending_products.analytics import assess
+
+    product = Product(product_id="p1", name="Desk lamp", created_at=BASE)
+    records = [
+        Observation(
+            observation_id=f"ad-{index}",
+            source="tiktok_ads",
+            entity_type="ad",
+            entity_id=str(index),
+            observed_at=BASE,
+            available_at=BASE,
+            attributes=attributes,
+        )
+        for index, attributes in enumerate(
+            [
+                {"creative_fingerprint": "sha256-same", "advertiser_id": "a"},
+                {"creative_fingerprint": "sha256-same", "advertiser_id": "a"},
+                {"advertiser_id": "b"},
+            ]
+        )
+    ]
+    links = [
+        ProductLink(product_id="p1", entity_key=record.entity_key, available_at=BASE)
+        for record in records
+    ]
+    competition = assess(records, [product], links, BASE + timedelta(hours=1))[0]["competition"]
+    assert competition["observed_ad_count"] == 3
+    assert competition["observed_creative_count"] == 1
+    assert competition["creative_coverage"]["unknown_fingerprint_entities"] == 1
+    assert competition["creative_coverage"]["fingerprinted_entities"] == 2
+
+
+def test_price_evolution_preserves_bounded_quote_uncertainty() -> None:
+    from sm_trending_products.analytics import assess
+
+    product = Product(product_id="p1", name="Desk lamp", created_at=BASE, market="US")
+    link = ProductLink(product_id="p1", entity_key="offer_import:offer:o1", available_at=BASE)
+    records = [
+        offer("o1", 1, 0, 0, price="20.00", currency="USD").model_copy(update={"market": "US"}),
+        offer(
+            "o1",
+            3,
+            0,
+            0,
+            price=None,
+            price_lower="9.00",
+            price_upper="11.00",
+            price_precision="bounded",
+            currency="USD",
+        ).model_copy(update={"market": "US"}),
+    ]
+    summary = assess(records, [product], [link], BASE + timedelta(hours=3))[0]["competition"][
+        "price_evolution"
+    ]["offers"][0]
+    assert summary["status"] == "bounded"
+    assert summary["change_precision"] == "bounded"
+    assert summary["change_lower"] == "-11.00"
+    assert summary["change_upper"] == "-9.00"
+    assert summary["direction"] == "decrease"
+    assert summary["relative_change_lower"] == "-0.55"
+    assert summary["relative_change_upper"] == "-0.45"
+
+
+@pytest.mark.parametrize("changed_scope", ["market", "currency", "source"])
+def test_price_evolution_does_not_compare_different_contexts(changed_scope: str) -> None:
+    from sm_trending_products.analytics import assess
+
+    product = Product(product_id="p1", name="Desk lamp", created_at=BASE)
+    first = offer("o1", 1, 0, 0, price="20.00", currency="USD").model_copy(update={"market": "US"})
+    last = offer("o1", 3, 0, 0, price="10.00", currency="USD").model_copy(update={"market": "US"})
+    if changed_scope == "currency":
+        last = last.model_copy(update={"attributes": {**last.attributes, "currency": "EUR"}})
+    else:
+        last = last.model_copy(
+            update={changed_scope: "FR" if changed_scope == "market" else "different_source"}
+        )
+    links = [
+        ProductLink(product_id="p1", entity_key=key, available_at=BASE)
+        for key in sorted({first.entity_key, last.entity_key})
+    ]
+    summaries = assess([first, last], [product], links, BASE + timedelta(hours=3))[0][
+        "competition"
+    ]["price_evolution"]["offers"]
+    assert all(summary["status"] == "unknown" for summary in summaries)
+    assert all("change_lower" not in summary for summary in summaries)
+
+
+def test_price_evolution_excludes_revision_changes_and_stale_quotes() -> None:
+    from sm_trending_products.analytics import assess
+
+    product = Product(product_id="p1", name="Desk lamp", created_at=BASE)
+    link = ProductLink(product_id="p1", entity_key="offer_import:offer:o1", available_at=BASE)
+    first = offer("o1", 1, 0, 0, price="20.00", currency="USD").model_copy(update={"market": "US"})
+    correction = first.model_copy(
+        update={
+            "observation_id": "price-correction",
+            "available_at": BASE + timedelta(hours=2),
+            "attributes": {**first.attributes, "price": "10.00"},
+        }
+    )
+    last = offer("o1", 3, 0, 0, price="10.00", currency="USD").model_copy(update={"market": "US"})
+    summary = assess([first, correction, last], [product], [link], BASE + timedelta(hours=3))[0][
+        "competition"
+    ]["price_evolution"]["offers"][0]
+    assert summary["direction"] == "unchanged"
+    assert summary["revision_count"] == 1
+    assert "price-correction" in summary["evidence_refs"]
+    assert first.observation_id not in summary["evidence_refs"]
+    stale = assess([first, last], [product], [link], BASE + timedelta(hours=200))[0]["competition"][
+        "price_evolution"
+    ]["offers"][0]
+    assert stale["status"] == "unknown"
+    assert stale["reason"] == "stale_latest_quote"
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [{"price_currency": None}, {"price_precision": ["exact"]}, {"price_precision": "rounded"}],
+)
+def test_unusable_price_precision_or_currency_stays_unknown(attributes: dict) -> None:
+    from sm_trending_products.analytics import assess
+
+    product = Product(product_id="p1", name="Desk lamp", created_at=BASE)
+    link = ProductLink(product_id="p1", entity_key="offer_import:offer:o1", available_at=BASE)
+    records = [
+        offer("o1", 1, 0, 0, price="20.00", currency="USD").model_copy(update={"market": "US"}),
+        offer("o1", 3, 0, 0, price="10.00", currency="USD", **attributes).model_copy(
+            update={"market": "US"}
+        ),
+    ]
+    summary = assess(records, [product], [link], BASE + timedelta(hours=3))[0]["competition"][
+        "price_evolution"
+    ]["offers"][0]
+    assert summary["status"] == "unknown"
+    assert "change_lower" not in summary
+
+
+def test_unknown_creative_fingerprints_do_not_become_distinct_ad_creatives() -> None:
+    from sm_trending_products.analytics import assess
+
+    product = Product(product_id="p1", name="Desk lamp", created_at=BASE)
+    records = [
+        Observation(
+            observation_id=f"ad-{index}",
+            source="tiktok_ads",
+            entity_type="ad",
+            entity_id=str(index),
+            observed_at=BASE,
+            available_at=BASE,
+            attributes={"advertiser_id": "a"},
+        )
+        for index in range(2)
+    ]
+    links = [
+        ProductLink(product_id="p1", entity_key=record.entity_key, available_at=BASE)
+        for record in records
+    ]
+    result = assess(records, [product], links, BASE + timedelta(hours=1))[0]["competition"]
+    assert result["observed_ad_count"] == 2
+    assert result["observed_creative_count"] is None
+    assert result["creative_coverage"]["unknown_fingerprint_entities"] == 2
