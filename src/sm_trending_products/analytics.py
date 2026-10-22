@@ -18,7 +18,7 @@ from typing import Any
 
 import polars as pl
 
-from .contracts import AssessmentPolicy, Observation, Product, ProductLink, utc
+from .contracts import AssessmentPolicy, Observation, Product, ProductLink, digest, utc
 from .identity_rules import resolve_links
 
 METRIC_ALIASES = {
@@ -925,6 +925,9 @@ def assess(
         cutoff,
         min_confidence=policy.min_link_confidence,
     )
+    identity_links: dict[str, list[ProductLink]] = defaultdict(list)
+    for owned_link in link_map.values():
+        identity_links[owned_link.product_id].append(owned_link)
     grouped: dict[str, list[Observation]] = defaultdict(list)
     excluded: dict[str, int] = defaultdict(int)
     since = cutoff - timedelta(days=policy.lookback_days)
@@ -950,6 +953,7 @@ def assess(
     rows = []
     for product_id, product in sorted(product_map.items()):
         evidence = grouped[product_id]
+        resolved = sorted(identity_links[product_id], key=lambda link: link.entity_key)
         attention, features = _attention(evidence, cutoff, policy)
         demand, demand_features = _demand(evidence, cutoff, policy)
         features.update(demand_features)
@@ -962,6 +966,12 @@ def assess(
                 "as_of": cutoff.isoformat(),
                 "synthetic": synthetic,
                 "policy_version": policy.version,
+                "identity": {
+                    "version": digest([link.model_dump(mode="json") for link in resolved]),
+                    "decision_refs": sorted(
+                        link.decision_id for link in resolved if link.decision_id
+                    ),
+                },
                 "features": features,
                 "attention": attention,
                 "demand": demand,

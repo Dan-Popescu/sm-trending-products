@@ -32,6 +32,11 @@ Show separately explained attention, demand, competition, and commercial-feasibi
 - The private review surface loads only the selected view. Assessment, alert, and evaluation lists use bounded SQL projections; full snapshots are fetched only for the selected item. Product links are paged after resolving ownership at the selected cutoff. Evidence pages use cursors scoped to the selected product, cutoff, and workspace; historical preparation is shown explicitly and can be continued without advancing that cursor. Reads refresh on each interaction; successful mutations refresh the lists and advance the review cutoff. Database/object clients are session-scoped resources, replaced and closed when configuration or credentials change. Provider-file selectors and default shared AWS files participate through path/stat identity only; credential-file contents never enter the resource key.
 - Retain each dimension and confidence separately. A configurable ranking policy may combine them, but must expose weights, missing-data treatment, minimum evidence, scope, and reasons. Do not default unknown demand to zero or call an attention-only ranking a sales ranking.
 - Alert deduplication and cooldown are explicit policies. Frozen alerts retain evidence references, coverage, availability cutoff, identity version, and scoring version.
+- Published assessment rows carry an `identity` snapshot: a deterministic hash of
+  the resolved, confidence-eligible link records and their nonempty immutable
+  decision references. It uses the shared point-in-time ownership resolver;
+  normalization does not resolve identity again. New results and alerts include
+  this additive metadata. Previously published objects and alerts remain unchanged.
 
 ## Testing Decisions
 
