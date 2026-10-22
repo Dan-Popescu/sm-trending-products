@@ -16,7 +16,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-from .contracts import canonical, digest
+from .contracts import Observation, canonical, digest, utc
 
 # Shared protocol with the literal in SQL migration 003_maintenance.sql triggers.
 # Changing the key requires coordinating both Python writers and database guards.
@@ -259,24 +259,223 @@ class Catalog:
         as_of: datetime | None = None,
         since: datetime | None = None,
         source: str | None = None,
+        entity_keys: set[str] | None = None,
+        dataset_ids: set[str] | None = None,
     ) -> list[dict]:
-        clauses = ["state='committed'", "compacted_into IS NULL", "synthetic=%s"]
+        """Compatibility list surface; scoped analytical readers iterate bounded pages."""
+        return list(
+            self.iter_manifests(
+                synthetic=synthetic,
+                as_of=as_of,
+                since=since,
+                source=source,
+                entity_keys=entity_keys,
+                dataset_ids=dataset_ids,
+            )
+        )
+
+    def iter_manifests(
+        self,
+        *,
+        synthetic: bool,
+        as_of: datetime | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        source: str | None = None,
+        entity_keys: set[str] | None = None,
+        dataset_ids: set[str] | None = None,
+        page_size: int = 100,
+    ) -> Iterator[dict]:
+        """Select only relevant object descriptors before transferring metadata.
+
+        Missing time bounds in historical descriptors are conservative matches.
+        Keyset paging bounds each SQL response and preserves original dataset order.
+        """
+        if not 1 <= page_size <= 1000:
+            raise ValueError("Manifest page size must be between 1 and 1000")
+        if entity_keys is not None and not entity_keys:
+            return
+        if dataset_ids is not None and not dataset_ids:
+            return
+        clauses = ["d.state='committed'", "d.compacted_into IS NULL", "d.synthetic=%s"]
         params: list[Any] = [synthetic]
         if as_of:
-            clauses.append("(min_available_at<=%s OR row_count=0)")
+            clauses.append("(d.min_available_at<=%s OR d.row_count=0)")
             params.append(as_of)
         if since:
-            clauses.append("(max_available_at>=%s OR row_count=0)")
+            clauses.append("(d.max_available_at>=%s OR d.row_count=0)")
             params.append(since)
         if source:
-            clauses.append("source=%s")
+            clauses.append("d.source=%s")
             params.append(source)
-        return self.all(
-            "SELECT * FROM datasets WHERE "
-            + " AND ".join(clauses)
-            + " ORDER BY created_at,dataset_id",
-            params,
+        if dataset_ids is not None:
+            clauses.append("d.dataset_id=ANY(%s)")
+            params.append(sorted(dataset_ids))
+        projection = "d.manifest"
+        joins = ""
+        # The entity index provides the candidate set; per-object bounds and
+        # descriptors are projected in SQL, not pruned after fetching whole manifests.
+        if entity_keys is not None:
+            joins = (
+                "JOIN LATERAL (SELECT jsonb_agg(o.descriptor ORDER BY o.object_key) AS objects "
+                "FROM normalized_objects o WHERE o.dataset_id=d.dataset_id "
+                "AND EXISTS (SELECT 1 FROM normalized_object_entities e "
+                "WHERE e.dataset_id=o.dataset_id AND e.object_key=o.object_key "
+                "AND e.entity_key=ANY(%s)) "
+            )
+            object_params: list[Any] = [sorted(entity_keys)]
+            if as_of:
+                joins += "AND (o.min_available_at IS NULL OR o.min_available_at<=%s) "
+                object_params.append(as_of)
+            if since:
+                joins += "AND (o.max_observed_at IS NULL OR o.max_observed_at>=%s) "
+                object_params.append(since)
+            if until:
+                joins += "AND (o.min_observed_at IS NULL OR o.min_observed_at<=%s) "
+                object_params.append(until)
+            joins += ") selected ON selected.objects IS NOT NULL "
+            clauses.append(
+                "EXISTS (SELECT 1 FROM normalized_object_entities matching "
+                "WHERE matching.dataset_id=d.dataset_id AND matching.entity_key=ANY(%s))"
+            )
+            params.append(sorted(entity_keys))
+            projection = (
+                "jsonb_build_object('dataset_id',d.dataset_id,'normalized',selected.objects)"
+            )
+        else:
+            object_params = []
+        last: tuple[datetime, str] | None = None
+        while True:
+            page_clauses = list(clauses)
+            page_params = [*object_params, *params]
+            if last:
+                page_clauses.append("(d.created_at,d.dataset_id)>(%s,%s)")
+                page_params.extend(last)
+            page_params.append(page_size)
+            rows = self.all(
+                "SELECT d.dataset_id,d.source,d.synthetic,d.state,d.transform_version,"
+                "d.created_at,d.committed_at,d.min_available_at,d.max_available_at,"
+                "d.row_count,d.quarantine_count," + projection + " AS manifest "
+                "FROM datasets d "
+                + joins
+                + "WHERE "
+                + " AND ".join(page_clauses)
+                + " ORDER BY d.created_at,d.dataset_id LIMIT %s",
+                page_params,
+            )
+            yield from rows
+            if len(rows) < page_size:
+                return
+            last = (rows[-1]["created_at"], rows[-1]["dataset_id"])
+
+    @staticmethod
+    def observation_fingerprint(observation: Observation) -> str:
+        payload = observation.model_dump(mode="json", exclude={"raw_dataset_id"})
+        for name in ("observed_at", "available_at", "published_at"):
+            if payload[name] is not None:
+                payload[name] = utc(payload[name]).isoformat()
+        return digest(payload)
+
+    def index_observations(
+        self, connection, dataset_id: str, manifest: dict, observations: Sequence[Observation]
+    ) -> None:
+        """Index delivery metadata inside the authoritative publication transaction."""
+        objects = manifest["normalized"]
+        by_entity = {key: obj["key"] for obj in objects for key in obj["entity_keys"]}
+        self.index_object_rows(
+            connection, dataset_id, [(by_entity[row.entity_key], row) for row in observations]
         )
+        connection.execute(
+            "UPDATE normalized_objects SET observations_indexed=true WHERE dataset_id=%s",
+            (dataset_id,),
+        )
+
+    def index_object_rows(
+        self, connection, dataset_id: str, observations: Sequence[tuple[str, Observation]]
+    ) -> None:
+        with connection.cursor() as cursor:
+            cursor.executemany(
+                "INSERT INTO observation_deliveries(dataset_id,object_key,observation_id,"
+                "entity_key,observed_at,available_at,payload_sha256) "
+                "VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                [
+                    (
+                        dataset_id,
+                        key,
+                        row.observation_id,
+                        row.entity_key,
+                        row.observed_at,
+                        row.available_at,
+                        self.observation_fingerprint(row),
+                    )
+                    for key, row in observations
+                ],
+            )
+
+    def unindexed_objects(
+        self, synthetic: bool, as_of: datetime, entity_keys: set[str], limit: int
+    ) -> list[dict]:
+        return self.all(
+            "SELECT o.dataset_id,o.object_key,o.descriptor FROM normalized_objects o "
+            "JOIN datasets d ON d.dataset_id=o.dataset_id "
+            "WHERE d.state='committed' AND d.compacted_into IS NULL AND d.synthetic=%s "
+            "AND NOT o.observations_indexed "
+            "AND (o.min_available_at IS NULL OR o.min_available_at<=%s) "
+            "AND EXISTS (SELECT 1 FROM normalized_object_entities e "
+            "WHERE e.dataset_id=o.dataset_id AND e.object_key=o.object_key "
+            "AND e.entity_key=ANY(%s)) ORDER BY d.created_at,d.dataset_id,o.object_key LIMIT %s",
+            (synthetic, as_of, sorted(entity_keys), limit),
+        )
+
+    def observation_page(
+        self,
+        synthetic: bool,
+        as_of: datetime,
+        entity_keys: set[str],
+        limit: int,
+        after: tuple[datetime, str] | None,
+        *,
+        connection=None,
+    ) -> list[dict]:
+        """Select IDs, conflicts and physical deliveries in one statement snapshot."""
+        if connection is None:
+            with self.transaction() as transaction:
+                self.guard_retention(transaction)
+                return self.observation_page(
+                    synthetic, as_of, entity_keys, limit, after, connection=transaction
+                )
+        after_clause = ""
+        params: list[Any] = [synthetic, as_of, sorted(entity_keys)]
+        if after:
+            after_clause = "WHERE (observed_at,observation_id)>(%s,%s) "
+            params.extend(after)
+        params.append(limit)
+        rows = list(
+            connection.execute(
+                "WITH eligible AS NOT MATERIALIZED ("
+                "SELECT o.*,d.created_at,n.descriptor FROM observation_deliveries o "
+                "JOIN datasets d ON d.dataset_id=o.dataset_id "
+                "JOIN normalized_objects n ON n.dataset_id=o.dataset_id "
+                "AND n.object_key=o.object_key "
+                "WHERE d.state='committed' AND d.compacted_into IS NULL AND d.synthetic=%s "
+                "AND o.available_at<=%s AND o.entity_key=ANY(%s)), "
+                "candidates AS (SELECT DISTINCT observed_at,observation_id FROM eligible "
+                + after_clause
+                + "ORDER BY observed_at,observation_id LIMIT %s), "
+                "conflicts AS (SELECT e.observation_id FROM eligible e "
+                "JOIN candidates c USING(observation_id) GROUP BY e.observation_id "
+                "HAVING count(DISTINCT e.payload_sha256)>1) "
+                "SELECT DISTINCT ON(e.observation_id) e.observation_id,e.observed_at,"
+                "e.dataset_id,e.object_key,e.payload_sha256,e.descriptor,"
+                "EXISTS(SELECT 1 FROM conflicts) AS conflicting FROM eligible e "
+                "JOIN candidates c USING(observation_id) "
+                "ORDER BY e.observation_id,e.created_at,e.dataset_id,e.object_key",
+                params,
+            ).fetchall()
+        )
+        if any(row["conflicting"] for row in rows):
+            raise ValueError("Conflicting payloads under one observation identifier")
+        return rows
 
     def stage_dataset(
         self,
@@ -419,6 +618,7 @@ class Catalog:
                                     Jsonb({"dataset_id": dataset_id, "source": obs.source}),
                                 ),
                             )
+                self.index_observations(connection, dataset_id, manifest, observations)
             if task and advance_task:
                 connection.execute(
                     "UPDATE collection_tasks SET "

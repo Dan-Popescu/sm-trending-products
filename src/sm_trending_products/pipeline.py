@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import socket
@@ -27,7 +28,7 @@ from .contracts import (
     utc,
 )
 from .evaluation_service import EvaluationService
-from .history import History
+from .history import History, HistoryIndexPending
 from .settings import Settings
 
 
@@ -451,14 +452,79 @@ class Pipeline:
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict]:
+        """Compatibility offset surface; every internal page remains bounded."""
         limit, offset = min(max(limit, 1), 1000), max(offset, 0)
-        keys = {
-            link["entity_key"]
-            for link in self.links(as_of, synthetic)
-            if link["product_id"] == product_id and link["status"] == "confirmed"
+        cursor = None
+        while offset:
+            skipped = self.evidence_page(
+                product_id, as_of, synthetic, limit=min(offset, 1000), cursor=cursor
+            )
+            if skipped["status"] == "indexing":
+                raise HistoryIndexPending(
+                    "Historical evidence index is being prepared; retry this page"
+                )
+            offset -= len(skipped["records"])
+            cursor = skipped["next_cursor"]
+            if not cursor:
+                return []
+        page = self.evidence_page(product_id, as_of, synthetic, limit=limit, cursor=cursor)
+        if page["status"] == "indexing":
+            raise HistoryIndexPending(
+                "Historical evidence index is being prepared; retry this page"
+            )
+        return page["records"]
+
+    def evidence_page(
+        self,
+        product_id: str,
+        as_of: datetime,
+        synthetic: bool = False,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> dict:
+        cutoff = utc(as_of)
+        scope = digest({"product_id": product_id, "cutoff": cutoff, "synthetic": synthetic})
+        after = None
+        if cursor:
+            try:
+                decoded = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
+                if (
+                    not isinstance(decoded, dict)
+                    or not isinstance(decoded.get("observed_at"), str)
+                    or not isinstance(decoded.get("observation_id"), str)
+                    or not decoded["observation_id"]
+                ):
+                    raise ValueError("Invalid evidence cursor fields")
+                if decoded["scope"] != scope:
+                    raise ValueError("Evidence cursor belongs to a different query")
+                after = (utc(decoded["observed_at"]), str(decoded["observation_id"]))
+            except (ValueError, KeyError, TypeError, UnicodeError) as error:
+                raise ValueError("Invalid evidence cursor") from error
+        keys = self.identity.entity_keys_for_product(product_id, cutoff, synthetic)
+        try:
+            observations, next_after = self.history.page(
+                cutoff, synthetic, keys, limit=limit, after=after
+            )
+        except HistoryIndexPending:
+            return {"records": [], "next_cursor": cursor, "status": "indexing"}
+
+        next_cursor = None
+        if next_after:
+            next_cursor = base64.urlsafe_b64encode(
+                canonical(
+                    {
+                        "scope": scope,
+                        "observed_at": next_after[0],
+                        "observation_id": next_after[1],
+                    }
+                ).encode()
+            ).decode()
+        return {
+            "records": [row.model_dump(mode="json") for row in observations],
+            "next_cursor": next_cursor,
+            "status": "ready",
         }
-        records, _ = self._observations(as_of, synthetic, entity_keys=keys)
-        return [obs.model_dump(mode="json") for obs in records[offset : offset + limit]]
 
     def schedule(
         self, budget: int = 100, synthetic: bool = False, policy: dict | None = None
@@ -531,13 +597,23 @@ class Pipeline:
         dataset_ids: list[str] | None = None,
         max_rows: int = 1000,
     ) -> dict:
-        from .exploration import explore
+        from .exploration import MAX_INPUT_FILES, explore
 
-        manifests = self.catalog.manifests(synthetic=synthetic)
-        if dataset_ids:
-            manifests = [item for item in manifests if item["dataset_id"] in set(dataset_ids)]
-            if {item["dataset_id"] for item in manifests} != set(dataset_ids):
-                raise ValueError("Selected datasets are absent, compacted, or unavailable")
+        manifests: list[dict] = []
+        objects: set[str] = set()
+        for item in self.catalog.iter_manifests(
+            synthetic=synthetic,
+            dataset_ids=set(dataset_ids) if dataset_ids else None,
+            page_size=min(100, MAX_INPUT_FILES + 1),
+        ):
+            objects.update(obj["key"] for obj in item["manifest"]["normalized"])
+            if len(objects) > MAX_INPUT_FILES or len(manifests) >= MAX_INPUT_FILES:
+                raise ValueError(
+                    "Too many input files or datasets; narrow the selected dataset range"
+                )
+            manifests.append(item)
+        if dataset_ids and {item["dataset_id"] for item in manifests} != set(dataset_ids):
+            raise ValueError("Selected datasets are absent, compacted, or unavailable")
         return explore(self.history, manifests, sql_query, max_rows=max_rows)
 
     def compact(self, synthetic: bool = False, max_datasets: int = 100) -> dict:
