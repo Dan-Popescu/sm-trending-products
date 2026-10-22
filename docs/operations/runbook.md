@@ -86,6 +86,14 @@ Investigate the reported category rather than dumping tokens, request headers, s
 
 The application scheduler decides which candidate tasks are due and how the budget is split. Dagster coordinates batches and downstream assessments. A Dagster run is not created for every individual video.
 
+Source retry windows take precedence over the desired refresh interval, including
+valid waits longer than a day. Workers persist the due time and release their
+lease rather than sleeping for that period. A nonfinite, negative or
+unrepresentable delay produces `invalid_retry_hint` and quarantines the task;
+inspect the source/adapter contract before enqueueing replacement work.
+`collector_timeout` terminates the child collector and preserves retryable work
+without publishing partial evidence.
+
 ## Backup and recovery
 
 See [backup and restore](backup-and-restore.md). Run an isolated restore exercise after configuration or schema changes and on a regular operational schedule selected by the operator. Backup creation alone does not demonstrate recoverability.

@@ -17,8 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .catalog import Catalog
 from .contracts import digest
 from .identity_rules import LINK_STATE_CTES
-
-SOURCES = {"tiktok_display", "tiktok_ads", "tiktok_commercial"}
+from .source_contracts import SOURCES, canonical_operation
 
 
 def _reject_secrets(value: Any) -> None:
@@ -199,6 +198,34 @@ class Scheduler:
             effective_budget = min(budget, max(0, config.max_pending_tasks - pending))
             if effective_budget < budget:
                 warnings.add(("all", "all", "pending_task_limit_reached"))
+            if effective_budget == 0:
+                if not config.discovery_queries:
+                    warnings.add(("all", "all", "discovery_not_configured"))
+                return {
+                    "scheduled": 0,
+                    "task_ids": [],
+                    "decisions": [],
+                    "budget": budget,
+                    "effective_budget": 0,
+                    "synthetic": synthetic,
+                    "policy_id": policy_id,
+                    "policy": configuration,
+                    "checked_at": checked_at.isoformat(),
+                    "scanned_candidates": 0,
+                    "deferred_count": 0,
+                    "deferred_candidates": [],
+                    "deferred_candidates_truncated": False,
+                    "exploration_slots": 0,
+                    "exploration_scheduled": 0,
+                    "refresh_scheduled": 0,
+                    "refresh_entities_scheduled": 0,
+                    "discovery_scheduled": 0,
+                    "warnings": [
+                        {"source": source, "account_id": account, "category": category}
+                        for source, account, category in sorted(warnings)
+                    ],
+                    "coverage_scope": "configured_queries_and_known_entities_only",
+                }
 
             def allowed(source: str, account_id: str, discovery: bool = False) -> bool:
                 if (source, account_id) not in budgets:
@@ -548,7 +575,9 @@ class Scheduler:
                     request["endpoint_override"] = origin["endpoint_override"]
             return "query", request
         origin = (entity.get("origin_manifest") or {}).get("task_request") or {}
-        if source not in {"tiktok_ads", "tiktok_commercial"} or origin.get("operation") != "query":
+        if source not in {"tiktok_ads", "tiktok_commercial"}:
+            return None
+        if canonical_operation(source, origin.get("operation")) != "query":
             return None
         if (
             origin.get("source") != source

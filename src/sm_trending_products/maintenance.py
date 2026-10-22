@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
+from .cache import cache_object_lock
 from .contracts import Observation, canonical, digest
 
 if TYPE_CHECKING:
@@ -428,19 +429,21 @@ class Maintenance:
         for item in pending:
             key = item["object_key"]
             try:
-                if versioned:
-                    self._delete_object_versions(key)
-                else:
-                    self.history.metrics["delete_requests"] = (
-                        self.history.metrics.get("delete_requests", 0) + 1
-                    )
-                    self.history.client.delete_object(Bucket=self.history.bucket, Key=key)
-                with (self.pipeline.settings.cache_dir / ".cache.lock").open("a") as lock:
-                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-                    cached = (
-                        self.pipeline.settings.cache_dir / hashlib.sha256(key.encode()).hexdigest()
-                    )
-                    cached.unlink(missing_ok=True)
+                with cache_object_lock(self.history, key):
+                    if versioned:
+                        self._delete_object_versions(key)
+                    else:
+                        self.history.metrics["delete_requests"] = (
+                            self.history.metrics.get("delete_requests", 0) + 1
+                        )
+                        self.history.client.delete_object(Bucket=self.history.bucket, Key=key)
+                    with (self.pipeline.settings.cache_dir / ".cache.lock").open("a") as lock:
+                        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                        cached = (
+                            self.pipeline.settings.cache_dir
+                            / hashlib.sha256(key.encode()).hexdigest()
+                        )
+                        cached.unlink(missing_ok=True)
             except (BotoCoreError, ClientError, OSError):
                 self.catalog.execute(
                     "UPDATE retention_objects SET attempts=attempts+1,"

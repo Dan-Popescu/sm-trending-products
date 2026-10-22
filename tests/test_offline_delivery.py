@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 
 import pytest
@@ -10,7 +11,7 @@ from streamlit.testing.v1 import AppTest
 from test_pipeline_integration import ACCOUNT, controlled_source
 
 from sm_trending_products import orchestration
-from sm_trending_products.contracts import now
+from sm_trending_products.contracts import now, utc
 from sm_trending_products.pipeline import Pipeline
 
 pytestmark = pytest.mark.integration
@@ -32,6 +33,8 @@ def test_dagster_collection_publishes_reviewable_evidence_and_a_frozen_decision(
             {},
         )
 
+    captured_at = now()
+    baseline_at, refresh_at = captured_at - timedelta(hours=2), captured_at - timedelta(hours=1)
     with controlled_source([response(100), response(500)]) as (endpoint, requests):
         pipeline.enqueue(
             "tiktok_display",
@@ -39,7 +42,7 @@ def test_dagster_collection_publishes_reviewable_evidence_and_a_frozen_decision(
             "list",
             {
                 "endpoint_override": endpoint,
-                "fixture_observed_at": (now() - timedelta(hours=2)).isoformat(),
+                "fixture_observed_at": baseline_at.isoformat(),
             },
             synthetic=True,
             idempotency_key="baseline",
@@ -53,7 +56,7 @@ def test_dagster_collection_publishes_reviewable_evidence_and_a_frozen_decision(
             "list",
             {
                 "endpoint_override": endpoint,
-                "fixture_observed_at": (now() - timedelta(hours=1)).isoformat(),
+                "fixture_observed_at": refresh_at.isoformat(),
             },
             synthetic=True,
             idempotency_key="dagster-refresh",
@@ -93,8 +96,50 @@ def test_dagster_collection_publishes_reviewable_evidence_and_a_frozen_decision(
     assert not app.exception
     assert app.dataframe[0].value.iloc[0]["Product"] == "Controlled lamp"
     assert app.selectbox(key="evidence_product").value == "offline-product"
+    published = next(
+        value
+        for element in app.json
+        if isinstance(value := json.loads(element.value), dict)
+        and value.get("product_id") == "offline-product"
+        and "features" in value
+    )
+    assert published["features"]["interval_hours"] == pytest.approx([1.0], abs=1e-12)
+    status = next(
+        value
+        for element in app.json
+        if isinstance(value := json.loads(element.value), dict)
+        and "queues" in value
+        and "budgets" in value
+    )
+    assert status["budgets"] and all(
+        isinstance(row["remaining_request_units"], (int, float))
+        and 0 <= row["remaining_request_units"] <= row["capacity"]
+        for row in status["budgets"]
+    )
+    assert all("oldest_due_at" in row for row in status["queues"])
     evidence_frame = next(frame.value for frame in app.dataframe if "observation_id" in frame.value)
     assert len(evidence_frame) == 2
+    observations = next(
+        value
+        for element in app.json
+        if isinstance(value := json.loads(element.value), list)
+        and value
+        and "observation_id" in value[0]
+    )
+    assert {row["entity_id"] for row in observations} == {"offline-video"}
+    assert {row["metrics"]["view_count"]["lower"] for row in observations} == {100, 500}
+    assert all(row["missing_fields"]["like_count"] == "not_returned" for row in observations)
+    assert all(
+        row["synthetic"] is True and row["source"] == "tiktok_display" for row in observations
+    )
+    assert all(row["observed_at"] and row["available_at"] for row in observations)
+    assert {utc(row["observed_at"]) for row in observations} == {baseline_at, refresh_at}
+    assert {row["raw_dataset_id"] for row in observations} == {
+        row["dataset_id"] for row in pipeline.datasets()
+    }
+    with Pipeline(pipeline.settings) as restarted:
+        assert len(restarted.evidence("offline-product", now(), synthetic=True)) == 2
+        assert restarted.latest_assessments(synthetic=True)[0]["product_id"] == "offline-product"
     assert pipeline.verify()["ok"] is True
     assert pipeline.latest_assessments(synthetic=False) == []
     assert pipeline.capabilities() == []
