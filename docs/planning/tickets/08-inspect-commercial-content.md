@@ -2,7 +2,8 @@
 
 GitHub issue: [#16](https://github.com/Dan-Popescu/sm-trending-products/issues/16). Implementation: [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
 
-**Status:** Software implemented; acceptance evidence is mapped in the [coverage record](../../implementation/coverage.md).
+**Status:** Controlled engineering acceptance verified by the agent; see the
+[criterion matrix](../../verification/commercial-acceptance.md).
 
 ## What to build
 
@@ -10,12 +11,12 @@ Exercise a commercial-content adapter behind an explicit capability gate and let
 
 ## Acceptance criteria
 
-- [ ] Controlled commercial-content responses traverse durable observation publication and appear with explicit source and distribution context.
-- [ ] Reach ranges, source periods, creative identifiers, advertiser fields, and first-observed time retain documented semantics where present.
-- [ ] The view never presents a reach bound as an exact video-view count or first observation as a guaranteed ad-launch time.
-- [ ] Unverified, denied, or unsuitable access remains disabled for live collection and is visible in the capability report.
-- [ ] Contract tests verify pagination, missing fields, provenance, and fixture isolation; real endpoint/version acceptance is tracked separately.
-- [ ] No paid access is purchased and no source permission is inferred from contract-test success.
+- [x] Controlled commercial-content responses traverse durable observation publication and appear with explicit source and distribution context.
+- [x] Reach ranges, source periods, creative identifiers, advertiser fields, and first-observed time retain documented semantics where present.
+- [x] The view never presents a reach bound as an exact video-view count or first observation as a guaranteed ad-launch time.
+- [x] Unverified, denied, or unsuitable access remains disabled for live collection and is visible in the capability report.
+- [x] Contract tests verify pagination, missing fields, provenance, and fixture isolation; real endpoint/version acceptance is tracked separately.
+- [x] No paid access is purchased and no source permission is inferred from contract-test success.
 
 ## Blocked by
 
