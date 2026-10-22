@@ -1,6 +1,6 @@
 # Foundational engineering acceptance
 
-The agent reviewed T01 and T03 against their original criteria on 2026-10-22,
+The agent reviewed T01, T03, T04 and T05 against their original criteria on 2026-10-22,
 under the user's standing authority to verify and merge without human PR review.
 These tickets specify controlled, no-key engineering scenarios. Real TikTok
 acceptance remains T15; production-provider and sustained-load acceptance remain
@@ -43,6 +43,21 @@ adapter validates that a finite nonnegative delay fits a durable timestamp;
 invalid hints produce the existing quarantine state with `invalid_retry_hint`.
 This adds no alternate scheduler, sleeping worker or persistence mechanism.
 
+## T05: reviewed product identity
+
+| Criterion | Executed evidence |
+| --- | --- |
+| Two videos and an offer, with references/confidence | [Identity delivery](../../tests/test_identity_delivery.py) imports actual observations, links all three to one canonical product and checks confidence, explicit manual method and observation references. |
+| Similar products remain distinct; rejected alternatives and families | The same scenario rejects the competing hypothesis without removing the original owner, records a shared family and retains both canonical product IDs after transfers. |
+| Deterministic suggestions never confirm themselves | It queries the actual candidate service twice and verifies identical proposals, explicit review flags and an unchanged link set; native identity tests cover bounded suggestions and workspace isolation. |
+| Reversible merge/split and availability history | Atomic group transfers and a later split produce the expected ownership at each cutoff; earlier evidence queries remain identical after transfer and after reopening the application. Native identity tests also verify concurrent transfers and rollback when one entity is unavailable. |
+| Creative duplication does not invent independence | The delivery preserves the reviewed creative fingerprint on both video observations. Analytics tests separately prove repeated creatives do not inflate independent spread or imply common ownership. |
+| Later links cannot enter earlier assessments | The actual assessment/evidence facade before review contains no linked inputs. Historical queries and existing identity/analytics tests exclude later decisions. The final ownership is also checked through the actual Streamlit review facade. |
+
+No alternate identity resolver or mutable grouping table is added for this
+acceptance. The application and evaluation paths retain the shared historical
+ownership rules and append-only review decisions.
+
 ## Execution and remaining frontier
 
 PR #24 passed 162 native tests and full-service backup/restore. The dedicated
@@ -57,6 +72,6 @@ The established-credential alias deadlock is addressed in merged PR #27 with an
 additive migration and an upgrade-preservation check. Its full CI passed 170
 tests and deployment/recovery. Long retry-window and process-timeout checks add
 the remaining T04 proofs; their exact-head CI is retained on the subsequent PR.
-Next priorities are the replay/identity contracts and their dependent ranking
-and evaluation criteria, ahead of additional operating-envelope variants.
+Next priorities are the ranking and evaluation contracts unlocked by reviewed
+identity, plus replay consistency, ahead of additional operating-envelope variants.
 Ticket acceptance does not close the umbrella PRD or specification parents.
