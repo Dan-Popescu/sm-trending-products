@@ -1,12 +1,84 @@
 use crate::error::{CollectorError, Result};
 use crate::request::{CollectionRequest, FetchedPage, Operation, Source};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Deserializer};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
+
+#[derive(Clone, Copy, Default)]
+pub enum TransformVersion {
+    #[default]
+    V1,
+    V2,
+}
+
+impl<'de> Deserialize<'de> for TransformVersion {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        match String::deserialize(deserializer)?.as_str() {
+            "1" => Ok(Self::V1),
+            "2" => Ok(Self::V2),
+            other => Err(serde::de::Error::unknown_variant(other, &["1", "2"])),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RevisionContext<'a> {
+    available_at: DateTime<Utc>,
+    source_dataset_id: &'a str,
+}
 
 pub fn normalize(request: &CollectionRequest, page: FetchedPage) -> Result<Value> {
-    match normalize_page(request, &page) {
+    normalize_with_revision(request, page, None)
+}
+
+pub fn replay(
+    request: &CollectionRequest,
+    page: FetchedPage,
+    version: TransformVersion,
+    available_at: Option<DateTime<Utc>>,
+    source_dataset_id: Option<&str>,
+) -> Result<Value> {
+    let revision = match version {
+        TransformVersion::V1 => None,
+        TransformVersion::V2 => {
+            let available = available_at.ok_or_else(|| {
+                CollectorError::new("configuration", "normalizer_availability_required")
+            })?;
+            if available < page.observed_at {
+                return Err(CollectorError::new(
+                    "configuration",
+                    "normalizer_availability_before_observation",
+                ));
+            }
+            let parent = source_dataset_id.ok_or_else(|| {
+                CollectorError::new("configuration", "normalizer_source_dataset_required")
+            })?;
+            if parent.trim().is_empty()
+                || parent.len() > 256
+                || parent.chars().any(char::is_control)
+            {
+                return Err(CollectorError::new(
+                    "configuration",
+                    "invalid_source_dataset_id",
+                ));
+            }
+            Some(RevisionContext {
+                available_at: available,
+                source_dataset_id: parent,
+            })
+        }
+    };
+    normalize_with_revision(request, page, revision)
+}
+
+fn normalize_with_revision(
+    request: &CollectionRequest,
+    page: FetchedPage,
+    revision: Option<RevisionContext<'_>>,
+) -> Result<Value> {
+    match normalize_page(request, &page, revision) {
         Err(error) if error.category == "schema" => Err(error.with_artifact(
             crate::request::schema_artifact(request, page.raw, page.observed_at),
         )),
@@ -14,7 +86,11 @@ pub fn normalize(request: &CollectionRequest, page: FetchedPage) -> Result<Value
     }
 }
 
-fn normalize_page(request: &CollectionRequest, page: &FetchedPage) -> Result<Value> {
+fn normalize_page(
+    request: &CollectionRequest,
+    page: &FetchedPage,
+    revision: Option<RevisionContext<'_>>,
+) -> Result<Value> {
     let data = page
         .raw
         .get("data")
@@ -36,16 +112,34 @@ fn normalize_page(request: &CollectionRequest, page: &FetchedPage) -> Result<Val
     let mut records = Vec::with_capacity(source_records.len());
     let mut quarantine = Vec::new();
     let mut identifiers = HashSet::new();
+    let mut unmapped_bytes = 0;
     for row in source_records {
-        let record = match request.source {
-            Source::Display => video(request, row, page.observed_at),
-            Source::Ads => ad(request, row, page.observed_at),
-            Source::Commercial => commercial(request, row, page.observed_at),
-        };
+        let record = normalize_row(request, row, page.observed_at, revision);
         match record {
             Ok(record) => {
+                let fields = &record["attributes"]["unmapped_source_fields"];
+                let report_bytes =
+                    if revision.is_some() && fields.as_array().is_some_and(|v| !v.is_empty()) {
+                        fields.to_string().len()
+                    } else {
+                        0
+                    };
+                // Keep two copies of schema-path metadata (record + field report)
+                // bounded independently of nesting amplification in the raw page.
+                if unmapped_bytes + report_bytes > 2 * 1024 * 1024 {
+                    quarantine
+                        .push(json!({"record": row, "reason": "unmapped_source_fields_limit"}));
+                    continue;
+                }
                 let id = record["observation_id"].as_str().unwrap_or("").to_string();
-                if identifiers.insert(id) {
+                if identifiers.insert(id.clone()) {
+                    if report_bytes > 0 {
+                        quarantine.push(json!({
+                            "reason": "unmapped_source_fields", "observation_id": id,
+                            "fields": fields,
+                        }));
+                        unmapped_bytes += report_bytes;
+                    }
                     records.push(record);
                 } else {
                     quarantine.push(json!({"record": row, "reason": "duplicate_entity_in_page"}));
@@ -64,8 +158,203 @@ fn normalize_page(request: &CollectionRequest, page: &FetchedPage) -> Result<Val
         "next_payload": next_payload,
         "quarantine": quarantine,
         "request_count": page.request_count,
-        "normalizer_version": "1"
+        "normalizer_version": if revision.is_some() { "2" } else { "1" }
     }))
+}
+
+fn normalize_row(
+    request: &CollectionRequest,
+    row: &Value,
+    observed_at: DateTime<Utc>,
+    revision: Option<RevisionContext<'_>>,
+) -> Result<Value> {
+    if revision.is_some() {
+        validate_nested_shapes(request.source, row)?;
+    }
+    let mut record = match request.source {
+        Source::Display => video(request, row, observed_at)?,
+        Source::Ads => ad(request, row, observed_at)?,
+        Source::Commercial => commercial(request, row, observed_at)?,
+    };
+    if let Some(context) = revision {
+        let paths = unmapped_source_fields(request.source, row)?;
+        let previous = record["observation_id"].as_str().unwrap_or("").to_owned();
+        let versioned = format!("normalizer:2:{}:{previous}", context.source_dataset_id);
+        record["observation_id"] = json!(format!("{:x}", Sha256::digest(versioned.as_bytes())));
+        record["available_at"] = json!(context.available_at);
+        record["attributes"]["normalization"] = json!({
+            "version": "2", "replaces_observation_id": previous,
+            "source_dataset_id": context.source_dataset_id,
+        });
+        record["attributes"]["unmapped_source_fields"] = json!(paths);
+    }
+    Ok(record)
+}
+
+fn validate_nested_shapes(source: Source, row: &Value) -> Result<()> {
+    let object = |value: Option<&Value>, code| match value {
+        None | Some(Value::Null) | Some(Value::Object(_)) => Ok(()),
+        _ => Err(CollectorError::new("schema", code)),
+    };
+    match source {
+        Source::Ads => {
+            object(row.get("ad"), "invalid_ad_object")?;
+            object(row.get("advertiser"), "invalid_advertiser_object")?;
+            object(
+                row.get("ad").and_then(|ad| ad.get("reach")),
+                "invalid_reach_object",
+            )?;
+        }
+        Source::Commercial => {
+            object(row.get("creator"), "invalid_creator_object")?;
+            if row
+                .get("creator")
+                .and_then(|creator| creator.get("username"))
+                .is_some_and(|name| !name.is_null() && !name.is_string())
+            {
+                return Err(CollectorError::new("schema", "invalid_creator_username"));
+            }
+        }
+        Source::Display => {}
+    }
+    Ok(())
+}
+
+struct UnmappedFields {
+    paths: BTreeSet<String>,
+    bytes: usize,
+}
+
+impl UnmappedFields {
+    fn add(&mut self, path: String) -> Result<()> {
+        if !self.paths.contains(&path) {
+            if self.paths.len() >= 1024 || self.bytes + path.len() > 64 * 1024 {
+                return Err(CollectorError::new(
+                    "schema",
+                    "unmapped_source_fields_limit",
+                ));
+            }
+            self.bytes += path.len();
+            self.paths.insert(path);
+        }
+        Ok(())
+    }
+
+    fn unknown(&mut self, value: &Value, path: &str) -> Result<()> {
+        match value {
+            Value::Object(fields) if !fields.is_empty() => {
+                for (name, child) in fields {
+                    self.unknown(child, &format!("{path}.{name}"))?;
+                }
+            }
+            Value::Array(values) if !values.is_empty() => {
+                for child in values {
+                    self.unknown(child, &format!("{path}[]"))?;
+                }
+            }
+            _ => self.add(path.to_owned())?,
+        }
+        Ok(())
+    }
+
+    fn inspect(&mut self, value: &Value, prefix: &str, known: &[&str]) -> Result<()> {
+        if let Some(fields) = value.as_object() {
+            for (name, child) in fields {
+                if !known.contains(&name.as_str()) {
+                    let path = if prefix.is_empty() {
+                        name.to_owned()
+                    } else {
+                        format!("{prefix}.{name}")
+                    };
+                    self.unknown(child, &path)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn unmapped_source_fields(source: Source, row: &Value) -> Result<BTreeSet<String>> {
+    let mut fields = UnmappedFields {
+        paths: BTreeSet::new(),
+        bytes: 0,
+    };
+    match source {
+        Source::Display => fields.inspect(
+            row,
+            "",
+            &[
+                "id",
+                "create_time",
+                "view_count",
+                "like_count",
+                "comment_count",
+                "share_count",
+                "title",
+                "video_description",
+                "duration",
+                "share_url",
+            ],
+        )?,
+        Source::Ads => {
+            fields.inspect(row, "", &["ad", "advertiser"])?;
+            if let Some(ad) = row.get("ad") {
+                fields.inspect(
+                    ad,
+                    "ad",
+                    &[
+                        "id",
+                        "first_shown_date",
+                        "last_shown_date",
+                        "status",
+                        "videos",
+                        "image_urls",
+                        "reach",
+                    ],
+                )?;
+                if let Some(reach) = ad.get("reach") {
+                    let consumed = if reach.get("unique_users_seen").is_some() {
+                        "unique_users_seen"
+                    } else {
+                        "unique_user_seen"
+                    };
+                    fields.inspect(reach, "ad.reach", &[consumed])?;
+                }
+            }
+            if let Some(advertiser) = row.get("advertiser") {
+                let consumed_id = if advertiser.get("business_id").is_some() {
+                    "business_id"
+                } else {
+                    "buisness_id"
+                };
+                fields.inspect(
+                    advertiser,
+                    "advertiser",
+                    &[consumed_id, "business_name", "paid_by", "paid_for_by"],
+                )?;
+            }
+        }
+        Source::Commercial => {
+            fields.inspect(
+                row,
+                "",
+                &[
+                    "id",
+                    "create_timestamp",
+                    "create_date",
+                    "label",
+                    "brand_names",
+                    "videos",
+                    "video",
+                    "creator",
+                ],
+            )?;
+            if let Some(creator) = row.get("creator") {
+                fields.inspect(creator, "creator", &["username"])?;
+            }
+        }
+    }
+    Ok(fields.paths)
 }
 
 fn continuation(request: &CollectionRequest, data: &Map<String, Value>) -> Result<Value> {

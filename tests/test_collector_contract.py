@@ -372,3 +372,390 @@ def test_invalid_json_schema_artifact_is_bounded_and_redacted_before_truncation(
     assert len(artifact["raw"]["invalid_json_text"]) <= 65_536
     assert "fixture-secret" not in result.stdout + result.stderr
     assert "[REDACTED]" in artifact["raw"]["invalid_json_text"]
+
+
+_REPLAY_DEFAULT = object()
+_OBSERVED = "2026-10-01T12:00:00Z"
+_AVAILABLE = "2026-10-22T12:00:00Z"
+
+
+def replay_raw(
+    raw,
+    *,
+    source="tiktok_display",
+    version=_REPLAY_DEFAULT,
+    available_at=_REPLAY_DEFAULT,
+    source_dataset_id="fixture-source-dataset",
+    endpoint=None,
+    token=None,
+):
+    request = {
+        "source": source,
+        "operation": "query",
+        "account_id": "authorized-account",
+        "synthetic": True,
+        "payload": {"filters": {"video_ids": ["stable"]}}
+        if source == "tiktok_display"
+        else {"filters": {}},
+    }
+    if endpoint is not None:
+        request["endpoint_override"] = endpoint
+    replay = {"request": request, "raw": raw, "observed_at": _OBSERVED}
+    if version is not _REPLAY_DEFAULT:
+        replay["transform_version"] = version
+    if available_at is not _REPLAY_DEFAULT:
+        replay["available_at"] = available_at
+    if version == "2" and source_dataset_id is not _REPLAY_DEFAULT:
+        replay["source_dataset_id"] = source_dataset_id
+    environment = dict(os.environ)
+    environment.pop("TIKTOK_DISPLAY_ACCESS_TOKEN", None)
+    environment.pop("TIKTOK_CCL_ACCESS_TOKEN", None)
+    # Offline normalization must not connect even with an unusable configured DB.
+    environment["DATABASE_URL"] = "postgresql://offline:offline@127.0.0.1:1/unused"
+    if token:
+        environment["TIKTOK_DISPLAY_ACCESS_TOKEN"] = token
+        environment["TIKTOK_CCL_ACCESS_TOKEN"] = token
+    result = subprocess.run(
+        [str(BINARY), "normalize"],
+        input=json.dumps(replay),
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=15,
+    )
+    return result, json.loads(result.stdout)
+
+
+@pytest.mark.parametrize(
+    ("source", "key", "rows"),
+    [
+        (
+            "tiktok_display",
+            "videos",
+            [
+                {"id": "stable", "view_count": 7, "ignored": {"country": "FR"}},
+                {"id": "invalid", "view_count": -1},
+                {"id": "stable", "view_count": 8},
+            ],
+        ),
+        (
+            "tiktok_ads",
+            "ads",
+            [
+                {"ad": {"id": "bounded", "reach": {"unique_users_seen": "10000-19999"}}},
+                {"ad": {"id": "rounded", "reach": {"unique_users_seen": "11K"}}},
+                {"ad": "invalid"},
+            ],
+        ),
+        (
+            "tiktok_commercial",
+            "commercial_contents",
+            [{"id": "stable", "creator": "historically-ignored-shape", "unknown": 8}],
+        ),
+    ],
+)
+def test_explicit_v1_replay_preserves_legacy_ids_counters_and_quarantine(source, key, rows):
+    raw = {"data": {key: rows, "has_more": False}}
+    default_result, default = replay_raw(raw, source=source)
+    explicit_result, explicit = replay_raw(raw, source=source, version="1", available_at=_AVAILABLE)
+    assert default_result.returncode == explicit_result.returncode == 0
+    assert default == explicit
+    assert default["normalizer_version"] == "1"
+    for record in default["records"]:
+        assert record["available_at"] == record["observed_at"]
+        assert "normalization" not in record["attributes"]
+        assert "unmapped_source_fields" not in record["attributes"]
+
+
+def test_v2_has_salted_stable_ids_explicit_availability_and_field_level_quarantine():
+    import hashlib
+
+    row = {
+        "id": "stable",
+        "view_count": 123,
+        "creator": {"country": "FR", "geo": {"region": "EU"}},
+        "new_signal": {"curve": [{"purchases": "private-unknown-value"}, {"purchases": 9}]},
+        "new_empty": {},
+    }
+    raw = {"data": {"videos": [row]}}
+    _, legacy = replay_raw(raw)
+    first_result, first = replay_raw(raw, version="2", available_at=_AVAILABLE)
+    repeat_result, repeat = replay_raw(raw, version="2", available_at=_AVAILABLE)
+    assert first_result.returncode == repeat_result.returncode == 0
+    assert first_result.stdout == repeat_result.stdout
+    assert first == repeat
+    record, previous = first["records"][0], legacy["records"][0]
+    assert (
+        record["observation_id"]
+        == hashlib.sha256(
+            f"normalizer:2:fixture-source-dataset:{previous['observation_id']}".encode()
+        ).hexdigest()
+    )
+    assert record["observation_id"] != previous["observation_id"]
+    assert record["observed_at"] == previous["observed_at"]
+    assert record["entity_id"] == previous["entity_id"]
+    assert record["available_at"] == "2026-10-22T12:00:00Z"
+    assert record["metrics"] == previous["metrics"]
+    assert record["market"] is None
+    assert record["attributes"]["creator_id"] == "authorized-account"
+    assert record["attributes"]["normalization"] == {
+        "version": "2",
+        "replaces_observation_id": previous["observation_id"],
+        "source_dataset_id": "fixture-source-dataset",
+    }
+    fields = ["creator.country", "creator.geo.region", "new_empty", "new_signal.curve[].purchases"]
+    assert record["attributes"]["unmapped_source_fields"] == fields
+    assert first["quarantine"] == [
+        {
+            "reason": "unmapped_source_fields",
+            "observation_id": record["observation_id"],
+            "fields": fields,
+        }
+    ]
+    assert "private-unknown-value" not in json.dumps(record)
+    assert first["raw"] == raw
+    assert first["normalizer_version"] == "2"
+    assert first["request_count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("source", "key", "row", "expected_paths"),
+    [
+        (
+            "tiktok_ads",
+            "ads",
+            {
+                "ad": {
+                    "id": "ad",
+                    "reach": {"unique_users_seen": "10000-19999", "country": "FR"},
+                    "new_format": "opaque",
+                },
+                "advertiser": {
+                    "business_id": "business",
+                    "business_name": "Known",
+                    "country": "FR",
+                },
+                "unexpected": {"score": 5},
+            },
+            ["ad.new_format", "ad.reach.country", "advertiser.country", "unexpected.score"],
+        ),
+        (
+            "tiktok_commercial",
+            "commercial_contents",
+            {
+                "id": "commercial",
+                "creator": {"username": "creator", "country": "FR", "display_name": "Opaque"},
+            },
+            ["creator.country", "creator.display_name"],
+        ),
+    ],
+)
+def test_v2_reports_nested_source_paths_without_inventing_market_or_copying_values(
+    source, key, row, expected_paths
+):
+    raw = {"data": {key: [row], "has_more": False}}
+    result, output = replay_raw(raw, source=source, version="2", available_at=_AVAILABLE)
+    assert result.returncode == 0, output
+    record = output["records"][0]
+    assert record["attributes"]["unmapped_source_fields"] == expected_paths
+    assert record["market"] is None
+    assert "FR" not in json.dumps(record)
+    assert output["quarantine"][0]["fields"] == expected_paths
+    assert "record" not in output["quarantine"][0]
+    _, legacy = replay_raw(raw, source=source)
+    assert record["metrics"] == legacy["records"][0]["metrics"]
+
+
+@pytest.mark.parametrize(
+    ("source", "key", "bad", "good", "reason"),
+    [
+        ("tiktok_ads", "ads", {"ad": "bad"}, {"ad": {"id": "good"}}, "invalid_ad_object"),
+        (
+            "tiktok_ads",
+            "ads",
+            {"ad": {"id": "bad"}, "advertiser": []},
+            {"ad": {"id": "good"}},
+            "invalid_advertiser_object",
+        ),
+        (
+            "tiktok_ads",
+            "ads",
+            {"ad": {"id": "bad", "reach": "11K"}},
+            {"ad": {"id": "good"}},
+            "invalid_reach_object",
+        ),
+        (
+            "tiktok_commercial",
+            "commercial_contents",
+            {"id": "bad", "creator": []},
+            {"id": "good", "creator": None},
+            "invalid_creator_object",
+        ),
+        (
+            "tiktok_commercial",
+            "commercial_contents",
+            {"id": "bad", "creator": {"username": 42}},
+            {"id": "good", "creator": {"username": "valid"}},
+            "invalid_creator_username",
+        ),
+    ],
+)
+def test_v2_quarantines_incompatible_known_nested_shapes_per_row(source, key, bad, good, reason):
+    result, output = replay_raw(
+        {"data": {key: [bad, good], "has_more": False}},
+        source=source,
+        version="2",
+        available_at=_AVAILABLE,
+    )
+    assert result.returncode == 0, output
+    assert len(output["records"]) == 1
+    assert output["records"][0]["entity_id"] == "good"
+    assert output["quarantine"] == [{"record": bad, "reason": reason}]
+    assert output["normalizer_version"] == "2"
+
+
+@pytest.mark.parametrize("version", ["3", "v2", 2, None, {"2": None}])
+def test_replay_rejects_unknown_or_non_string_transformation_versions(version):
+    result, output = replay_raw(
+        {"data": {"videos": [{"id": "stable"}]}}, version=version, available_at=_AVAILABLE
+    )
+    assert result.returncode != 0
+    assert output["error"]["category"] == "configuration"
+
+
+@pytest.mark.parametrize("available", [_REPLAY_DEFAULT, None, "invalid", "2026-10-01T11:59:59Z"])
+def test_v2_requires_valid_availability_at_or_after_the_observation(available):
+    result, output = replay_raw(
+        {"data": {"videos": [{"id": "stable"}]}}, version="2", available_at=available
+    )
+    assert result.returncode != 0
+    assert output["error"]["category"] == "configuration"
+
+
+def test_v2_fully_mapped_rounded_reach_has_no_field_quarantine():
+    raw = {
+        "data": {
+            "ads": [{"ad": {"id": "rounded", "reach": {"unique_users_seen": "11K"}}}],
+            "has_more": False,
+        }
+    }
+    result, output = replay_raw(raw, source="tiktok_ads", version="2", available_at=_OBSERVED)
+    assert result.returncode == 0, output
+    assert output["quarantine"] == []
+    record = output["records"][0]
+    assert record["attributes"]["unmapped_source_fields"] == []
+    assert record["attributes"]["reach_raw"] == "11K"
+    assert record["missing_fields"]["reach"] == "rounding_bounds_not_documented"
+    assert "reach" not in record["metrics"]
+
+
+def test_v2_normalization_is_offline_and_redacts_unmapped_and_quarantined_values():
+    raw = {
+        "data": {
+            "commercial_contents": [
+                {
+                    "id": "good",
+                    "new_secret_value": "contract-secret",
+                    "access_token": "contract-secret",
+                },
+                {"id": "bad", "creator": "contract-secret"},
+            ],
+            "has_more": False,
+        }
+    }
+    with source_server([(500, {}, {})]) as (endpoint, requests):
+        result, output = replay_raw(
+            raw,
+            source="tiktok_commercial",
+            version="2",
+            available_at=_AVAILABLE,
+            endpoint=endpoint,
+            token="contract-secret",
+        )
+    assert result.returncode == 0, output
+    assert requests == []
+    assert "contract-secret" not in result.stdout + result.stderr
+    assert output["raw"]["data"]["commercial_contents"][0]["new_secret_value"] == "[REDACTED]"
+    assert output["quarantine"][0]["reason"] == "unmapped_source_fields"
+    assert output["quarantine"][1]["record"]["creator"] == "[REDACTED]"
+
+
+def test_v2_schema_path_metadata_is_bounded_and_overflow_retains_raw_quarantine():
+    bad = {"id": "bad", **{f"new_field_{index}": index for index in range(1025)}}
+    result, output = replay_raw(
+        {"data": {"videos": [bad, {"id": "good"}]}}, version="2", available_at=_AVAILABLE
+    )
+    assert result.returncode == 0, output
+    assert [record["entity_id"] for record in output["records"]] == ["good"]
+    assert output["quarantine"] == [{"record": bad, "reason": "unmapped_source_fields_limit"}]
+
+
+def test_v2_bounds_total_schema_metadata_without_dropping_accepted_or_quarantined_rows():
+    # Shared deep prefixes make path reporting larger than the original JSON;
+    # the normalizer must bound the page total as well as each individual row.
+    prefix = "nested_" + "x" * 1024
+    rows = [
+        {
+            "id": f"bounded-{index}",
+            "view_count": index,
+            prefix: {f"field_{field}": field for field in range(8)},
+        }
+        for index in range(300)
+    ]
+    result, output = replay_raw({"data": {"videos": rows}}, version="2", available_at=_AVAILABLE)
+    assert result.returncode == 0, output
+    overflow = [
+        item for item in output["quarantine"] if item["reason"] == "unmapped_source_fields_limit"
+    ]
+    reports = [item for item in output["quarantine"] if item["reason"] == "unmapped_source_fields"]
+    assert overflow and output["records"]
+    assert len(output["records"]) + len(overflow) == len(rows)
+    assert len(reports) == len(output["records"])
+    assert (
+        sum(len(json.dumps(item["fields"], separators=(",", ":")).encode()) for item in reports)
+        <= 2 * 1024 * 1024
+    )
+    assert output["raw"]["data"]["videos"] == rows
+
+
+@pytest.mark.parametrize(
+    "parent",
+    [_REPLAY_DEFAULT, None, "", "   ", "x" * 257, "bad\nparent", 17, {"id": "parent"}],
+)
+def test_v2_requires_bounded_nonempty_canonical_source_delivery_context(parent):
+    result, output = replay_raw(
+        {"data": {"videos": [{"id": "stable"}]}},
+        version="2",
+        available_at=_AVAILABLE,
+        source_dataset_id=parent,
+    )
+    assert result.returncode != 0
+    assert output["error"]["category"] == "configuration"
+
+
+def test_v2_namespaces_independent_deliveries_while_fixed_parent_replays_remain_stable():
+    raw = {"data": {"videos": [{"id": "stable", "view_count": 123}]}}
+    _, first = replay_raw(
+        raw, version="2", available_at=_AVAILABLE, source_dataset_id="original-delivery-one"
+    )
+    _, second = replay_raw(
+        raw,
+        version="2",
+        available_at="2026-10-23T12:00:00Z",
+        source_dataset_id="original-delivery-two",
+    )
+    _, repeated = replay_raw(
+        raw, version="2", available_at=_AVAILABLE, source_dataset_id="original-delivery-one"
+    )
+    first_row, second_row = first["records"][0], second["records"][0]
+    assert first_row["observation_id"] != second_row["observation_id"]
+    assert first == repeated
+    assert first_row["metrics"] == second_row["metrics"]
+    assert first_row["observed_at"] == second_row["observed_at"]
+    assert first_row["entity_id"] == second_row["entity_id"]
+    assert (
+        first_row["attributes"]["normalization"]["replaces_observation_id"]
+        == (second_row["attributes"]["normalization"]["replaces_observation_id"])
+    )
+    assert first_row["attributes"]["normalization"]["source_dataset_id"] == "original-delivery-one"
+    assert second_row["attributes"]["normalization"]["source_dataset_id"] == "original-delivery-two"

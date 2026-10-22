@@ -72,6 +72,66 @@ def test_frozen_decision_excludes_late_observations_and_future_identity() -> Non
     assert snapshot["baselines"]["popularity"] == ["p1"]
 
 
+def test_history_adequacy_counts_timestamps_without_discarding_revision_audit_refs() -> None:
+    product, link = catalog()
+    cutoff = utc("2026-01-03T00:00:00Z")
+    config = EvaluationConfig(minimum_history_observations=3)
+    originals = [
+        observation("v1", "2026-01-01T00:00:00Z", 100),
+        observation("v1", "2026-01-02T00:00:00Z", 200),
+    ]
+    revisions = [
+        row.model_copy(
+            update={
+                "observation_id": row.observation_id + "-normalizer-v2",
+                "available_at": utc("2026-01-02T18:00:00Z"),
+                "attributes": {**row.attributes, "normalizer_version": "2"},
+            }
+        )
+        for row in originals
+    ]
+    baseline = freeze_decision(originals, [product], [link], cutoff, config, synthetic=True)
+    revised = freeze_decision(
+        [*originals, *revisions], [product], [link], cutoff, config, synthetic=True
+    )
+    assert baseline["status"] == revised["status"] == "insufficient_history"
+    assert revised == baseline
+    late = observation("v1", "2026-01-02T12:00:00Z", 300, available_at=utc("2026-01-04T00:00:00Z"))
+    assert (
+        freeze_decision(
+            [*originals, *revisions, late], [product], [link], cutoff, config, synthetic=True
+        )
+        == baseline
+    )
+
+    genuine = late.model_copy(
+        update={
+            "observation_id": "third-known-observation",
+            "available_at": utc("2026-01-02T20:00:00Z"),
+        }
+    )
+    frozen = freeze_decision(
+        [*originals, *revisions, late, genuine],
+        [product],
+        [link],
+        cutoff,
+        config,
+        synthetic=True,
+    )
+    assert frozen["status"] == "frozen"
+    assert frozen["selected"] == [product.product_id]
+    assert set(frozen["evidence_refs"]) == {
+        row.observation_id for row in [*originals, *revisions, genuine]
+    }
+    assert frozen["coverage"]["observations"] == 5
+    assert set(frozen["universe"][0]["attention"]["evidence_refs"]) == {
+        row.observation_id for row in [*revisions, genuine]
+    }
+    assert frozen["universe"][0]["features"]["view_count"] == 300
+    assert frozen["config"]["minimum_history_observations"] == 3
+    assert frozen["policy"]["min_observations"] == 2
+
+
 def test_forward_decision_waits_for_horizon_and_rejects_edits() -> None:
     product, link = catalog()
     evidence = [

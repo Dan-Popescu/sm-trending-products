@@ -32,6 +32,10 @@ struct ReplayRequest {
     request: CollectionRequest,
     raw: Value,
     observed_at: DateTime<Utc>,
+    #[serde(default)]
+    transform_version: normalize::TransformVersion,
+    available_at: Option<DateTime<Utc>>,
+    source_dataset_id: Option<String>,
 }
 
 async fn run(cli: Cli) -> Result<Value> {
@@ -51,13 +55,16 @@ async fn run(cli: Cli) -> Result<Value> {
             replay.request.validate()?;
             let token = std::env::var(replay.request.source.token_name()).unwrap_or_default();
             request::redact(&mut replay.raw, &token);
-            normalize::normalize(
+            normalize::replay(
                 &replay.request,
                 FetchedPage {
                     raw: replay.raw,
                     observed_at: replay.observed_at,
                     request_count: 0,
                 },
+                replay.transform_version,
+                replay.available_at,
+                replay.source_dataset_id.as_deref(),
             )
         }
         None => {
