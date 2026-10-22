@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import fcntl
 import gzip
 import hashlib
 import io
 import json
-import os
-import tempfile
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
@@ -22,7 +19,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from psycopg.types.json import Jsonb
 
-from .cache import pin_cached
+from .cache import cached_path, evict_cache, file_digest, pin_cached
 from .catalog import Catalog
 from .contracts import Observation, canonical, digest, utc
 from .settings import Settings
@@ -142,68 +139,14 @@ class History:
         return {"key": key, "sha256": checksum, "bytes": len(body)}
 
     def cached(self, obj: dict) -> Path:
-        key, expected = obj["key"], obj["sha256"]
-        local = self.settings.cache_dir / hashlib.sha256(key.encode()).hexdigest()
-        # Locking only coordinates cache writers, not authoritative publication.
-        with (self.settings.cache_dir / ".cache.lock").open("a") as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            if local.exists() and self._file_digest(local) == expected:
-                local.touch()
-                self.metrics["cache_hits"] += 1
-                return local
-            if obj.get("bytes", 0) > self.settings.cache_max_bytes:
-                raise ValueError("Object exceeds cache budget; compact into smaller partitions")
-            temporary: str | None = None
-            try:
-                self.metrics["get_requests"] += 1
-                response = self.client.get_object(Bucket=self.bucket, Key=key)
-                hasher = hashlib.sha256()
-                size = 0
-                with tempfile.NamedTemporaryFile(
-                    dir=self.settings.cache_dir, delete=False
-                ) as target:
-                    temporary = target.name
-                    stream = response["Body"]
-                    try:
-                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                            size += len(chunk)
-                            if size > self.settings.cache_max_bytes:
-                                raise ValueError("Download exceeds cache budget")
-                            target.write(chunk)
-                            hasher.update(chunk)
-                    finally:
-                        stream.close()
-                    target.flush()
-                    os.fsync(target.fileno())
-                self.metrics["download_bytes"] += size
-                if hasher.hexdigest() != expected:
-                    raise ValueError("Object checksum mismatch")
-                os.replace(temporary, local)
-                temporary = None
-                self._evict(keep=local)
-            finally:
-                if temporary:
-                    Path(temporary).unlink(missing_ok=True)
-        return local
+        return cached_path(self, obj)
 
     @staticmethod
     def _file_digest(path: Path) -> str:
-        with path.open("rb") as handle:
-            return hashlib.file_digest(handle, "sha256").hexdigest()
+        return file_digest(path)
 
     def _evict(self, keep: Path) -> None:
-        candidates = [
-            path
-            for path in self.settings.cache_dir.iterdir()
-            if path.is_file() and not path.name.startswith(".")
-        ]
-        total = sum(path.stat().st_size for path in candidates)
-        for path in sorted(candidates, key=lambda entry: entry.stat().st_mtime):
-            if total <= self.settings.cache_max_bytes:
-                break
-            if path != keep:
-                total -= path.stat().st_size
-                path.unlink(missing_ok=True)
+        evict_cache(self, keep)
 
     def encode(self, observations: Sequence[Observation]) -> bytes:
         rows = []
