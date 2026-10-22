@@ -334,6 +334,46 @@ def test_missing_outcomes_retry_until_the_frozen_boundary_grace_then_finish_cens
     )
 
 
+@pytest.mark.parametrize(
+    "minimum_history,lookback_days,older_days", [(2, 30, 40), (3, 30, 40), (3, 1, 2)]
+)
+def test_direct_and_persisted_decisions_use_the_same_declared_history_window(
+    pipeline, minimum_history, lookback_days, older_days
+):
+    from sm_trending_products.contracts import AssessmentPolicy, Product, ProductLink
+    from sm_trending_products.evaluation import EvaluationConfig, freeze_decision
+
+    cutoff = now() + timedelta(minutes=1)
+    pipeline.import_records(
+        [
+            record("windowed", cutoff - timedelta(days=older_days), 1),
+            record("windowed", cutoff - timedelta(hours=2), 100),
+            record("windowed", cutoff - timedelta(hours=1), 500),
+        ],
+        synthetic=True,
+    )
+    pipeline.create_product("windowed", "Declared history window", synthetic=True)
+    pipeline.review_link("windowed", "fixture_import:video:windowed")
+    observations, _ = pipeline.history.observations(cutoff, True)
+    assert len(observations) == 3
+    config = EvaluationConfig(minimum_history_observations=minimum_history)
+    policy = AssessmentPolicy(version=f"history-{lookback_days}-v1", lookback_days=lookback_days)
+    direct = freeze_decision(
+        observations,
+        [Product.model_validate(row) for row in pipeline.products(True)],
+        [ProductLink.model_validate(row) for row in pipeline.links(cutoff, True)],
+        cutoff,
+        config,
+        synthetic=True,
+        policy=policy,
+    )
+    stored = pipeline.freeze(cutoff, True, config.model_dump(mode="json"), policy=policy)["result"]
+    assert direct == stored
+    oldest = min(observations, key=lambda row: row.observed_at).observation_id
+    assert oldest not in direct["evidence_refs"]
+    assert direct["selected"] == (["windowed"] if minimum_history == 2 else [])
+
+
 def test_native_postgres_claims_forward_frontier_without_duplicate_workers(pipeline):
     import os
     from concurrent.futures import ThreadPoolExecutor

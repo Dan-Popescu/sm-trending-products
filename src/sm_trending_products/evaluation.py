@@ -79,10 +79,14 @@ def _eligible_observations(
     cutoff: datetime,
     synthetic: bool,
     market: str | None,
+    *,
+    since: datetime | None = None,
 ) -> list[Observation]:
     result: dict[str, Observation] = {}
     for row in observations:
         if row.synthetic != synthetic or row.observed_at > cutoff or row.available_at > cutoff:
+            continue
+        if since is not None and row.observed_at < since:
             continue
         if market is not None and row.market != market:
             continue
@@ -129,10 +133,18 @@ def eligible_evidence(
     synthetic: bool,
     market: str | None = None,
     capabilities: Sequence[Capability] = (),
+    *,
+    since: datetime | None = None,
 ) -> list[Observation]:
     """Apply the same knowledge and capability gates to a bounded evidence partition."""
     return _source_scope(
-        _eligible_observations(observations, utc(cutoff), synthetic, market),
+        _eligible_observations(
+            observations,
+            utc(cutoff),
+            synthetic,
+            market,
+            since=utc(since) if since is not None else None,
+        ),
         capabilities,
         utc(cutoff),
     )
@@ -216,10 +228,13 @@ def freeze_decision(
         raise ValueError("Decision precedes the declared evaluation period")
     if config.policy_available_at and cutoff < config.policy_available_at:
         raise ValueError("Policy was not available at the decision time")
-    eligible = _source_scope(
-        _eligible_observations(observations, cutoff, synthetic, config.market),
-        capabilities,
+    eligible = eligible_evidence(
+        observations,
         cutoff,
+        synthetic,
+        config.market,
+        capabilities,
+        since=cutoff - timedelta(days=policy.lookback_days),
     )
     scoped_products = [
         product
