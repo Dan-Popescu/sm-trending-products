@@ -94,6 +94,32 @@ inspect the source/adapter contract before enqueueing replacement work.
 `collector_timeout` terminates the child collector and preserves retryable work
 without publishing partial evidence.
 
+## Frozen ranking policy and outcome evaluation
+
+`sm-trends freeze` and `sm-trends backtest` accept `--policy-file policy.json`
+using the same `AssessmentPolicy` JSON as `sm-trends assess`. For example:
+
+```json
+{"version":"attention-three-samples-v1","min_observations":3}
+```
+
+Use `--config-file evaluation.json` separately for the target, threshold, market,
+top-K, horizons, launch delays and `policy_available_at`. A backtest must not use a
+policy before its declared availability. With no policy file, the default ranking
+is retained. The chosen policy and resolved identity/evidence are frozen in the
+decision; subsequent configuration changes do not alter its maturation.
+
+```sh
+sm-trends freeze --synthetic --policy-file policy.json --config-file evaluation.json
+sm-trends backtest --synthetic --policy-file policy.json --config-file evaluation.json \
+  --decision-times-file decisions.json
+```
+
+Native controlled tests exercise 3/7/14-day horizons and separate immediate,
+2-day and 10-day launch scenarios. Missing boundaries remain censored and launch
+delays at or beyond a horizon remain not actionable. Fixture maturity is an
+engineering proof; actual prospective outcomes require elapsed real history.
+
 ## Backup and recovery
 
 See [backup and restore](backup-and-restore.md). Run an isolated restore exercise after configuration or schema changes and on a regular operational schedule selected by the operator. Backup creation alone does not demonstrate recoverability.

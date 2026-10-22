@@ -31,6 +31,12 @@ Replay recorded knowledge at each decision time, compare policies with simple ba
 - Use temporal train/validation/test periods where fitting occurs, keep families grouped, report repeated-alert dependence, and preserve the same collection constraints across policies. A frozen final test is not repeatedly tuned against.
 - Reports show precision at K for predefined observable targets, coverage, lead-time distributions, missing/censored outcomes, sample sizes, uncertainty intervals, and collection cost. Separate predictive comparison from evidence of business profit.
 - A forward test stores immutable decision snapshots, matures each horizon, and records changes to future policy versions without rewriting prior decisions. Snapshots include evidence sufficient for audit within retention constraints.
+- Persisted `freeze` and `backtest` accept the same `AssessmentPolicy` contract as
+  scheduled assessment. The policy is passed through bounded preparation and
+  frozen once in the existing snapshot; maturation reads that snapshot. Outcome
+  configuration remains separate from ranking policy, with no second policy
+  registry or recomputation from current defaults. CLI commands accept
+  `--policy-file`; omitting it retains the established default.
 - Read one selected product's bounded evidence once per maturation, reuse it across horizon/delay scenarios, and retain only outcome summaries before loading the next product. Prepared entity timelines reuse cumulative boundary/correction indexes and interval coverage/sums across threshold candidates. Reference lists are materialized for reported outcomes and the first confirmed crossing rather than for every unsuccessful candidate. These indexes preserve the same revisions, gaps, units, periods, censoring and availability rules as direct evaluation.
 
 ## Testing Decisions

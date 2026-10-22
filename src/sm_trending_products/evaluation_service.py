@@ -106,8 +106,9 @@ class EvaluationService:
         as_of: datetime,
         synthetic: bool,
         config: EvaluationConfig,
+        policy: AssessmentPolicy | None = None,
     ) -> tuple[dict[str, Any], set[str]]:
-        policy = AssessmentPolicy()
+        policy = policy or AssessmentPolicy()
         cutoff = utc(as_of)
         products = [
             product
@@ -228,6 +229,8 @@ class EvaluationService:
         as_of: datetime,
         synthetic: bool = False,
         config: dict | None = None,
+        *,
+        policy: AssessmentPolicy | None = None,
     ) -> dict:
         cutoff = utc(as_of)
         configuration = EvaluationConfig.model_validate(config or {})
@@ -243,6 +246,7 @@ class EvaluationService:
                 timestamp,
                 synthetic,
                 configuration,
+                policy=policy,
             )
             report, outcome_dependencies = self._maturation_payload(snapshot, cutoff, dependencies)
             snapshots.append(snapshot)
@@ -259,7 +263,14 @@ class EvaluationService:
             "result": payload,
         }
 
-    def freeze(self, as_of: datetime, synthetic: bool = False, config: dict | None = None) -> dict:
+    def freeze(
+        self,
+        as_of: datetime,
+        synthetic: bool = False,
+        config: dict | None = None,
+        *,
+        policy: AssessmentPolicy | None = None,
+    ) -> dict:
         cutoff = utc(as_of)
         if not synthetic and cutoff < now() - timedelta(minutes=5):
             raise ValueError("A live forward decision cannot be retrospectively backdated")
@@ -270,6 +281,7 @@ class EvaluationService:
             cutoff,
             synthetic,
             EvaluationConfig.model_validate(config or {}),
+            policy=policy,
         )
         return {
             "evaluation_id": self._save_evaluation(
@@ -380,19 +392,23 @@ class EvaluationService:
         token = uuid4().hex
         with self.catalog.transaction() as connection:
             connection.execute(
-                "UPDATE forward_frontier SET state='pending',lease_token=NULL,lease_until=NULL "
-                "WHERE state='running' AND lease_until<clock_timestamp()"
-            )
-            connection.execute(
-                "UPDATE forward_frontier f SET state='invalidated',"
-                "lease_token=NULL,lease_until=NULL "
-                "FROM evaluation_runs r WHERE r.evaluation_id=f.evaluation_id "
-                "AND r.invalidated AND f.state IN('pending','running')"
+                "WITH cleanup AS (SELECT f.evaluation_id,r.invalidated "
+                "FROM forward_frontier f JOIN evaluation_runs r USING(evaluation_id) "
+                "WHERE f.synthetic=%s AND ("
+                "(f.state='running' AND f.lease_until<clock_timestamp()) OR "
+                "(r.invalidated AND f.state IN('pending','running'))) "
+                "FOR UPDATE OF f SKIP LOCKED) "
+                "UPDATE forward_frontier f SET state=CASE WHEN cleanup.invalidated "
+                "THEN 'invalidated' ELSE 'pending' END,lease_token=NULL,lease_until=NULL "
+                "FROM cleanup WHERE f.evaluation_id=cleanup.evaluation_id",
+                (synthetic,),
             )
             return connection.execute(
-                "WITH due AS (SELECT evaluation_id FROM forward_frontier WHERE synthetic=%s "
-                "AND state='pending' AND next_due_at<=%s "
-                "ORDER BY next_due_at,created_at,evaluation_id FOR UPDATE SKIP LOCKED LIMIT 1) "
+                "WITH due AS (SELECT f.evaluation_id FROM forward_frontier f "
+                "JOIN evaluation_runs r USING(evaluation_id) WHERE f.synthetic=%s "
+                "AND f.state='pending' AND f.next_due_at<=%s AND NOT r.invalidated "
+                "ORDER BY f.next_due_at,f.created_at,f.evaluation_id "
+                "FOR UPDATE OF f SKIP LOCKED LIMIT 1) "
                 "UPDATE forward_frontier f SET state='running',lease_token=%s,"
                 "lease_until=clock_timestamp()+interval '5 minutes',attempts=attempts+1 "
                 "FROM due WHERE f.evaluation_id=due.evaluation_id RETURNING f.*",

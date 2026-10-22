@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from .contracts import canonical, now, utc
+from .contracts import AssessmentPolicy, canonical, now, utc
 from .source_contracts import canonical_operation
 
 
@@ -129,6 +129,9 @@ def parser() -> argparse.ArgumentParser:
         evaluation = command(name, help_text, synthetic=True)
         evaluation.add_argument("--as-of")
         evaluation.add_argument("--config-file", type=Path)
+        evaluation.add_argument(
+            "--policy-file", type=Path, help="AssessmentPolicy JSON; frozen with the decision"
+        )
         if name == "backtest":
             evaluation.add_argument(
                 "--decision-times-file",
@@ -240,8 +243,6 @@ def dispatch(pipeline, args):
                 args.budget, synthetic=synthetic, policy=read_json(args.policy_file)
             )
         case "assess":
-            from .contracts import AssessmentPolicy
-
             return pipeline.assess(
                 cutoff,
                 synthetic=synthetic,
@@ -289,9 +290,15 @@ def dispatch(pipeline, args):
                 cutoff,
                 synthetic=synthetic,
                 config=read_json(args.config_file),
+                policy=AssessmentPolicy.model_validate(read_json(args.policy_file, {})),
             )
         case "freeze":
-            return pipeline.freeze(cutoff, synthetic=synthetic, config=read_json(args.config_file))
+            return pipeline.freeze(
+                cutoff,
+                synthetic=synthetic,
+                config=read_json(args.config_file),
+                policy=AssessmentPolicy.model_validate(read_json(args.policy_file, {})),
+            )
         case "mature":
             return pipeline.mature(args.evaluation_id, cutoff)
         case "mature-due":
