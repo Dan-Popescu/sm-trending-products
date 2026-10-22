@@ -27,6 +27,7 @@ Separate discovery from refresh, allocate a bounded exploration budget, and refr
 - Versioned policies allocate exploration, monitoring, and investigation budgets. Priority uses freshness, uncertainty, evidence growth, and observation cost; it does not silently exclude low-activity candidates forever.
 - Optional versioned `request_costs` declare estimated request units by supported source; unspecified costs equal one. Cost-adjusted refresh scores are capped at 999, below the reserved exploration execution band of 1000 and above. Estimates adjust priority without changing actual Rust-enforced quota accounting or the protected exploration allocation. They are policy inputs, not measured provider prices.
 - Configure target intervals by tier; initial example intervals of 1, 6, and 24 hours are tunable policies, not promised source freshness. Intraday polling is useful only if quota and source update resolution support it.
+- A zero effective task budget returns explicit backpressure after persisting policy activation, without scanning or deferring candidate entities. Policy changes remain effective while a queue is full.
 - PostgreSQL coordinates due work and shared quotas. The application scheduler chooses what to collect; Dagster starts and observes bounded batches. Do not create one orchestration run per video.
 - Record planned versus achieved intervals, skipped work, source update delay, policy version, and selection reasons. Evaluation uses the actual sampled universe and intervals.
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import canonical, now, utc
+from .source_contracts import canonical_operation
 
 
 def parser() -> argparse.ArgumentParser:
@@ -44,7 +45,11 @@ def parser() -> argparse.ArgumentParser:
         "--source", required=True, choices=["tiktok_display", "tiktok_ads", "tiktok_commercial"]
     )
     tasks.add_argument("--account-id", required=True)
-    tasks.add_argument("--operation", default="list", choices=["list", "query"])
+    tasks.add_argument(
+        "--operation",
+        choices=["list", "query"],
+        help="Defaults to list for Display and query for commercial sources",
+    )
     tasks.add_argument("--payload-file", type=Path, required=True)
     tasks.add_argument("--idempotency-key", required=True)
     ingest = command("import", "Import provenance-preserving observation JSONL", synthetic=True)
@@ -93,7 +98,11 @@ def parser() -> argparse.ArgumentParser:
         "--source", required=True, choices=["tiktok_display", "tiktok_ads", "tiktok_commercial"]
     )
     live.add_argument("--account-id", required=True)
-    live.add_argument("--operation", choices=["list", "query"], default="list")
+    live.add_argument(
+        "--operation",
+        choices=["list", "query"],
+        help="Defaults to list for Display and query for commercial sources",
+    )
     live.add_argument("--payload-file", type=Path, required=True)
     live.add_argument("--approve-use", action="store_true", required=True)
     live.add_argument(
@@ -204,7 +213,7 @@ def dispatch(pipeline, args):
                 "task_id": pipeline.enqueue(
                     args.source,
                     args.account_id,
-                    args.operation,
+                    canonical_operation(args.source, args.operation),
                     read_json(args.payload_file),
                     synthetic=synthetic,
                     idempotency_key=args.idempotency_key,
@@ -261,7 +270,7 @@ def dispatch(pipeline, args):
             return pipeline.verify_live(
                 args.source,
                 args.account_id,
-                args.operation,
+                canonical_operation(args.source, args.operation),
                 read_json(args.payload_file),
                 evidence=args.evidence,
                 retention_days=args.retention_days,

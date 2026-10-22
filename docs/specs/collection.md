@@ -23,6 +23,7 @@ Collect permitted observations into auditable history and expose collection stat
 
 ## Implementation Decisions
 
+- Source operations are canonicalized at collection entry points: Display defaults to `list`; Ads and Commercial Content use `query`. Their historical `list` alias is normalized to `query`, including persisted task and refresh origins, so source acceptance and scheduling use the same operation.
 - Source adapters expose capabilities and bounded paginated collection. Rust workers honor source-specific quotas, timeouts, cancellation, backoff, and shared credential limits. Tokens are redacted and never enter datasets.
 - Observe supported video identifiers, publication time, duration, description, creator identifiers, and exposed cumulative engagement counters. Capture source meanings, inaccessible fields, and response acquisition context; do not infer audience geography from creator geography.
 - Batch raw compressed JSONL and normalized Parquet into immutable objects. A completed manifest defines a readable dataset version. Object writes and PostgreSQL updates use explicit staged/committed recovery, checksums, and reconciliation; no cross-store atomicity assumption.
