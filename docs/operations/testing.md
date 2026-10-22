@@ -36,6 +36,21 @@ Live TikTok capability acceptance requires the real approved accounts/scopes and
 
 A successful image build is not a successful VPS rollout. Record the target host, resource configuration, endpoint/provider acceptance, private access test, and successful isolated restore before production rollout.
 
+## Rust CI build reuse
+
+GitHub Actions reuses registry sources and compiled collector artifacts through
+`actions/cache`. The cache key includes OS/architecture, workflow configuration,
+Cargo manifest/lock and collector source. Source changes can reuse compatible
+dependency artifacts, while workflow/toolchain/lock changes start a fresh cache.
+Incremental compilation is disabled for CI so persisted build state does not grow
+with local edit history. Cargo configuration and credential files are excluded.
+
+Formatting, Clippy, Rust tests and the collector build always run after restore;
+a cache hit does not skip validation. A missing/expired cache takes the normal
+cold-build path. The native Python suite, benchmark, image and isolated recovery
+gates are unchanged. Verify both a cold and warm CI execution when changing this
+cache boundary, and use recorded job timings rather than assuming a fixed speedup.
+
 ## Recorded execution
 
 The [native CI report](../verification/native-ci.md) records 142 tests passed without

@@ -6,6 +6,17 @@ inode once and includes the full reserved size of every in-flight download.
 Filesystem metadata/allocation overhead and analytical spill directories are
 separate operational disk headroom; this value is not a whole-volume quota.
 
+Workers sharing a root must use the same configured budget. When reducing it,
+stop new work in the old group and restart with the new value. The first cache
+admission in each application instance reconciles retained payloads under the
+existing accounting lock, including a fully warm cache. It keeps the requested
+verified warm input when possible and evicts unused payloads. Existing readers
+are never discarded: if their pins or existing download reservations exceed the
+new limit, admission raises `CacheCapacityError` until they finish and can then
+be retried. The successful root/limit check is remembered
+only in the application instance, so subsequent warm reads avoid a full directory
+scan. Cache payloads and reservations remain the accounting source of truth.
+
 Readers use `pin_cached` for their complete input lifetime. Its hardlink keeps the
 verified inode alive even if retention removes the ordinary cache name. A shared
 kernel lock protects that inode. A later admission reclaims abandoned pin links

@@ -98,8 +98,13 @@ class _Cache:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     amount = int(handle.read())
-                    if not 0 <= amount <= self.limit:
+                    if amount < 0:
                         raise ValueError("Invalid cache reservation size") from None
+                    if amount > self.limit:
+                        raise CacheCapacityError(
+                            "Existing downloads exceed the reduced cache budget; "
+                            "retry after completion"
+                        ) from None
                     reserved += amount
                     continue
                 record.with_suffix(".part").unlink(missing_ok=True)
@@ -204,6 +209,16 @@ class _Cache:
     def obtain(self, obj: dict[str, Any]) -> tuple[Path, Path, BinaryIO]:
         key, expected = obj["key"], obj["sha256"]
         local = self.root / hashlib.sha256(key.encode()).hexdigest()
+        configuration = (self.root, self.limit)
+        if getattr(self.history, "_cache_budget_configuration", None) != configuration:
+            with self.global_lock():
+                if getattr(self.history, "_cache_budget_configuration", None) != configuration:
+                    # A restart may reuse payloads admitted under a larger limit.
+                    # Reconcile once per root/limit, preserving the requested warm
+                    # input when it fits. Live pins/reservations still fence eviction.
+                    keep = local if _regular(local) and local.stat().st_size <= self.limit else None
+                    self._make_room(0, keep=keep)
+                    self.history._cache_budget_configuration = configuration
         declared = obj.get("bytes")
         if declared is not None and (
             isinstance(declared, bool) or not isinstance(declared, int) or declared < 0
