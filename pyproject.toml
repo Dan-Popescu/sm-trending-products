@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sm-trending-products"
+version = "0.1.0"
+description = "Point-in-time trend research pipeline with offline replay and official TikTok adapters"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.14,<3", "pydantic-settings>=2.16,<3",
+    "polars>=2.0,<3", "duckdb>=2.0,<3", "pyarrow>=26,<27",
+    "psycopg[binary,pool]>=3.3,<4", "boto3>=1.43,<2",
+    "dagster>=1.13,<1.14", "dagster-postgres>=0.29,<0.30",
+    "dagster-webserver>=1.13,<1.14", "streamlit>=1.66,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9,<10", "httpx>=0.28,<1", "ruff>=0.17,<0.18", "mypy>=2.4,<3", "moto[server]>=5.2,<6"]
+
+[project.scripts]
+sm-trends = "sm_trending_products.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+files = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: requires PostgreSQL and an HTTP S3-compatible service"]
+
+[tool.setuptools.package-data]
+sm_trending_products = ["sql/*.sql"]

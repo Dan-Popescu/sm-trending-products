@@ -1,0 +1,85 @@
+# Operations runbook
+
+The supported production target is a VPS running Docker Compose with PostgreSQL and an external S3 bucket. Rust collection, Dagster batch orchestration, native columnar analysis, and the private review interface use one application image. No service is deployed by checking in this configuration.
+
+## Prerequisites
+
+Use Docker Engine with Compose v2.20 or newer, a dedicated S3 bucket, and access to the target VPS. Allow outbound HTTPS to the granted TikTok endpoints and the chosen object store. Configure the VPS firewall and SSH access before rollout.
+
+The checked-in image versions are explicit: PostgreSQL 17.11, Python 3.12.14, Rust 1.99.1, uv 0.12.23, and Moto 5.2.4 for tests. Review upstream security updates before each deployment and update the pins deliberately. Python and Rust dependencies are locked separately.
+
+Production S3 must provide the conditional writes, metadata, and consistency used by the storage implementation. Enable encryption and appropriate versioning/lifecycle policy, then verify the actual provider. Synthetic HTTP tests do not certify a provider's durability or IAM policy.
+
+## Configure production
+
+Copy `.env.example` to a private `.env` or inject equivalent secrets through the deployment environment. Restrict its permissions to its owner. Set a generated database password, the matching URL-encoded password in `DATABASE_URL`, the bucket, region, and S3 credentials or the applicable host identity configuration. Inside Compose, the database hostname is `postgres`.
+
+Leave `S3_ENDPOINT_URL` empty for AWS S3. For another production provider, use its HTTPS endpoint. Create the bucket through the provider first; `CREATE_BUCKET_ON_INIT=false` prevents implicit bucket creation. The initialization command can create a bucket only when explicitly configured.
+
+Keep TikTok token fields empty until approval exists. A developer key is not a granted source capability. Enable a live adapter only after its actual endpoint, account, scopes, permitted intended use, quota, retention, and returned fields have been verified.
+
+The database, Dagster storage, spool, and cache use separate named volumes. These are local state, not a replacement for backups or S3 durability. The namespace setting identifies the environment; real/synthetic flags enforce evidence separation. Separate production and development databases/buckets as well.
+
+## Build and start
+
+From the repository root:
+
+```sh
+docker compose config --quiet
+docker compose build
+docker compose up -d
+docker compose ps
+docker compose run --rm --no-deps initialize sm-trends status --json
+docker compose run --rm --no-deps initialize sm-trends verify --json
+```
+
+Use `config --quiet`: printing the interpolated Compose configuration can reveal credentials. The initialization container must finish successfully before workers and interfaces start. New PostgreSQL volumes create the separate Dagster database automatically; an existing database volume needs that database provisioned before starting Dagster.
+
+The default application user is unprivileged, root filesystems are read-only, temporary and persistent write locations are explicit, capabilities are dropped, and logs rotate. Resource limits are configurable starting settings, not a tested capacity guarantee. Measure the declared workload and leave memory/disk headroom.
+
+## Private access
+
+Only loopback addresses expose the dashboard and Dagster interfaces. Use an SSH tunnel:
+
+```sh
+ssh -L 8501:127.0.0.1:8501 -L 3000:127.0.0.1:3000 user@vps
+```
+
+Open `http://127.0.0.1:8501` for review and `http://127.0.0.1:3000` for orchestration. These interfaces have operational privileges; loopback binding plus a trusted SSH tunnel is the supported access boundary. Do not change bindings to public addresses without a separately configured authenticated TLS proxy. PostgreSQL has no published host port.
+
+## Local synthetic execution
+
+The optional `local` profile uses a real HTTP Moto S3 emulator. Its state is ephemeral and disappears when its process restarts. Use it only for isolated synthetic testing; it is unsuitable for live evidence or durability testing.
+
+```sh
+python3 scripts/create-local-env.py
+docker compose --profile local up -d --build
+```
+
+The generator refuses to overwrite an existing file and writes mode 0600. It supplies a random local database password, explicit dummy AWS credentials, and enables test-bucket creation. Existing production configuration must never be replaced with this local configuration.
+
+Moto replaced the initially considered MinIO development image after the official Docker Hub repository/tag lookup returned 404. This is a development-service choice, not a change to the production S3 design. If the local emulator restarts, recreate/reingest the synthetic test state or restore a complete synthetic backup; a surviving PostgreSQL volume alone cannot recreate lost objects.
+
+## Health and collection status
+
+Check both process health and data health. The status report and dashboard expose access state, queue depth/age, due work, failed/quarantined work, last evidence time, source capability failures, and history/cache I/O where measured. A running worker with denied scopes is not a functioning source.
+
+Investigate the reported category rather than dumping tokens, request headers, signed URLs, or remote response strings into tickets. Follow an observation's dataset manifest and evidence references when investigating a ranking. Missing evidence and denied access remain visible; they do not become zero activity.
+
+The application scheduler decides which candidate tasks are due and how the budget is split. Dagster coordinates batches and downstream assessments. A Dagster run is not created for every individual video.
+
+## Backup and recovery
+
+See [backup and restore](backup-and-restore.md). Run an isolated restore exercise after configuration or schema changes and on a regular operational schedule selected by the operator. Backup creation alone does not demonstrate recoverability.
+
+## Updates and maintenance
+
+Before upgrading, record the current image/dependency revisions, pause writers, create a complete backup, and validate the new image against a restored copy. Apply database initialization/migrations through the initialization command before restarting workers. Do not assume an old application is compatible with a newer schema.
+
+Compaction publishes a completed replacement before changing the catalog's read frontier, preserves original observation/availability/provenance, and retains raw evidence subject to policy. Retention preview is read-only; applying retention invalidates dependent assessments/evaluations before deleting restricted objects. Versioned or suspended-versioning S3 buckets require listing and deleting every affected version and delete marker; a simple delete marker is insufficient. The service identity therefore needs bucket versioning inspection, version listing, and version deletion permissions in addition to ordinary object reads/writes/deletes. Object Lock or denied deletion leaves explicit pending work for retry. Review source policies and backup retention together: a backup can also contain data that must expire.
+
+Cache eviction must affect only reproducible local copies. If a cached object fails its checksum, reacquire and verify it. Do not delete S3 history to free VPS cache space.
+
+## Scale decisions
+
+Use [benchmarking and costs](benchmarking.md). Increase worker concurrency only within source quotas and after measuring database contention, memory, and store traffic. Move the same independent containers and endpoints first when leaving one VPS. A distributed queue, a new orchestration engine, or distributed SQL requires a measured bottleneck and a separate architectural decision.

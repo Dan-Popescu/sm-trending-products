@@ -1,0 +1,41 @@
+storage:
+  postgres:
+    postgres_db:
+      hostname:
+        env: DAGSTER_POSTGRES_HOST
+      username:
+        env: DAGSTER_POSTGRES_USER
+      password:
+        env: DAGSTER_POSTGRES_PASSWORD
+      db_name:
+        env: DAGSTER_POSTGRES_DB
+      port: 5432
+run_coordinator:
+  module: dagster.core.run_coordinator
+  class: QueuedRunCoordinator
+  config:
+    max_concurrent_runs: 1
+run_launcher:
+  module: dagster.core.launcher
+  class: DefaultRunLauncher
+compute_logs:
+  module: dagster.core.storage.local_compute_log_manager
+  class: LocalComputeLogManager
+  config:
+    base_dir: /var/lib/sm-trends/dagster/compute-logs
+telemetry:
+  enabled: false
+run_monitoring:
+  enabled: true
+  poll_interval_seconds: 30
+run_retries:
+  enabled: true
+  max_retries: 2
+retention:
+  schedule:
+    purge_after_days: 30
+  sensor:
+    purge_after_days:
+      skipped: 7
+      success: 30
+      failure: 90

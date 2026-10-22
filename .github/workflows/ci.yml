@@ -1,0 +1,91 @@
+name: Verify pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17.11-bookworm
+        env:
+          POSTGRES_USER: pipeline_test
+          POSTGRES_DB: pipeline_test
+          POSTGRES_PASSWORD: pipeline-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pipeline_test -d pipeline_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://pipeline_test:pipeline-test-only@127.0.0.1:5432/pipeline_test
+      TEST_DATABASE_URL: postgresql://pipeline_test:pipeline-test-only@127.0.0.1:5432/pipeline_test
+      S3_BUCKET: sm-trends-ci
+      S3_ENDPOINT_URL: http://127.0.0.1:5000
+      AWS_ACCESS_KEY_ID: testing
+      AWS_SECRET_ACCESS_KEY: testing
+      AWS_DEFAULT_REGION: us-east-1
+      PIPELINE_NAMESPACE: testing
+      COLLECTOR_BINARY: collector/target/debug/sm-collector
+      POLARS_MAX_THREADS: "2"
+      RAYON_NUM_THREADS: "2"
+      DUCKDB_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.12.23
+          enable-cache: true
+      - name: Install locked Python dependencies
+        run: uv sync --locked --extra dev --python 3.12
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.1
+          components: rustfmt, clippy
+      - name: Verify Rust collector
+        run: |
+          cargo fmt --manifest-path collector/Cargo.toml --check
+          cargo clippy --locked --manifest-path collector/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked --manifest-path collector/Cargo.toml
+          cargo build --locked --manifest-path collector/Cargo.toml
+      - name: Verify Python formatting and lint
+        run: |
+          uv run --locked ruff format --check src tests scripts
+          uv run --locked ruff check src tests scripts
+      - name: Verify Python types
+        timeout-minutes: 5
+        run: uv run --locked mypy src
+      - name: Verify native PostgreSQL behavior
+        timeout-minutes: 10
+        run: uv run --locked pytest -vv -ra --durations=15 --junitxml=output/test-results.xml
+      - name: Validate shell syntax
+        run: |
+          for script in scripts/*.sh deploy/postgres/*.sh; do bash -n "$script"; done
+      - name: Validate and build deployment
+        env:
+          POSTGRES_PASSWORD: pipeline-test-only
+        run: |
+          docker compose config --quiet
+          docker compose build
+      - name: Rehearse isolated synthetic backup and restore
+        run: scripts/ci-recovery.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification-results
+          path: |
+            output/test-results.xml
+            output/recovery-report.json
+          if-no-files-found: ignore

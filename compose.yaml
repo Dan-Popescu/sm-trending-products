@@ -1,0 +1,177 @@
+name: sm-trending-products
+
+x-pipeline-environment: &pipeline-environment
+  DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+  PIPELINE_NAMESPACE: ${PIPELINE_NAMESPACE:-development}
+  S3_BUCKET: ${S3_BUCKET:?Set S3_BUCKET in .env}
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+  CREATE_BUCKET_ON_INIT: ${CREATE_BUCKET_ON_INIT:-false}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+  AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+  TIKTOK_DISPLAY_ACCESS_TOKEN: ${TIKTOK_DISPLAY_ACCESS_TOKEN:-}
+  TIKTOK_CCL_ACCESS_TOKEN: ${TIKTOK_CCL_ACCESS_TOKEN:-}
+  CACHE_DIR: /var/lib/sm-trends/cache
+  SPOOL_DIR: /var/lib/sm-trends/spool
+  COLLECTOR_BINARY: /usr/local/bin/sm-collector
+  CACHE_MAX_BYTES: ${CACHE_MAX_BYTES:-2000000000}
+  BATCH_SIZE: ${BATCH_SIZE:-20}
+  LEASE_SECONDS: ${LEASE_SECONDS:-180}
+  COLLECTOR_TIMEOUT_SECONDS: ${COLLECTOR_TIMEOUT_SECONDS:-90}
+  MAX_ATTEMPTS: ${MAX_ATTEMPTS:-8}
+  ANALYSIS_PRODUCT_BATCH_SIZE: ${ANALYSIS_PRODUCT_BATCH_SIZE:-100}
+  ANALYSIS_MAX_ROWS_PER_BATCH: ${ANALYSIS_MAX_ROWS_PER_BATCH:-1000000}
+  HISTORY_PARTITION_BUCKETS: ${HISTORY_PARTITION_BUCKETS:-64}
+  POLARS_MAX_THREADS: ${POLARS_MAX_THREADS:-2}
+  RAYON_NUM_THREADS: ${RAYON_NUM_THREADS:-2}
+  DUCKDB_THREADS: ${DUCKDB_THREADS:-2}
+  DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-512MB}
+  DAGSTER_HOME: /var/lib/sm-trends/dagster
+  DAGSTER_POSTGRES_HOST: postgres
+  DAGSTER_POSTGRES_USER: ${POSTGRES_USER:-sm_trends}
+  DAGSTER_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+  DAGSTER_POSTGRES_DB: dagster
+
+x-pipeline-service: &pipeline-service
+  image: ${PIPELINE_IMAGE:-sm-trending-products:local}
+  build:
+    context: .
+  environment: *pipeline-environment
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=256m,uid=10001,gid=10001
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  volumes:
+    - cache:/var/lib/sm-trends/cache
+    - spool:/var/lib/sm-trends/spool
+    - dagster:/var/lib/sm-trends/dagster
+    - ./deploy/dagster/dagster.yaml:/var/lib/sm-trends/dagster/dagster.yaml:ro
+  networks:
+    - pipeline
+  stop_grace_period: 60s
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  postgres:
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sm_trends}
+      POSTGRES_DB: ${POSTGRES_DB:-sm_trends}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - ./deploy/postgres/001-create-dagster-db.sh:/docker-entrypoint-initdb.d/001-create-dagster-db.sh:ro
+    networks:
+      - pipeline
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-1g}
+    cpus: ${POSTGRES_CPUS:-1.0}
+    shm_size: 256m
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  objectstore:
+    image: motoserver/moto:5.2.4
+    profiles: [local]
+    environment:
+      MOTO_HOST: 0.0.0.0
+      MOTO_PORT: "5000"
+    networks:
+      - pipeline
+    ports:
+      - 127.0.0.1:5000:5000
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:5000/", timeout=2).close()']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: ${OBJECTSTORE_MEMORY_LIMIT:-512m}
+    cpus: ${OBJECTSTORE_CPUS:-1.0}
+    restart: "no"
+
+  initialize:
+    <<: *pipeline-service
+    command: [sh, -c, 'if [ "$${CREATE_BUCKET_ON_INIT}" = true ]; then exec sm-trends init --create-bucket; else exec sm-trends init; fi']
+    depends_on:
+      postgres:
+        condition: service_healthy
+      objectstore:
+        condition: service_healthy
+        required: false
+    mem_limit: 512m
+    cpus: 1.0
+    restart: "no"
+
+  worker:
+    <<: *pipeline-service
+    command: [sm-trends, worker, --loop, --batch-size, '${WORKER_BATCH_SIZE:-20}']
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    mem_limit: ${WORKER_MEMORY_LIMIT:-768m}
+    cpus: ${WORKER_CPUS:-1.0}
+    pids_limit: 128
+    restart: unless-stopped
+
+  dagster-webserver:
+    <<: *pipeline-service
+    command: [dagster-webserver, -m, sm_trending_products.orchestration, --host, 0.0.0.0, --port, '3000']
+    ports:
+      - 127.0.0.1:3000:3000
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    mem_limit: ${DAGSTER_WEBSERVER_MEMORY_LIMIT:-768m}
+    cpus: ${DAGSTER_WEBSERVER_CPUS:-1.0}
+    restart: unless-stopped
+
+  dagster-daemon:
+    <<: *pipeline-service
+    command: [dagster-daemon, run, -m, sm_trending_products.orchestration]
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    mem_limit: ${DAGSTER_DAEMON_MEMORY_LIMIT:-1536m}
+    cpus: ${DAGSTER_DAEMON_CPUS:-2.0}
+    pids_limit: 256
+    restart: unless-stopped
+
+  dashboard:
+    <<: *pipeline-service
+    command: [streamlit, run, src/sm_trending_products/dashboard.py, --server.address, 0.0.0.0, --server.port, '8501', --server.headless, 'true', --browser.gatherUsageStats, 'false']
+    ports:
+      - 127.0.0.1:8501:8501
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    mem_limit: ${DASHBOARD_MEMORY_LIMIT:-768m}
+    cpus: ${DASHBOARD_CPUS:-1.0}
+    restart: unless-stopped
+
+volumes:
+  postgres:
+  cache:
+  spool:
+  dagster:
+
+networks:
+  pipeline:
+    driver: bridge
