@@ -43,16 +43,8 @@ def _realized_profit(
 ) -> dict[str, Any]:
     periods: dict[tuple[datetime, datetime], Observation] = {}
     for row in rows:
-        attrs, period = row.attributes, _period(row)
-        if (
-            period is None
-            or period[0] < start
-            or period[1] > end
-            or period[1] > row.observed_at
-            or attrs.get("currency") != currency
-            or attrs.get("realized") is not True
-            or attrs.get("costs_complete") is not True
-        ):
+        period = _period(row)
+        if period is None or period[0] < start or period[1] > end or period[1] > row.observed_at:
             continue
         previous = periods.get(period)
         if previous is None or (row.available_at, row.observation_id) > (
@@ -65,6 +57,12 @@ def _realized_profit(
     for period, row in sorted(periods.items()):
         if period[0] != cursor:
             return {"status": "censored", "reason": "realized_profit_period_gap_or_overlap"}
+        if (
+            row.attributes.get("currency") != currency
+            or row.attributes.get("realized") is not True
+            or row.attributes.get("costs_complete") is not True
+        ):
+            return {"status": "censored", "reason": "incomplete_realized_costs_or_revenue"}
         try:
             revenue = Decimal(str(row.attributes["realized_revenue"]))
             costs = row.attributes["realized_costs"]
@@ -171,15 +169,7 @@ class EntityTimeline:
                 cumulative.append((row, metric))
             if period is None or period[1] > row.observed_at:
                 continue
-            if target == "profit":
-                attrs = row.attributes
-                if (
-                    attrs.get("currency") != currency
-                    or attrs.get("realized") is not True
-                    or attrs.get("costs_complete") is not True
-                ):
-                    continue
-            elif metric is None or metric.semantics != "interval":
+            if target != "profit" and (metric is None or metric.semantics != "interval"):
                 continue
             previous = periods.get(period)
             if previous is None or (row.available_at, row.observation_id) > (
@@ -211,8 +201,15 @@ class EntityTimeline:
         self._prefix_start: datetime | None = None
         self._prefix: _PeriodPrefix | None = None
 
-    @staticmethod
-    def _profit_value(row: Observation) -> tuple[Decimal, Decimal] | None:
+    def _profit_value(self, row: Observation) -> tuple[Decimal, Decimal] | None:
+        # Resolve the latest period revision before validating its business fields.
+        # Filtering incomplete revisions first would revive an older profit claim.
+        if (
+            row.attributes.get("currency") != self.currency
+            or row.attributes.get("realized") is not True
+            or row.attributes.get("costs_complete") is not True
+        ):
+            return None
         try:
             revenue = Decimal(str(row.attributes["realized_revenue"]))
             costs = row.attributes["realized_costs"]
