@@ -111,7 +111,11 @@ def parser() -> argparse.ArgumentParser:
     live.add_argument("--retention-days", type=int, required=True)
     replay = command("replay", "Rebuild normalized evidence from immutable raw history")
     replay.add_argument("dataset_id")
-    replay.add_argument("--transform-version", default="1")
+    replay.add_argument(
+        "--transform-version",
+        default="1",
+        help="Source normalizer: 1 (legacy default), 2 (field drift and revision provenance)",
+    )
     verify = command("verify", "Read-only verification of committed objects and catalog references")
     verify.add_argument("--dataset-id")
     compact = command(
