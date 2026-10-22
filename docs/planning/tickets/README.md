@@ -22,7 +22,7 @@ Each ticket is a narrow complete behavior with an operator-visible outcome and a
 
 ## Acceptance status
 
-- T01, T03 and T04 have agent-verified controlled engineering acceptance, with
+- T01, T03, T04 and T05 have agent-verified controlled engineering acceptance, with
   [criterion-by-criterion evidence](../../verification/foundation-acceptance.md).
   Their acceptance unlocks dependent engineering work without granting real
   TikTok capabilities or production-provider acceptance.
