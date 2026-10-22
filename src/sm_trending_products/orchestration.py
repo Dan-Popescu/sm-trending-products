@@ -27,11 +27,14 @@ def _report_batch(context: AssetExecutionContext, result: dict, **counts: int) -
     categories = sorted({error.get("category", "unknown") for error in errors})
     expected_wait = {"rate_limited", "quota_exhausted", "lease_lost"}
     failed = bool(set(categories) - expected_wait)
+    quota_waiting = result.get("quota_waiting", 0)
+    waiting = bool(errors or quota_waiting or result.get("waiting", False))
     context.add_output_metadata(
         {
             **counts,
             "errors": len(errors),
-            "outcome": "failed" if failed else "waiting" if errors else "complete",
+            "quota_waiting": quota_waiting,
+            "outcome": "failed" if failed else "waiting" if waiting else "complete",
         }
     )
     if failed:
