@@ -37,12 +37,26 @@ checks = {
     and sample["compaction"]["rows"] == 1000
     and sample["compaction"]["normalized_objects_after"]
     < sample["compaction"]["normalized_objects_before"],
+    "compaction_preserves_assessment": sample["checks"][
+        "post_compaction_semantics_unchanged"
+    ] is True,
+    "cold_and_warm_cache_measured": all(
+        sample["phases"][f"analysis_{stage}_cold"]["cache_before"]["file_bytes"] == 0
+        and sample["phases"][f"analysis_{stage}_cold"]["storage_traffic"]["get_requests"] > 0
+        and sample["phases"][f"analysis_{stage}_warm"]["storage_traffic"]["cache_hits"] > 0
+        and sample["phases"][f"analysis_{stage}_warm"]["storage_traffic"]["download_bytes"] == 0
+        for stage in ("pre", "post")
+    ),
     "quota_failure_reported": quota["ok"] is False
     and quota["checks"]["collection_completed"] is False
     and quota["measurements"]["processed_pages"] == 1
     and all(error["category"] == "quota_exhausted" for error in quota["errors"]),
     "quota_work_retained": states == {"pending": 3, "done": 1}
     and sum(states.values()) == quota["measurements"]["queue_initial_tasks"] == 4,
+    "partial_failure_measured": quota["complete"] is True
+    and quota["measurements"]["actual_records"] == 20
+    and quota["measurements"]["storage_traffic"]["put_requests"] > 0
+    and quota["measurements"]["task_latency_seconds"]["count"] == 1,
     "synthetic_boundary": all(
         result["synthetic"] is True
         and result["verification_boundary"]["production_acceptance"] is False

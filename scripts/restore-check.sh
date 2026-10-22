@@ -2,9 +2,14 @@
 set -euo pipefail
 umask 077
 
-if [[ $# -ne 1 || ! -f "$1/backup.json" ]]; then
-  echo 'Usage: scripts/restore-check.sh /absolute/complete/backup-directory' >&2
+if [[ $# -lt 1 || $# -gt 2 || ! -f "$1/backup.json" ]]; then
+  echo 'Usage: scripts/restore-check.sh /absolute/complete/backup-directory [--exercise-synthetic-recovery]' >&2
   exit 2
+fi
+exercise_synthetic=false
+if [[ $# -eq 2 ]]; then
+  [[ "$2" == --exercise-synthetic-recovery ]] || { echo 'Unknown option.' >&2; exit 2; }
+  exercise_synthetic=true
 fi
 backup_directory="$(cd "$1" && pwd)"
 python3 - "$backup_directory" <<'PY'
@@ -80,6 +85,8 @@ restore_environment=(
   --env AWS_ACCESS_KEY_ID=restore
   --env "AWS_SECRET_ACCESS_KEY=$restore_password"
   --env AWS_DEFAULT_REGION=us-east-1
+  --env TIKTOK_DISPLAY_ACCESS_TOKEN=
+  --env TIKTOK_CCL_ACCESS_TOKEN=
   --env CACHE_DIR=/tmp/cache
   --env SPOOL_DIR=/tmp/spool
 )
@@ -115,4 +122,8 @@ if actual != expected:
 print("Restored products, identity, alerts, and frozen evaluations match the captured state.")' \
       "$backup_directory/catalog-state.json"
 fi
-echo 'Isolated restore verified. No workers were started and no production destination was written.'
+if [[ "$exercise_synthetic" == true ]]; then
+  docker run --rm --network "$restore_network" "${restore_environment[@]}" "$pipeline_image" \
+    python scripts/recovery_fixture.py resume
+fi
+echo 'Isolated restore verified. No production destination was written.'
