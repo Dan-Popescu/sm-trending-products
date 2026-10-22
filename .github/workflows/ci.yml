@@ -2,6 +2,7 @@ name: Verify pipeline
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -59,12 +60,16 @@ jobs:
           cargo clippy --locked --manifest-path collector/Cargo.toml --all-targets -- -D warnings
           cargo test --locked --manifest-path collector/Cargo.toml
           cargo build --locked --manifest-path collector/Cargo.toml
-      - name: Verify Python
+      - name: Verify Python formatting and lint
         run: |
           uv run --locked ruff format --check src tests scripts
           uv run --locked ruff check src tests scripts
-          uv run --locked mypy src
-          uv run --locked pytest -ra --junitxml=output/test-results.xml
+      - name: Verify Python types
+        timeout-minutes: 5
+        run: uv run --locked mypy src
+      - name: Verify native PostgreSQL behavior
+        timeout-minutes: 10
+        run: uv run --locked pytest -vv -ra --durations=15 --junitxml=output/test-results.xml
       - name: Validate shell syntax
         run: |
           for script in scripts/*.sh deploy/postgres/*.sh; do bash -n "$script"; done
