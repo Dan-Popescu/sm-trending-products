@@ -113,9 +113,10 @@ def test_cost_scaling_preserves_exploration_at_the_collector_claim_boundary(cata
             ],
         },
     )
-    assert result["scheduled"] == 10
+    assert result["scheduled"] == 3
+    assert result["refresh_entities_scheduled"] == 10
     assert result["exploration_scheduled"] == 2
-    claims = [catalog.claim(f"cost-worker-{index}", 60, True, 3) for index in range(10)]
+    claims = [catalog.claim(f"cost-worker-{index}", 60, True, 3) for index in range(3)]
     assert {task["schedule_reason"]["bucket"] for task in claims[:2]} == {
         "exploration_query",
         "exploration_entity",
@@ -142,8 +143,11 @@ def test_parallel_schedulers_do_not_duplicate_or_lose_the_due_frontier(catalog):
             pool.map(lambda _: Scheduler(catalog).schedule(10, synthetic=True), range(4))
         )
     task_ids = [task for result in results for task in result["task_ids"]]
-    assert len(task_ids) == len(set(task_ids)) == 40
-    assert all(result["scheduled"] == 10 for result in results)
+    assert len(task_ids) == len(set(task_ids)) == 2
+    assert sum(result["refresh_entities_scheduled"] for result in results) == 40
+    tasks = catalog.all("SELECT schedule_reason,payload FROM collection_tasks")
+    assert all(len(task["payload"]["filters"]["video_ids"]) == 20 for task in tasks)
+    assert len({key for task in tasks for key in task["schedule_reason"]["entity_keys"]}) == 40
 
 
 @pytest.fixture
@@ -189,10 +193,11 @@ def test_scheduler_preserves_exploration_and_does_not_duplicate_due_work(catalog
             ),
         )
     result = Scheduler(catalog).schedule(10, synthetic=True)
-    assert result["scheduled"] == 10
-    assert result["exploration_scheduled"] >= 2
-    assert result["refresh_scheduled"] > 0
-    assert len(set(result["task_ids"])) == 10
+    assert result["scheduled"] == 3
+    assert result["exploration_scheduled"] >= 1
+    assert result["refresh_scheduled"] == 3
+    assert result["refresh_entities_scheduled"] == 40
+    assert len(set(result["task_ids"])) == 3
     repeated = Scheduler(catalog).schedule(10, synthetic=True)
     assert set(repeated["task_ids"]).isdisjoint(result["task_ids"])
     assert all(decision["policy_id"] == result["policy_id"] for decision in result["decisions"])
@@ -297,7 +302,12 @@ def test_pending_queue_backpressure_is_visible(catalog: object) -> None:
             (f"tiktok_display:video:v{index}", "tiktok_display", "creator", "video"),
         )
     first = Scheduler(catalog).schedule(10, synthetic=True, policy={"max_pending_tasks": 2})
-    assert first["scheduled"] == 2
+    assert first["scheduled"] == 1
+    # Saturation is measured in physical tasks, not the four entities they cover.
+    catalog.execute(
+        "INSERT INTO collection_tasks(task_id,source,account_id,operation,payload,synthetic) "
+        "VALUES('other-pending','tiktok_display','creator','list','{}',true)"
+    )
     second = Scheduler(catalog).schedule(10, synthetic=True)
     assert second["scheduled"] == 0
     assert second["effective_budget"] == 0
@@ -473,3 +483,167 @@ def test_full_queue_preserves_policy_without_scanning_or_deferring_entities(cata
     entity = catalog.one("SELECT last_scheduler_inspected_at,schedule_reason FROM entities")
     assert entity["last_scheduler_inspected_at"] == before["last_scheduler_inspected_at"]
     assert "deferred" not in entity["schedule_reason"]
+
+
+@pytest.mark.integration
+def test_display_refresh_budget_counts_physical_requests_and_covers_every_id(catalog):
+    from sm_trending_products.scheduler import Scheduler
+
+    catalog.configure_budget("tiktok_display", "creator", 100, 1)
+    for index in range(40):
+        catalog.execute(
+            "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type) "
+            "VALUES(%s,true,'tiktok_display','creator','video')",
+            (f"tiktok_display:video:grouped-{index}",),
+        )
+    first = Scheduler(catalog).schedule(1, synthetic=True)
+    second = Scheduler(catalog).schedule(1, synthetic=True)
+    assert first["scheduled"] == second["scheduled"] == 1
+    assert first["refresh_entities_scheduled"] == second["refresh_entities_scheduled"] == 20
+    tasks = catalog.all("SELECT payload,schedule_reason FROM collection_tasks")
+    assert len(tasks) == 2
+    assert {key for task in tasks for key in task["schedule_reason"]["entity_keys"]} == {
+        f"tiktok_display:video:grouped-{index}" for index in range(40)
+    }
+    for task in tasks:
+        assert len(task["payload"]["filters"]["video_ids"]) == 20
+        assert len(task["schedule_reason"]["entity_reasons"]) == 20
+    assert Scheduler(catalog).schedule(10, synthetic=True)["scheduled"] == 0
+    # A still-running grouped task protects every member, not just its representative.
+    catalog.execute("UPDATE entities SET next_due_at=clock_timestamp()-interval '1 hour'")
+    active = Scheduler(catalog).schedule(10, synthetic=True)
+    assert active["scheduled"] == 0
+    assert active["deferred_count"] == 40
+
+
+@pytest.mark.integration
+def test_commercial_refreshes_share_query_cycle_and_keep_entity_intentions(catalog):
+    from psycopg.types.json import Jsonb
+
+    from sm_trending_products.scheduler import Scheduler
+
+    source, account = "tiktok_ads", "commercial-account"
+    catalog.configure_budget(source, account, 100, 1)
+    payload = {"filters": {"country_code": "FR"}}
+    catalog.execute(
+        "INSERT INTO datasets(dataset_id,source,synthetic,state,manifest) "
+        "VALUES('commercial-origin',%s,true,'committed',%s)",
+        (
+            source,
+            Jsonb(
+                {
+                    "task_request": {
+                        "source": source,
+                        "account_id": account,
+                        "operation": "list",
+                        "payload": {
+                            **payload,
+                            "search_id": "previous-page",
+                            "cursor": 2,
+                        },
+                    }
+                }
+            ),
+        ),
+    )
+    for index in range(10):
+        catalog.execute(
+            "INSERT INTO entities(entity_key,synthetic,source,account_id,entity_type,"
+            "origin,priority) "
+            "VALUES(%s,true,%s,%s,'ad',%s,%s)",
+            (
+                f"tiktok_ads:ad:grouped-{index}",
+                source,
+                account,
+                Jsonb({"dataset_id": "commercial-origin"}),
+                index * 10,
+            ),
+        )
+    result = Scheduler(catalog).schedule(
+        2,
+        synthetic=True,
+        policy={
+            "discovery_queries": [
+                {
+                    "source": source,
+                    "account_id": account,
+                    "operation": "query",
+                    "payload": payload,
+                }
+            ]
+        },
+    )
+    assert result["scheduled"] == 1
+    assert result["refresh_scheduled"] == result["discovery_scheduled"] == 1
+    assert result["refresh_entities_scheduled"] == 10
+    task = catalog.one("SELECT * FROM collection_tasks")
+    assert task["payload"] == payload
+    assert task["operation"] == "query"
+    assert task["schedule_reason"]["bucket"] == "exploration_query"
+    intentions = task["schedule_reason"]["entity_reasons"]
+    assert len(intentions) == 10
+    assert {reason["tier"] for reason in intentions} == {"hot", "monitoring", "exploration"}
+    assert all(
+        "priority_inputs" in reason and "planned_interval_hours" in reason for reason in intentions
+    )
+    assert Scheduler(catalog).schedule(2, synthetic=True)["scheduled"] == 0
+    # Completing a cycle and making entities due again permits a new refresh;
+    # request fingerprints alone must never suppress a legitimate later cycle.
+    catalog.execute("UPDATE collection_tasks SET state='done'")
+    catalog.execute("UPDATE entities SET next_due_at=clock_timestamp()-interval '1 hour'")
+    next_cycle = Scheduler(catalog).schedule(2, synthetic=True)
+    assert next_cycle["scheduled"] == 1
+    assert next_cycle["task_ids"] != result["task_ids"]
+
+
+def test_display_grouping_keeps_fixture_contexts_and_tiers_separate():
+    from copy import deepcopy
+    from datetime import UTC, datetime
+
+    from sm_trending_products.source_contracts import group_refreshes
+
+    candidates = []
+    for index, (tier, endpoint) in enumerate(
+        [
+            ("hot", "http://127.0.0.1:1"),
+            ("exploration", "http://127.0.0.1:1"),
+            ("hot", "http://127.0.0.1:2"),
+            ("hot", "http://127.0.0.1:1"),
+        ]
+    ):
+        candidates.append(
+            {
+                "entity": {
+                    "source": "tiktok_display",
+                    "account_id": "a",
+                    "entity_key": f"tiktok_display:video:{index}",
+                    "next_due_at": datetime(2026, 1, 1, tzinfo=UTC),
+                },
+                "operation": "query",
+                "tier": tier,
+                "priority": 1,
+                "payload": {"endpoint_override": endpoint, "filters": {"video_ids": [str(index)]}},
+            }
+        )
+    original = deepcopy(candidates)
+    groups = group_refreshes(candidates)
+    assert sorted(len(group["members"]) for group in groups) == [1, 1, 2]
+    assert candidates == original
+
+
+def test_only_current_live_credentials_are_hinted_and_never_synthetic(monkeypatch):
+    import hashlib
+
+    from sm_trending_products.source_contracts import credential_keys
+
+    monkeypatch.setenv("TIKTOK_DISPLAY_ACCESS_TOKEN", "previous-token")
+    monkeypatch.setenv("TIKTOK_CCL_ACCESS_TOKEN", "shared-commercial-token")
+    previous = credential_keys(False)
+    monkeypatch.setenv("TIKTOK_DISPLAY_ACCESS_TOKEN", "rotated-token")
+    current = credential_keys(False)
+    assert current["tiktok_display"] == hashlib.sha256(b"rotated-token").hexdigest()
+    assert current["tiktok_display"] != previous["tiktok_display"]
+    assert current["tiktok_ads"] == current["tiktok_commercial"]
+    assert credential_keys(True) == {}
+    monkeypatch.delenv("TIKTOK_DISPLAY_ACCESS_TOKEN")
+    assert "tiktok_display" not in credential_keys(False)

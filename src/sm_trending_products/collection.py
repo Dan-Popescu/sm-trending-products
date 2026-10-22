@@ -11,7 +11,7 @@ from .collector import CollectionError, Collector, redact
 from .contracts import Observation, digest, now
 from .history import History
 from .settings import Settings
-from .source_contracts import canonical_operation
+from .source_contracts import canonical_operation, credential_keys
 
 
 class SourceCollection:
@@ -91,10 +91,21 @@ class SourceCollection:
             "synthetic": synthetic,
         }
         for _ in range(batch_size):
+            current_credentials = credential_keys(synthetic)
             task = self.catalog.claim(
-                self.worker_id, self.settings.lease_seconds, synthetic, self.settings.max_attempts
+                self.worker_id,
+                self.settings.lease_seconds,
+                synthetic,
+                self.settings.max_attempts,
+                credential_keys=current_credentials,
             )
             if task is None:
+                waiting = self.catalog.quota_waiting(
+                    synthetic, self.settings.max_attempts, credential_keys=current_credentials
+                )
+                if waiting:
+                    result["quota_waiting"] = waiting
+                    result["waiting"] = True
                 break
             dataset_id = digest({"task": task["task_id"], "page_index": task["page_index"]})
             try:

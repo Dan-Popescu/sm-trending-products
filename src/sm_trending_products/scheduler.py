@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .catalog import Catalog
 from .contracts import digest
 from .identity_rules import LINK_STATE_CTES
-from .source_contracts import SOURCES, canonical_operation
+from .source_contracts import SOURCES, canonical_operation, group_refreshes, refresh_signature
 
 
 def _reject_secrets(value: Any) -> None:
@@ -165,27 +165,6 @@ class Scheduler:
                     "INSERT INTO scheduler_policy_activations(policy_id,synthetic) VALUES(%s,%s)",
                     (policy_id, synthetic),
                 )
-            capabilities = connection.execute(
-                "SELECT DISTINCT ON(source,account_id,capability) "
-                "source,account_id,capability,state "
-                "FROM source_capabilities WHERE available_at<=%s "
-                "ORDER BY source,account_id,capability,available_at DESC,id DESC",
-                (checked_at,),
-            ).fetchall()
-            granted = {
-                (row["source"], row["account_id"], row["capability"]): row["state"]
-                for row in capabilities
-            }
-            verified = {
-                row["source"]
-                for row in connection.execute(
-                    "SELECT source FROM source_policies WHERE verified"
-                ).fetchall()
-            }
-            budgets = {
-                (row["source"], row["account_id"]): row
-                for row in connection.execute("SELECT * FROM request_budgets").fetchall()
-            }
             warnings: set[tuple[str, str, str]] = set()
             pending_row = connection.execute(
                 "SELECT count(*) AS count FROM collection_tasks "
@@ -226,6 +205,28 @@ class Scheduler:
                     ],
                     "coverage_scope": "configured_queries_and_known_entities_only",
                 }
+
+            capabilities = connection.execute(
+                "SELECT DISTINCT ON(source,account_id,capability) "
+                "source,account_id,capability,state "
+                "FROM source_capabilities WHERE available_at<=%s "
+                "ORDER BY source,account_id,capability,available_at DESC,id DESC",
+                (checked_at,),
+            ).fetchall()
+            granted = {
+                (row["source"], row["account_id"], row["capability"]): row["state"]
+                for row in capabilities
+            }
+            verified = {
+                row["source"]
+                for row in connection.execute(
+                    "SELECT source FROM source_policies WHERE verified"
+                ).fetchall()
+            }
+            budgets = {
+                (row["source"], row["account_id"]): row
+                for row in connection.execute("SELECT * FROM request_budgets").fetchall()
+            }
 
             def allowed(source: str, account_id: str, discovery: bool = False) -> bool:
                 if (source, account_id) not in budgets:
@@ -289,15 +290,29 @@ class Scheduler:
                 warnings.add(("all", "all", "candidate_scan_limit_reached"))
             if not config.discovery_queries:
                 warnings.add(("all", "all", "discovery_not_configured"))
-            active_entities = {
-                row["entity_key"]
-                for row in connection.execute(
-                    "SELECT schedule_reason->>'entity_key' AS entity_key FROM collection_tasks "
-                    "WHERE synthetic=%s AND state IN ('pending','leased') "
-                    "AND schedule_reason ? 'entity_key'",
-                    (synthetic,),
-                ).fetchall()
-            }
+            active_tasks = connection.execute(
+                "SELECT source,account_id,operation,payload,schedule_reason FROM collection_tasks "
+                "WHERE synthetic=%s AND state IN ('pending','leased')",
+                (synthetic,),
+            ).fetchall()
+            active_entities = set()
+            active_commercial = set()
+            for task in active_tasks:
+                reason = task["schedule_reason"]
+                active_entities.update(reason.get("entity_keys", []))
+                if reason.get("entity_key"):
+                    active_entities.add(reason["entity_key"])
+                if task["source"] in {"tiktok_ads", "tiktok_commercial"}:
+                    active_commercial.add(
+                        refresh_signature(
+                            task["source"], task["account_id"], task["operation"], task["payload"]
+                        )
+                    )
+                elif task["source"] == "tiktok_display" and task["operation"] == "query":
+                    active_entities.update(
+                        f"tiktok_display:video:{video_id}"
+                        for video_id in task["payload"].get("filters", {}).get("video_ids", [])
+                    )
             deferred_count = 0
             deferred_candidates: list[dict[str, Any]] = []
 
@@ -339,7 +354,10 @@ class Scheduler:
                     defer(entity, "refresh_origin_unavailable")
                     continue
                 operation, payload = refresh
-                if entity["entity_key"] in active_entities:
+                if entity["entity_key"] in active_entities or (
+                    source in {"tiktok_ads", "tiktok_commercial"}
+                    and refresh_signature(source, account, operation, payload) in active_commercial
+                ):
                     defer(entity, "refresh_already_pending")
                     continue
                 score = entity["assessment_score"]
@@ -384,6 +402,7 @@ class Scheduler:
                         },
                     }
                 )
+            candidates = group_refreshes(candidates)
             query_history = connection.execute(
                 "SELECT schedule_reason->>'query_id' AS query_id,"
                 "max(created_at) AS last_created_at,"
@@ -457,6 +476,21 @@ class Scheduler:
                 selected_queries.extend(
                     queries[len(selected_queries) : len(selected_queries) + remaining]
                 )
+            merged_discovery = 0
+            for candidate, _ in selected_entities:
+                entity = candidate["entity"]
+                for query, _ in selected_queries:
+                    if (
+                        entity["source"] != "tiktok_display"
+                        and refresh_signature(
+                            query.source, query.account_id, query.operation, query.payload
+                        )
+                        == candidate["request_signature"]
+                    ):
+                        candidate["discovery_query"] = query
+                        selected_queries = [item for item in selected_queries if item[0] != query]
+                        merged_discovery += 1
+                        break
             decisions = []
             for query, _ in selected_queries:
                 reason = {
@@ -487,19 +521,37 @@ class Scheduler:
                 decisions.append({"task_id": task_id, **reason})
             for candidate, bucket in selected_entities:
                 entity = candidate["entity"]
+                entity_reasons = []
+                for member in candidate["members"]:
+                    member_entity = member["entity"]
+                    member_reason = {
+                        "policy_id": policy_id,
+                        "policy_version": config.version,
+                        "entity_key": member_entity["entity_key"],
+                        "bucket": bucket,
+                        "tier": member["tier"],
+                        "scope": "known_entity_refresh",
+                        "priority_inputs": member["inputs"],
+                        "planned_interval_hours": member["interval_hours"],
+                        "scheduled_at": checked_at.isoformat(),
+                        "execution_priority": member["priority"]
+                        + (1000 if bucket == "exploration_entity" else 0),
+                    }
+                    entity_reasons.append(member_reason)
                 reason = {
-                    "policy_id": policy_id,
-                    "policy_version": config.version,
-                    "entity_key": entity["entity_key"],
-                    "bucket": bucket,
-                    "tier": candidate["tier"],
-                    "scope": "known_entity_refresh",
-                    "priority_inputs": candidate["inputs"],
-                    "planned_interval_hours": candidate["interval_hours"],
-                    "scheduled_at": checked_at.isoformat(),
-                    "execution_priority": candidate["priority"]
-                    + (1000 if bucket == "exploration_entity" else 0),
+                    **entity_reasons[0],
+                    "entity_keys": [row["entity_key"] for row in entity_reasons],
+                    "entity_reasons": entity_reasons,
+                    "request_signature": candidate["request_signature"],
                 }
+                if discovery_query := candidate.get("discovery_query"):
+                    reason.update(
+                        query_id=discovery_query.query_id,
+                        discovery_interval_hours=discovery_query.interval_hours,
+                        bucket="exploration_query",
+                        scope="known_entity_refresh_and_discovery",
+                        execution_priority=max(1000.0, reason["execution_priority"]),
+                    )
                 task_id = self._insert(
                     connection,
                     source=entity["source"],
@@ -508,21 +560,32 @@ class Scheduler:
                     payload=candidate["payload"],
                     synthetic=synthetic,
                     priority=reason["execution_priority"],
-                    key={"entity_key": entity["entity_key"], "due_at": entity["next_due_at"]},
+                    key={
+                        "entities": [
+                            {
+                                "entity_key": member["entity"]["entity_key"],
+                                "due_at": member["entity"]["next_due_at"],
+                            }
+                            for member in candidate["members"]
+                        ],
+                        "request_signature": candidate["request_signature"],
+                        "discovery": reason.get("query_id"),
+                    },
                     reason=reason,
                 )
-                connection.execute(
-                    "UPDATE entities SET next_due_at=%s,priority=%s,tier=%s,schedule_reason=%s "
-                    "WHERE entity_key=%s AND synthetic=%s",
-                    (
-                        checked_at + timedelta(hours=candidate["interval_hours"]),
-                        candidate["priority"],
-                        candidate["tier"],
-                        Jsonb(reason),
-                        entity["entity_key"],
-                        synthetic,
-                    ),
-                )
+                for member, member_reason in zip(candidate["members"], entity_reasons, strict=True):
+                    connection.execute(
+                        "UPDATE entities SET next_due_at=%s,priority=%s,tier=%s,schedule_reason=%s "
+                        "WHERE entity_key=%s AND synthetic=%s",
+                        (
+                            checked_at + timedelta(hours=member["interval_hours"]),
+                            member["priority"],
+                            member["tier"],
+                            Jsonb({**member_reason, "task_id": task_id}),
+                            member["entity"]["entity_key"],
+                            synthetic,
+                        ),
+                    )
                 decisions.append({"task_id": task_id, **reason})
             return {
                 "scheduled": len(decisions),
@@ -543,7 +606,10 @@ class Scheduler:
                     row["bucket"].startswith("exploration_") for row in decisions
                 ),
                 "refresh_scheduled": len(selected_entities),
-                "discovery_scheduled": len(selected_queries),
+                "refresh_entities_scheduled": sum(
+                    len(candidate["members"]) for candidate, _ in selected_entities
+                ),
+                "discovery_scheduled": len(selected_queries) + merged_discovery,
                 "warnings": [
                     {"source": source, "account_id": account, "category": category}
                     for source, account, category in sorted(warnings)
@@ -573,6 +639,8 @@ class Scheduler:
                         request[key] = origin["payload"][key]
                 if origin.get("endpoint_override"):
                     request["endpoint_override"] = origin["endpoint_override"]
+                if origin.get("observed_at"):
+                    request["fixture_observed_at"] = origin["observed_at"]
             return "query", request
         origin = (entity.get("origin_manifest") or {}).get("task_request") or {}
         if source not in {"tiktok_ads", "tiktok_commercial"}:
@@ -588,8 +656,11 @@ class Scheduler:
         payload.pop("search_id", None)
         payload.pop("cursor", None)
         Scheduler._validate_workspace_payload(payload, synthetic)
-        if synthetic and origin.get("endpoint_override"):
-            payload["endpoint_override"] = origin["endpoint_override"]
+        if synthetic:
+            if origin.get("endpoint_override"):
+                payload["endpoint_override"] = origin["endpoint_override"]
+            if origin.get("observed_at"):
+                payload["fixture_observed_at"] = origin["observed_at"]
         return "query", payload
 
     @staticmethod
