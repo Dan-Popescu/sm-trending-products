@@ -22,6 +22,10 @@ Each ticket is a narrow complete behavior with an operator-visible outcome and a
 
 ## Acceptance status
 
+- T10/T11 have controlled replay/forward software acceptance with
+  [criterion-by-criterion evidence](../../verification/evaluation-acceptance.md);
+  no actual predictive advantage or elapsed market outcome is inferred.
+
 - T01, T03, T04, T05, T06 and T07 have agent-verified controlled engineering acceptance, with
   [foundational evidence](../../verification/foundation-acceptance.md) and
   [scheduling evidence](../../verification/scheduling-acceptance.md).
