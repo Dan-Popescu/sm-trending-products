@@ -171,6 +171,12 @@ def benchmark(
                 "measurements": {
                     "processed_pages": collected,
                     "elapsed_seconds": time.perf_counter() - start,
+                    "queue_initial_tasks": pages,
+                    "queue_final": pipeline.catalog.all(
+                        "SELECT state,count(*) AS count FROM collection_tasks "
+                        "WHERE account_id=%s GROUP BY state",
+                        (run_id,),
+                    ),
                 },
                 "checks": {"collection_completed": False},
                 "failed_checks": ["collection_completed"],

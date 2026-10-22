@@ -72,6 +72,9 @@ def test_exhausted_budget_returns_a_failed_bounded_report_with_retryable_work(pi
     assert report["ok"] is False
     assert any(error["category"] == "quota_exhausted" for error in report["errors"])
     assert report["checks"]["collection_completed"] is False
+    states = {row["state"]: row["count"] for row in report["measurements"]["queue_final"]}
+    assert states == {"pending": 3, "done": 1}
+    assert sum(states.values()) == report["measurements"]["queue_initial_tasks"] == 4
     assert any(row["state"] == "pending" for row in pipeline.status()["queues"])
 
 

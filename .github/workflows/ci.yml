@@ -70,6 +70,9 @@ jobs:
       - name: Verify native PostgreSQL behavior
         timeout-minutes: 10
         run: uv run --locked pytest -vv -ra --durations=15 --junitxml=output/test-results.xml
+      - name: Verify controlled benchmark and quota exhaustion
+        timeout-minutes: 5
+        run: bash scripts/ci-benchmark.sh
       - name: Validate shell syntax
         run: |
           for script in scripts/*.sh deploy/postgres/*.sh; do bash -n "$script"; done
@@ -88,4 +91,8 @@ jobs:
           path: |
             output/test-results.xml
             output/recovery-report.json
+            output/offline-benchmark.json
+            output/offline-benchmark.log
+            output/offline-quota.json
+            output/offline-quota.log
           if-no-files-found: ignore

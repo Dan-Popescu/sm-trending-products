@@ -1,7 +1,10 @@
 # Offline engineering verification
 
-Date: 2026-10-22. Scope: follow-up to merged PR #1, developed on
-`codex/offline-readiness`. No actual TikTok credentials, approved capabilities,
+Date: 2026-10-22. Scope: follow-up to merged PR #1, integrated through
+[PR #24](https://github.com/Dan-Popescu/sm-trending-products/pull/24) at source
+revision `d06da2fe4c5cf775ce2c90258d2b6e66d261b5de`. The retained JUnit and source
+manifest describe that verification snapshot; subsequent changes receive their
+own exact-head CI evidence. No actual TikTok credentials, approved capabilities,
 production bucket or VPS were used.
 
 ## Executed application boundary
@@ -77,9 +80,9 @@ passed 159 tests at `47e4129`, built the image, started all four operator servic
 verified their health, and completed backup/restart and isolated restore.
 [Execution excerpts](offline/ci-log-extract.txt) and
 [artifact metadata](offline/ci-evidence.json) retain the exact boundary.
-Later linear benchmark grouping and exploration-priority changes bring the local
-suite to 162 tests; their
-final-head CI is tracked on PR #24. The full-service/recovery driver now starts worker,
+The final [PR #24 CI run](https://github.com/Dan-Popescu/sm-trending-products/actions/runs/39836477836)
+passed all 162 tests at `d06da2f`, built the image and completed full-service
+startup and isolated backup/restore. The full-service/recovery driver starts worker,
 Dagster daemon/webserver and Streamlit, probes their health, pauses/restarts
 writers during backup, and runs isolated database/object restore. The successful CI above establishes this expanded synthetic boundary.
 
