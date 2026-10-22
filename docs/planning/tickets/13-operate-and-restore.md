@@ -2,7 +2,9 @@
 
 GitHub issue: [#21](https://github.com/Dan-Popescu/sm-trending-products/issues/21). Implementation: [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
 
-**Status:** Deployment and recovery software implemented; image build and full isolated native restore passed in CI; provider acceptance and VPS rollout pending. See the [coverage record](../../implementation/coverage.md).
+**Status:** Controlled deployment/recovery acceptance is mapped in the
+[criterion matrix](../../verification/operations-acceptance.md). Actual provider
+acceptance and VPS rollout remain pending the specified machine and access.
 
 ## What to build
 
@@ -10,13 +12,13 @@ Provide a supported container deployment and demonstrate that collection, assess
 
 ## Acceptance criteria
 
-- [ ] The documented Docker Compose deployment produces an inspectable product assessment and forward decision from controlled evidence with all intended services.
-- [ ] The database and orchestration controls are private; the review surface has a documented restricted-access method and logs redact credentials.
-- [ ] Status distinguishes service health, stale evidence, denied access, queue age, storage pressure, and failed/quarantined batches.
-- [ ] An isolated restore from PostgreSQL backups and referenced object versions preserves committed observations, identity history, alerts, and forward decisions.
-- [ ] Restart after restore reconciles checkpoints and publication state without duplicated evidence.
-- [ ] Cache and compaction behavior preserve completed-manifest consistency and respect configured disk and memory limits.
-- [ ] The release includes operational and restore instructions; actual deployment waits for the user's specified VPS and access.
+- [x] The documented Docker Compose deployment produces an inspectable product assessment and forward decision from controlled evidence with all intended services.
+- [x] The database and orchestration controls are private; the review surface has a documented restricted-access method and logs redact credentials.
+- [x] Status distinguishes service health, stale evidence, denied access, queue age, storage pressure, and failed/quarantined batches.
+- [x] An isolated restore from PostgreSQL backups and referenced object versions preserves committed observations, identity history, alerts, and forward decisions.
+- [x] Restart after restore reconciles checkpoints and publication state without duplicated evidence.
+- [x] Cache and compaction behavior preserve completed-manifest consistency and respect configured disk and memory limits.
+- [x] The release includes operational and restore instructions; actual deployment waits for the user's specified VPS and access.
 
 ## Blocked by
 

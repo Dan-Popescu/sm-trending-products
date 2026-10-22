@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import shutil
 import socket
 import uuid
 from collections import defaultdict
@@ -31,6 +32,27 @@ from .evaluation_service import EvaluationService
 from .history import History, HistoryIndexPending
 from .replay import ReplayService
 from .settings import Settings
+
+
+def _filesystem_space(directory: Path) -> dict:
+    """Read filesystem counters without traversing cache or evidence files."""
+    probe = directory
+    while True:
+        try:
+            usage = shutil.disk_usage(probe)
+            return {
+                "status": "measured",
+                "scope": "directory_filesystem" if probe == directory else "ancestor_filesystem",
+                "total_bytes": usage.total,
+                "used_bytes": usage.used,
+                "available_bytes": usage.free,
+            }
+        except FileNotFoundError:
+            if probe == probe.parent:
+                return {"status": "unavailable"}
+            probe = probe.parent
+        except OSError:
+            return {"status": "unavailable"}
 
 
 class Pipeline:
@@ -105,6 +127,13 @@ class Pipeline:
             "capabilities": capabilities,
             "budgets": self.catalog.all("SELECT * FROM request_budgets ORDER BY source,account_id"),
             "storage_metrics": {"scope": "current_process", **self.history.metrics},
+            "storage_capacity": {
+                "cache": {
+                    **_filesystem_space(self.settings.cache_dir),
+                    "configured_cache_limit_bytes": self.settings.cache_max_bytes,
+                },
+                "spool": _filesystem_space(self.settings.spool_dir),
+            },
             "persisted_storage_metrics": self.catalog.one(
                 "SELECT COALESCE(sum((counters->>'get_requests')::bigint),0) AS get_operations,"
                 "COALESCE(sum((counters->>'put_requests')::bigint),0) AS put_operations,"
