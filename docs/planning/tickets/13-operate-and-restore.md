@@ -2,7 +2,7 @@
 
 GitHub issue: [#21](https://github.com/Dan-Popescu/sm-trending-products/issues/21). Implementation: [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1).
 
-**Status:** Deployment and recovery software implemented; Docker image build, full isolated native restore, provider acceptance, and VPS rollout pending. See the [coverage record](../../implementation/coverage.md).
+**Status:** Deployment and recovery software implemented; image build and full isolated native restore passed in CI; provider acceptance and VPS rollout pending. See the [coverage record](../../implementation/coverage.md).
 
 ## What to build
 

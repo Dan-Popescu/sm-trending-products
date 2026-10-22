@@ -38,7 +38,7 @@ Read the domain glossary and relevant architecture decisions before implementing
 
 ## Current repository state
 
-The repository is published on `codex/project-planning` in [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1). The initial permissions blocker was resolved on 2026-10-22. The [publication record](../implementation/publication.md) maps original local commits and issue identifiers. `main` remains the initialization baseline pending review and merge.
+The repository is published on `codex/project-planning` in [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1). The initial permissions blocker was resolved on 2026-10-22. The [publication record](../implementation/publication.md) maps original local commits and issue identifiers. PR #1 tracks the merge into `main`; its current GitHub state is the authoritative integration status.
 
 The preexisting local Python/SQLite scaffold was an abandoned experiment. The supported runtime now implements PostgreSQL operational state and S3 raw/Parquet history; the earlier experiment is outside that runtime. Implementation assumptions and substitutions are recorded in [the decisions recap](../implementation/assumptions.md).
 

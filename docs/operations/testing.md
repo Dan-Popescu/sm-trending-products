@@ -31,3 +31,9 @@ CI runs `tests/test_native_concurrency.py` against its native PostgreSQL service
 Live TikTok capability acceptance requires the real approved accounts/scopes and permitted intended use. Source fixtures cannot establish this. Capture actual response semantics, scope failures, and quotas separately before enabling live collection.
 
 A successful image build is not a successful VPS rollout. Record the target host, resource configuration, endpoint/provider acceptance, private access test, and successful isolated restore before production rollout.
+
+## Recorded execution
+
+The [native CI report](../verification/native-ci.md) records 142 tests passed without
+skips, the built image, and successful isolated recovery. Its artifact and tested
+revision identify the proof boundary; production/live acceptance remains separate.

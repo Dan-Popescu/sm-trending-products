@@ -28,7 +28,8 @@ git clone --branch codex/project-planning https://github.com/Dan-Popescu/sm-tren
 Original archive commits and published commits have identical trees but different
 metadata/IDs, recorded in [publication](publication.md). Keep the bundle as recovery
 history; do not force-push its old branch over the published branch. No main-branch
-merge or production deployment was performed.
+merge is implied by recovering an archive; the actual integration is tracked in
+PR #1. No production deployment is implied by source publication.
 
 ## Check and operate
 

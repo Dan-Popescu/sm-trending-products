@@ -43,4 +43,4 @@ The scripted isolated check is intentionally safer than automating an in-place p
 
 ## Validation status
 
-The snapshot CLI has been exercised against a live HTTP Moto service for capture, verification, restore, metadata preservation, corruption rejection, and refusal to restore over its source. Shell syntax and the Dagster instance configuration have been checked locally. Docker was unavailable in the implementation environment; Compose image build and the full container restore exercise must pass on a Docker-capable host or CI before production rollout.
+The snapshot CLI has been exercised against a live HTTP Moto service for capture, verification, restore, metadata preservation, corruption rejection, and refusal to restore over its source. Shell syntax and the Dagster instance configuration have been checked locally. The later [native CI run](../verification/native-ci.md) built the image and successfully executed the complete isolated native PostgreSQL/HTTP object-store restore, including catalog fingerprint equality. Actual provider behavior and VPS rollout remain separate acceptance gates.

@@ -26,3 +26,7 @@ Local synthetic setup, Docker services, external S3 configuration, private acces
 Use `sm-trends query --sql-file query.sql --synthetic` for bounded read-only DuckDB exploration of selected completed history. The `observations` view deduplicates replay copies; `observation_versions` preserves dataset versions for audit. The query surface cannot read arbitrary local files, contact external services, or modify deployment state.
 
 See [verification environments](docs/operations/testing.md) and [backup and restore](docs/operations/backup-and-restore.md) before deployment. Live TikTok permissions, native PostgreSQL concurrency, the Docker image, and actual VPS rollout are separate acceptance steps. No live source or infrastructure has been enabled merely by implementing its adapter.
+
+Native CI passed 142 tests without skips, built the deployment image, and verified
+isolated database/object recovery. See the [execution report](docs/verification/native-ci.md)
+for the tested revision and remaining production/live gates.

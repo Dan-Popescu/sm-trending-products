@@ -8,9 +8,11 @@ Published on 2026-10-22 after GitHub connector write access was enabled.
 - Global PRD issue: https://github.com/Dan-Popescu/sm-trending-products/issues/2
 - Six specification issues and fifteen delivery tickets: [published tracker mapping](../planning/github-issues.json).
 
-The repository was empty before publication. Its `main` branch contains only the
-initial README; implementation and specifications are on the PR branch until
-review and merge. No production deployment or live source was enabled.
+The repository was empty before publication. Its `main` branch was initialized
+with the README before the implementation PR. PR #1 tracks review and integration
+of the complete source and specifications into `main`. Its GitHub state is the
+authoritative merge record. No production deployment or live source is enabled
+merely by merging source code.
 
 The connector published the six original implementation steps through Git objects.
 Every remote tree was verified byte-for-byte identical by its Git tree SHA to the

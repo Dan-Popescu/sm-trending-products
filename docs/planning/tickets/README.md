@@ -22,8 +22,8 @@ Each ticket is a narrow complete behavior with an operator-visible outcome and a
 
 ## Acceptance status
 
-- T01–T12 have implemented software and behavioral test scenarios. Native PostgreSQL concurrent workers/leases/quotas still require verification on the native-service workflow; source fixtures do not establish live TikTok access.
-- T13 has deployment, backup, and isolated-restore tooling. The Docker image build, full native container restore, provider checks, and actual VPS rollout have not been demonstrated in this workspace.
+- T01–T12 have implemented software and behavioral test scenarios. The native PostgreSQL workflow passed worker/lease/quota scenarios; source fixtures do not establish live TikTok access.
+- T13 has deployment, backup, and isolated-restore tooling. The Docker image build and full native container restore passed in CI; actual provider checks and VPS rollout remain pending.
 - T14 has a measured synthetic sample and benchmark tooling. A production operating envelope, multiworker load capacity, and recurring provider cost remain unproven.
 - T15 has capability-verification tooling, but live acceptance is pending credentials, approved scopes, and permission for the actual intended use. It is not marked complete.
 

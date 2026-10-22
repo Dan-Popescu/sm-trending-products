@@ -68,9 +68,10 @@ approval for commercial product-trend research. No Research video API is used.
 
 This workspace cannot run Docker or a native PostgreSQL service under an ordinary
 database user. Functional SQL integration uses official PGlite plus HTTP Moto.
-Native PostgreSQL concurrency, the Docker image build, and container backup/restore
-are required checks in the provided CI and deployment workflow, not locally proven
-facts. The user's VPS and S3 account have not been accessed or deployed.
+The subsequent [native CI run](../verification/native-ci.md) passed the native
+concurrency suite, built the image, and verified actual isolated backup/restore.
+These are CI proofs, not local PGlite proofs or production-provider acceptance.
+The user's VPS and S3 account have not been accessed or deployed.
 
 Performance numbers apply only to the measured synthetic workload and environment.
 No sales advantage, profitability, global TikTok coverage, or cloud capacity is

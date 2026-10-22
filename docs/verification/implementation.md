@@ -3,7 +3,14 @@
 Date: 2026-10-22. Evidence is separated by execution boundary; pending external
 acceptance is not counted as a successful test.
 
-## Executed checks
+## Native CI acceptance
+
+The subsequent [native CI run](native-ci.md) passed **142 tests with no failures,
+errors, or skips**, built the deployment image, and completed the actual isolated
+backup/restore rehearsal. The report identifies the exact tested source revision
+and artifact checksums.
+
+## Earlier local checks
 
 - The final complete Python suite passed at application commit `2f516e3`:
   **139 passed, 3 skipped**, in 36.71 seconds. The [JUnit result](tests-local.xml)
@@ -59,14 +66,13 @@ Review summary: **Standards 0 hard violations and 0 open heuristics; Spec 0 open
 findings** within the reviewed scope. External acceptance remains a separate
 set of gates, not a standards finding or a passed specification requirement.
 
-## External gates
+## Remaining external gates
 
-Native PostgreSQL concurrency, the image build/runtime, full database/object
-backup and isolated restore, actual VPS/private access, production S3 behavior,
-representative load, and live TikTok permissions remain unverified locally.
-The [CI workflow](../../.github/workflows/ci.yml) runs the native concurrency tests,
-builds the image, and invokes [isolated recovery](../../scripts/ci-recovery.sh).
-Remote CI execution is now available through [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1); its acceptance results are recorded separately below when complete.
+Actual VPS/private access, production S3 behavior, representative capacity/fault
+exercises, and live TikTok permissions remain unverified. Native concurrency,
+image construction, and isolated database/object restore are now verified within
+the controlled CI boundary described above. CI does not establish live source
+coverage, provider durability, or business outcomes.
 
 Initial GitHub writes returned HTTP 403, and a terminal dry run had no usable
 credential. The connector permissions were subsequently fixed. The complete source

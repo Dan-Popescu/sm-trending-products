@@ -1,0 +1,18 @@
+{
+  "status": "verified",
+  "boundary": "native_container_recovery",
+  "database": "PostgreSQL 17.11",
+  "object_store": "HTTP Moto 5.2.4",
+  "synthetic": true,
+  "catalog_fingerprint_matched": true,
+  "seed": {
+    "alert_count": 1,
+    "dataset_ids": [
+      "6b8711ff95549501d03b45554b1f84fbd92622fcecc4f2e23b72d7bc4dd1be7b"
+    ],
+    "forward_decision_id": "c058242ff79a10c563c315f5d922487b74601e09dc6c699c772cb764001c8be6",
+    "observation_count": 2,
+    "product_count": 1,
+    "synthetic": true
+  }
+}
