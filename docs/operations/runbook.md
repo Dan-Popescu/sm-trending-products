@@ -106,6 +106,24 @@ Compaction publishes a completed replacement before changing the catalog's read 
 
 Cache eviction must affect only reproducible local copies. If a cached object fails its checksum, reacquire and verify it. Do not delete S3 history to free VPS cache space.
 
+`HISTORY_TARGET_ROWS_PER_FILE` defaults to 1,000 rows and bounds physical fanout
+under `HISTORY_PARTITION_BUCKETS`; small source pages therefore avoid producing
+one Parquet object per entity. The `history_compaction` Dagster job runs at minute
+45 each hour and compacts one compatible group of at most 100 datasets. Its
+default workspace is live; run it explicitly with `synthetic=true` for synthetic
+history. It preserves raw provenance and may correctly report `no_work` when no
+two eligible small datasets fit the row limit.
+
+The additive object/delivery index migration preserves existing datasets. Their
+first evidence-page requests may return `status=indexing` while preparing compact
+lookup references from verified legacy Parquet. Retry the same product, workspace,
+cutoff and cursor until `status=ready`. Each request processes at most
+`HISTORY_INDEX_OBJECTS_PER_CALL` objects (default 32), using 1,000-row Arrow batches.
+Current publications index atomically and do not require that preparation. Use
+`Pipeline.evidence_page` cursors for stable paging; the compatibility `evidence`
+offset API skips bounded pages and raises an explicit pending error during legacy
+preparation. Cursors cannot be reused with a different product, workspace or cutoff.
+
 ## Scale decisions
 
 Use [benchmarking and costs](benchmarking.md). Increase worker concurrency only within source quotas and after measuring database contention, memory, and store traffic. Move the same independent containers and endpoints first when leaving one VPS. A distributed queue, a new orchestration engine, or distributed SQL requires a measured bottleneck and a separate architectural decision.

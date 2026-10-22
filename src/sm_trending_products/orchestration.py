@@ -111,6 +111,15 @@ def source_retention(context: AssetExecutionContext) -> dict:
     return result
 
 
+@asset
+def history_compaction(context: AssetExecutionContext, config: BatchConfig) -> dict:
+    """One bounded compaction group per scheduled invocation."""
+    with Pipeline.from_env() as pipeline:
+        result = pipeline.compact(synthetic=config.synthetic, max_datasets=100)
+    context.add_output_metadata({"status": result["status"], "rows": result.get("rows", 0)})
+    return result
+
+
 collection_job = define_asset_job(
     "collection_batches",
     selection=AssetSelection.assets(
@@ -127,6 +136,10 @@ retention_job = define_asset_job(
     "retention_policy", selection=AssetSelection.assets(source_retention)
 )
 
+compaction_job = define_asset_job(
+    "history_compaction", selection=AssetSelection.assets(history_compaction)
+)
+
 defs = Definitions(
     assets=[
         collection_schedule,
@@ -135,9 +148,15 @@ defs = Definitions(
         prospective_decisions,
         outcome_maturation,
         source_retention,
+        history_compaction,
     ],
-    jobs=[collection_job, forward_job, outcomes_job, retention_job],
+    jobs=[collection_job, forward_job, outcomes_job, retention_job, compaction_job],
     schedules=[
+        ScheduleDefinition(
+            job=compaction_job,
+            cron_schedule="45 * * * *",
+            default_status=DefaultScheduleStatus.RUNNING,
+        ),
         ScheduleDefinition(
             job=collection_job,
             cron_schedule="*/15 * * * *",

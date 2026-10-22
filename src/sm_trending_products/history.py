@@ -8,13 +8,14 @@ import io
 import json
 import uuid
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import boto3
 import polars as pl
+import pyarrow.parquet as pq
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from psycopg.types.json import Jsonb
@@ -24,6 +25,10 @@ from .cache import cached_path, evict_cache, file_digest, pin_cached
 from .catalog import Catalog
 from .contracts import Observation, canonical, digest, utc
 from .settings import Settings
+
+
+class HistoryIndexPending(RuntimeError):
+    """A bounded legacy indexing slice completed; retry to continue migration."""
 
 
 class History:
@@ -162,6 +167,62 @@ class History:
         pl.DataFrame(rows, infer_schema_length=None).write_parquet(stream, compression="zstd")
         return stream.getvalue()
 
+    def normalized_objects(
+        self,
+        rows: Sequence[Observation],
+        prefix: str,
+        partition_buckets: int | None = None,
+        *,
+        physical_buckets: int | None = None,
+    ) -> tuple[list[tuple[dict, bytes]], int]:
+        """Size physical files independently from the configured maximum hash fanout."""
+        maximum = partition_buckets or self.settings.history_partition_buckets
+        target = self.settings.history_target_rows_per_file
+        physical_buckets = physical_buckets or min(
+            maximum, max(1, (len(rows) + target - 1) // target)
+        )
+        buckets: dict[int, list[Observation]] = defaultdict(list)
+        for obs in rows:
+            bucket = int(hashlib.sha256(obs.entity_key.encode()).hexdigest()[:8], 16)
+            buckets[bucket % physical_buckets].append(obs)
+        objects = []
+        for bucket, part in sorted(buckets.items()):
+            body = self.encode(part)
+            checksum = hashlib.sha256(body).hexdigest()
+            key = f"normalized/{prefix}/bucket={bucket:04d}/{checksum}.parquet"
+            objects.append(
+                (
+                    {
+                        "key": key,
+                        "sha256": checksum,
+                        "bytes": len(body),
+                        "bucket": bucket,
+                        "entity_keys": sorted({row.entity_key for row in part}),
+                        "min_observed_at": min(row.observed_at for row in part).isoformat(),
+                        "max_observed_at": max(row.observed_at for row in part).isoformat(),
+                        "min_available_at": min(row.available_at for row in part).isoformat(),
+                        "max_available_at": max(row.available_at for row in part).isoformat(),
+                    },
+                    body,
+                )
+            )
+        return objects, physical_buckets
+
+    @staticmethod
+    def recover_staged_objects(
+        recorded: dict, raw_hash: str, objects: Sequence[tuple[dict, bytes]]
+    ) -> list[tuple[dict, bytes]]:
+        """Honor persisted recovery layout across deployments and sizing changes."""
+        bodies = {obj["key"]: body for obj, body in objects}
+        if recorded["raw"]["sha256"] != raw_hash or set(bodies) != {
+            obj["key"] for obj in recorded["normalized"]
+        }:
+            raise ValueError("Staged dataset input or layout changed")
+        recovered = [(obj, bodies[obj["key"]]) for obj in recorded["normalized"]]
+        if any(hashlib.sha256(body).hexdigest() != obj["sha256"] for obj, body in recovered):
+            raise ValueError("Staged dataset normalized payload changed")
+        return recovered
+
     def publish(
         self,
         observations: Sequence[Observation],
@@ -207,27 +268,14 @@ class History:
         raw_body = gzip.compress((canonical(raw) + "\n").encode(), mtime=0)
         raw_hash = hashlib.sha256(raw_body).hexdigest()
         raw_key = f"raw/{prefix}/{raw_hash}.jsonl.gz"
-        objects: list[tuple[dict, bytes]] = []
-        buckets: dict[int, list[Observation]] = defaultdict(list)
-        for obs in rows:
-            bucket = int(hashlib.sha256(obs.entity_key.encode()).hexdigest()[:8], 16)
-            buckets[bucket % self.settings.history_partition_buckets].append(obs)
-        for bucket, part in sorted(buckets.items()):
-            body = self.encode(part)
-            checksum = hashlib.sha256(body).hexdigest()
-            key = f"normalized/{prefix}/bucket={bucket:04d}/{checksum}.parquet"
-            objects.append(
-                (
-                    {
-                        "key": key,
-                        "sha256": checksum,
-                        "bytes": len(body),
-                        "bucket": bucket,
-                        "entity_keys": sorted({r.entity_key for r in part}),
-                    },
-                    body,
-                )
-            )
+        recorded = existing["manifest"] if existing else None
+        recorded_buckets = recorded.get("partition_buckets") if recorded else None
+        physical = (
+            recorded.get("physical_partition_buckets", recorded_buckets) if recorded else None
+        )
+        objects, physical_buckets = self.normalized_objects(
+            rows, prefix, recorded_buckets, physical_buckets=physical
+        )
         manifest = {
             "schema_version": "1",
             "dataset_id": dataset_id,
@@ -235,6 +283,7 @@ class History:
             "source": source,
             "synthetic": synthetic,
             "partition_buckets": self.settings.history_partition_buckets,
+            "physical_partition_buckets": physical_buckets,
             "raw": {"key": raw_key, "sha256": raw_hash, "bytes": len(raw_body)},
             "normalized": [obj for obj, _ in objects],
             "row_count": len(rows),
@@ -245,6 +294,15 @@ class History:
         }
         manifest_key = f"manifests/{namespace}/{dataset_id}.json"
         manifest["manifest_key"] = manifest_key
+        if recorded:
+            # Staged evidence is a durable recovery contract. A deployment or
+            # settings change cannot rewrite its immutable manifest/layout.
+            if recorded["transform_version"] != transform_version:
+                raise ValueError("Staged dataset transformation changed")
+            objects = self.recover_staged_objects(recorded, raw_hash, objects)
+            manifest = recorded
+            raw_key = manifest["raw"]["key"]
+            manifest_key = manifest["manifest_key"]
         self.catalog.stage_dataset(
             dataset_id, source, synthetic, manifest, task=task, supersedes=supersedes
         )
@@ -265,7 +323,7 @@ class History:
 
     def read(
         self,
-        manifests: Sequence[dict],
+        manifests: Iterable[dict],
         *,
         as_of: datetime,
         since: datetime | None = None,
@@ -320,14 +378,9 @@ class History:
                     if frame.height > row_budget:
                         raise RowBudgetExceeded(row_budget)
                     for row in frame.iter_rows(named=True):
-                        row.pop("entity_key")
-                        for name in ("metrics", "attributes", "missing_fields"):
-                            row[name] = json.loads(row.pop(f"{name}_json"))
-                        obs = Observation.model_validate(row)
+                        obs = self._decode(row)
                         prior = result.get(obs.observation_id)
-                        if prior and prior.model_dump(exclude={"raw_dataset_id"}) != obs.model_dump(
-                            exclude={"raw_dataset_id"}
-                        ):
+                        if prior and self._payload(prior) != self._payload(obs):
                             raise ValueError(
                                 "Conflicting payloads under one observation identifier"
                             )
@@ -351,16 +404,139 @@ class History:
         until: datetime | None = None,
         period_window: tuple[datetime, datetime] | None = None,
     ) -> tuple[list[Observation], list[dict]]:
-        manifests = self.catalog.manifests(synthetic=synthetic, as_of=as_of, since=since)
-        return self.read(
-            manifests,
+        manifests: list[dict] = []
+
+        def selected():
+            for manifest in self.catalog.iter_manifests(
+                synthetic=synthetic,
+                as_of=as_of,
+                since=since if period_window is None else None,
+                until=until if period_window is None else None,
+                entity_keys=entity_keys,
+            ):
+                manifests.append(manifest)
+                yield manifest
+
+        observations = self.read(
+            selected(),
             as_of=as_of,
             since=since,
             until=until,
             period_window=period_window,
             entity_keys=entity_keys,
             max_rows=self.settings.analysis_max_rows_per_batch,
-        ), manifests
+        )
+        return observations, manifests
+
+    def page(
+        self,
+        as_of: datetime,
+        synthetic: bool,
+        entity_keys: set[str],
+        *,
+        limit: int = 100,
+        after: tuple[datetime, str] | None = None,
+    ) -> tuple[list[Observation], tuple[datetime, str] | None]:
+        """Select a page in SQL before loading the corresponding verified objects."""
+        if not 1 <= limit <= 1000:
+            raise ValueError("Evidence page limit must be between 1 and 1000")
+        if not entity_keys:
+            return [], None
+        self._ensure_page_index(as_of, synthetic, entity_keys)
+        with self.catalog.transaction() as connection:
+            # A page's file reads share the same retention fence as its SQL
+            # selection; retirement cannot delete an input halfway through it.
+            self.catalog.guard_retention(connection)
+            references = self.catalog.observation_page(
+                synthetic, as_of, entity_keys, limit + 1, after, connection=connection
+            )
+            references.sort(key=lambda row: (row["observed_at"], row["observation_id"]))
+            selected = references[:limit]
+            expected = {row["observation_id"]: row for row in selected}
+            objects = {row["object_key"]: row["descriptor"] for row in selected}
+            observations: dict[str, Observation] = {}
+            for obj in objects.values():
+                with pin_cached(self, obj) as path:
+                    query = self._page_query(path, as_of, entity_keys).filter(
+                        pl.col("observation_id").is_in(list(expected))
+                    )
+                    fields = [
+                        name for name in query.collect_schema().names() if name != "raw_dataset_id"
+                    ]
+                    frame = (
+                        query.unique(subset=fields).head(2 * limit + 1).collect(engine="streaming")
+                    )
+                    for row in frame.iter_rows(named=True):
+                        observation = self._decode(row)
+                        reference = expected[observation.observation_id]
+                        if (
+                            self.catalog.observation_fingerprint(observation)
+                            != reference["payload_sha256"]
+                        ):
+                            raise ValueError("Evidence index differs from verified object")
+                        # Keep the oldest active delivery's original provenance.
+                        if reference["object_key"] == obj["key"]:
+                            observations.setdefault(observation.observation_id, observation)
+            if len(observations) != len(selected):
+                raise ValueError("Evidence index references missing observations")
+            records = [observations[row["observation_id"]] for row in selected]
+            cursor = (
+                (records[-1].observed_at, records[-1].observation_id)
+                if len(references) > limit
+                else None
+            )
+            return records, cursor
+
+    def _ensure_page_index(self, as_of: datetime, synthetic: bool, entity_keys: set[str]) -> None:
+        """Backfill at most a configured number of legacy objects per request.
+
+        Current publications index within their SQL commit. Legacy files are
+        decoded in Arrow batches, never as an unbounded Python observation list.
+        The explicit pending result prevents partial indexing from looking empty.
+        """
+        budget = self.settings.history_index_objects_per_call
+        objects = self.catalog.unindexed_objects(synthetic, as_of, entity_keys, budget + 1)
+        for obj in objects[:budget]:
+            with self.catalog.transaction() as connection:
+                self.catalog.guard_inputs(connection, [obj["dataset_id"]])
+                state = connection.execute(
+                    "SELECT observations_indexed FROM normalized_objects "
+                    "WHERE dataset_id=%s AND object_key=%s FOR UPDATE",
+                    (obj["dataset_id"], obj["object_key"]),
+                ).fetchone()
+                if not state or state["observations_indexed"]:
+                    continue
+                with pin_cached(self, obj["descriptor"]) as path:
+                    for batch in pq.ParquetFile(path).iter_batches(batch_size=1000):
+                        rows = [(obj["object_key"], self._decode(row)) for row in batch.to_pylist()]
+                        self.catalog.index_object_rows(connection, obj["dataset_id"], rows)
+                connection.execute(
+                    "UPDATE normalized_objects SET observations_indexed=true "
+                    "WHERE dataset_id=%s AND object_key=%s",
+                    (obj["dataset_id"], obj["object_key"]),
+                )
+        if len(objects) > budget:
+            raise HistoryIndexPending(
+                "Historical evidence index is being prepared; retry this page"
+            )
+
+    @staticmethod
+    def _page_query(path: Path, as_of: datetime, entity_keys: set[str]) -> pl.LazyFrame:
+        return pl.scan_parquet(path).filter(
+            (pl.col("available_at").str.to_datetime(time_zone="UTC") <= utc(as_of))
+            & pl.col("entity_key").is_in(sorted(entity_keys))
+        )
+
+    @staticmethod
+    def _decode(row: dict) -> Observation:
+        row.pop("entity_key")
+        for name in ("metrics", "attributes", "missing_fields"):
+            row[name] = json.loads(row.pop(f"{name}_json"))
+        return Observation.model_validate(row)
+
+    @staticmethod
+    def _payload(observation: Observation) -> dict:
+        return observation.model_dump(exclude={"raw_dataset_id"})
 
     def _verify_remote_object(self, obj: dict) -> None:
         # Bypass cache: verify the backup/remote object itself with bounded memory.

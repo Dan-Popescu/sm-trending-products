@@ -301,6 +301,21 @@ class Identity:
             (synthetic, cutoff, cutoff),
         )
 
+    def entity_keys_for_product(
+        self, product_id: str, as_of: datetime, synthetic: bool = False
+    ) -> set[str]:
+        """Resolve ownership globally in SQL, project only the requested product."""
+        cutoff = utc(as_of)
+        return {
+            row["entity_key"]
+            for row in self.catalog.all(
+                "WITH "
+                + LINK_STATE_CTES
+                + "SELECT entity_key FROM resolved_link_owners WHERE product_id=%s",
+                (synthetic, cutoff, cutoff, product_id),
+            )
+        }
+
     def link_history(self, as_of: datetime, synthetic: bool = False) -> list[Row]:
         cutoff = utc(as_of)
         fields = ",".join(f"l.{field}" for field in LINK_FIELDS.split(","))
