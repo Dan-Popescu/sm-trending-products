@@ -91,7 +91,7 @@ def test_object_index_upgrade_reads_legacy_descriptors_and_indexes_later_publica
         connection.execute("DROP TABLE observation_deliveries")
         connection.execute("DROP TABLE normalized_object_entities")
         connection.execute("DROP TABLE normalized_objects")
-        connection.execute("DELETE FROM schema_migrations WHERE version=14")
+        connection.execute("DELETE FROM schema_migrations WHERE version>=14")
     pipeline.catalog.initialize()
     rows, manifests = pipeline.history.observations(
         now(),
@@ -165,6 +165,69 @@ def test_evidence_page_detects_conflicts_even_beyond_its_candidate_boundary(pipe
     )
     with pytest.raises(ValueError, match="Conflicting payloads"):
         pipeline.evidence_page("conflict-product", now(), True, limit=1)
+
+
+@pytest.mark.parametrize("upgrade_from_v14", [False, True])
+def test_evidence_keyset_uses_unicode_order_with_non_c_collation(pipeline, upgrade_from_v14):
+    if os.environ.get("TEST_DATABASE_ENGINE") == "pglite":
+        pytest.skip("Native PostgreSQL with ICU is required for the locale regression")
+    pipeline.catalog.execute("CREATE COLLATION identifier_locale (provider=icu, locale='en-US')")
+    locale_order = pipeline.catalog.all(
+        "SELECT identifier FROM (VALUES ('a'),('B')) AS ids(identifier) "
+        "ORDER BY identifier COLLATE identifier_locale"
+    )
+    assert [row["identifier"] for row in locale_order] == ["a", "B"]
+    pipeline.catalog.execute(
+        "ALTER TABLE observation_deliveries ALTER COLUMN observation_id "
+        "TYPE text COLLATE identifier_locale"
+    )
+    if upgrade_from_v14:
+        # Existing v14 databases have locale-dependent indexes and indexed history.
+        with pipeline.catalog.transaction() as connection:
+            connection.execute("DROP INDEX observation_page_lookup")
+            connection.execute("DROP INDEX observation_conflict_lookup")
+            connection.execute(
+                "CREATE INDEX observation_page_lookup ON observation_deliveries "
+                "(entity_key,observed_at,observation_id,available_at)"
+            )
+            connection.execute(
+                "CREATE INDEX observation_conflict_lookup ON observation_deliveries "
+                "(observation_id,entity_key,available_at)"
+            )
+            connection.execute("DELETE FROM schema_migrations WHERE version=15")
+    timestamp = now() - timedelta(hours=1)
+    identifiers = ["a", "B", "c", "Z", "é", "中"]
+    pipeline.import_records(
+        [record("locale", timestamp, observation_id=identifier) for identifier in identifiers],
+        synthetic=True,
+    )
+    if upgrade_from_v14:
+        pipeline.catalog.initialize()
+    pipeline.create_product("locale-product", "Locale product", synthetic=True)
+    pipeline.review_link("locale-product", "selection_fixture:video:locale")
+    cutoff = now()
+    cursor = None
+    actual = []
+    for _ in range(len(identifiers) + 1):
+        page = pipeline.evidence_page("locale-product", cutoff, True, limit=1, cursor=cursor)
+        actual.extend(row["observation_id"] for row in page["records"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert cursor is None
+    assert actual == sorted(identifiers)
+    index_query = (
+        "SELECT c.oid,c.relname,pg_get_indexdef(c.oid) AS indexdef FROM pg_class c "
+        "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema() "
+        "AND c.relname IN ('observation_page_lookup','observation_conflict_lookup') "
+        "ORDER BY c.relname"
+    )
+    indexes = pipeline.catalog.all(index_query)
+    assert len(indexes) == 2
+    assert all('COLLATE "C"' in row["indexdef"] for row in indexes)
+    assert pipeline.catalog.one("SELECT version FROM schema_migrations WHERE version=15")
+    pipeline.catalog.initialize()
+    assert pipeline.catalog.all(index_query) == indexes
 
 
 def test_current_page_reads_only_selected_objects_and_retirement_removes_lookup(pipeline):
