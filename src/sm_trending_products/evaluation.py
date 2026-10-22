@@ -12,7 +12,7 @@ import random
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import Field, model_validator
@@ -22,7 +22,6 @@ from .contracts import (
     Capability,
     Contract,
     FamilyMembership,
-    Measurement,
     Observation,
     Product,
     ProductLink,
@@ -30,6 +29,7 @@ from .contracts import (
     utc,
 )
 from .identity_rules import resolve_links
+from .outcome_timeline import EntityTimeline, _period
 
 
 class EvaluationConfig(Contract):
@@ -356,233 +356,6 @@ def freeze_decision(
     return snapshot
 
 
-def _metric(row: Observation, target: str) -> Measurement | None:
-    aliases = ("view_count", "views") if target == "attention" else ("units_sold", "sold_count")
-    return next((row.metrics[name] for name in aliases if name in row.metrics), None)
-
-
-def _period(row: Observation) -> tuple[datetime, datetime] | None:
-    start = row.attributes.get("period_start", row.attributes.get("source_period_start"))
-    end = row.attributes.get("period_end", row.attributes.get("source_period_end"))
-    if start is None or end is None:
-        return None
-    try:
-        bounds = utc(start), utc(end)
-        return bounds if bounds[0] < bounds[1] else None
-    except (ValueError, TypeError, AttributeError):
-        return None
-
-
-def _interval_counts(
-    rows: Sequence[Observation],
-    start: datetime,
-    end: datetime,
-    target: str,
-) -> dict[str, Any] | None:
-    periods: dict[tuple[datetime, datetime], Observation] = {}
-    for row in rows:
-        metric, period = _metric(row, target), _period(row)
-        if metric is None or metric.semantics != "interval" or period is None:
-            continue
-        if period[0] < start or period[1] > end or period[1] > row.observed_at:
-            continue
-        previous = periods.get(period)
-        if previous is None or (row.available_at, row.observation_id) > (
-            previous.available_at,
-            previous.observation_id,
-        ):
-            periods[period] = row
-    if not periods:
-        return None
-    cursor, lower, upper = start, 0, 0
-    precision = "exact"
-    evidence: list[str] = []
-    for period, row in sorted(periods.items()):
-        if period[0] != cursor:
-            return {"status": "censored", "reason": "interval_gap_or_overlap"}
-        metric = _metric(row, target)
-        assert metric is not None
-        lower += metric.lower
-        upper += metric.upper
-        if metric.precision == "estimated":
-            precision = "estimated"
-        elif metric.precision == "bounded" and precision != "estimated":
-            precision = "bounded"
-        evidence.append(row.observation_id)
-        cursor = period[1]
-    if cursor != end:
-        return {"status": "censored", "reason": "incomplete_interval_coverage"}
-    return {
-        "status": "measured",
-        "lower": lower,
-        "upper": upper,
-        "precision": precision,
-        "evidence_refs": evidence,
-        "unit": "count",
-    }
-
-
-def _counter_period(row: Observation, target: str) -> str | None:
-    if target == "attention":
-        return str(row.attributes.get("view_count_period", "lifetime"))
-    period = row.attributes.get("units_sold_period", row.attributes.get("sold_period"))
-    return str(period) if period is not None else None
-
-
-def _count_change(
-    rows: Sequence[Observation],
-    start: datetime,
-    end: datetime,
-    target: str,
-    max_gap: timedelta,
-) -> dict[str, Any]:
-    interval = _interval_counts(rows, start, end, target)
-    if interval is not None:
-        return interval
-    cumulative = [
-        row
-        for row in rows
-        if (metric := _metric(row, target)) is not None
-        and metric.semantics == "cumulative"
-        and row.observed_at <= end + max_gap
-    ]
-    start_before = [row for row in cumulative if row.observed_at <= start]
-    start_after = [row for row in cumulative if row.observed_at >= start]
-    end_before = [row for row in cumulative if row.observed_at <= end]
-    end_after = [row for row in cumulative if row.observed_at >= end]
-    if not all((start_before, start_after, end_before, end_after)):
-        return {"status": "censored", "reason": "missing_boundary_observation"}
-
-    def latest_key(row: Observation) -> tuple[datetime, datetime, str]:
-        return row.observed_at, row.available_at, row.observation_id
-
-    def earliest_revision(candidates: Sequence[Observation]) -> Observation:
-        timestamp = min(row.observed_at for row in candidates)
-        return max((row for row in candidates if row.observed_at == timestamp), key=latest_key)
-
-    first = max(start_before, key=latest_key)
-    first_after = earliest_revision(start_after)
-    last = max(end_before, key=latest_key)
-    last_after = earliest_revision(end_after)
-    boundaries = (first, first_after, last, last_after)
-    if any(
-        gap > max_gap
-        for gap in (
-            start - first.observed_at,
-            first_after.observed_at - start,
-            end - last.observed_at,
-            last_after.observed_at - end,
-        )
-    ):
-        return {"status": "censored", "reason": "stale_boundary_observation"}
-    if first_after.observed_at > last.observed_at:
-        return {"status": "censored", "reason": "insufficient_boundary_history"}
-    periods = {_counter_period(row, target) for row in boundaries}
-    if None in periods or len(periods) != 1:
-        return {"status": "censored", "reason": "unknown_or_changed_counter_period"}
-    measurements = [_metric(row, target) for row in boundaries]
-    initial, initial_upper, final, final_upper = measurements
-    assert all(measurement is not None for measurement in measurements)
-    assert initial is not None and initial_upper is not None
-    assert final is not None and final_upper is not None
-    if len({measurement.unit for measurement in measurements if measurement is not None}) != 1:
-        return {"status": "censored", "reason": "incompatible_counter_units"}
-    # A reset anywhere in the window makes a simple boundary subtraction invalid.
-    window = sorted(
-        [
-            row
-            for row in cumulative
-            if first.observed_at <= row.observed_at <= last_after.observed_at
-        ],
-        key=lambda row: (row.observed_at, row.available_at, row.observation_id),
-    )
-    previous = initial
-    for row in window:
-        current = _metric(row, target)
-        assert current is not None
-        if current.upper < previous.lower:
-            return {"status": "censored", "reason": "counter_correction_or_reset"}
-        previous = current
-    if final_upper.upper < initial.lower:
-        return {"status": "censored", "reason": "counter_correction_or_reset"}
-    precisions = {measurement.precision for measurement in measurements if measurement is not None}
-    exact_boundaries = first.observed_at == first_after.observed_at == start and (
-        last.observed_at == last_after.observed_at == end
-    )
-    precision = (
-        "estimated"
-        if "estimated" in precisions
-        else ("exact" if precisions == {"exact"} and exact_boundaries else "bounded")
-    )
-    return {
-        "status": "measured",
-        "lower": max(0, final.lower - initial_upper.upper),
-        "upper": final_upper.upper - initial.lower,
-        "precision": precision,
-        "evidence_refs": sorted({row.observation_id for row in boundaries}),
-        "unit": final.unit,
-        "start_bracket": [first.observed_at.isoformat(), first_after.observed_at.isoformat()],
-        "end_bracket": [last.observed_at.isoformat(), last_after.observed_at.isoformat()],
-    }
-
-
-def _realized_profit(
-    rows: Sequence[Observation],
-    start: datetime,
-    end: datetime,
-    currency: str | None,
-) -> dict[str, Any]:
-    periods: dict[tuple[datetime, datetime], Observation] = {}
-    for row in rows:
-        attrs, period = row.attributes, _period(row)
-        if (
-            period is None
-            or period[0] < start
-            or period[1] > end
-            or period[1] > row.observed_at
-            or attrs.get("currency") != currency
-            or attrs.get("realized") is not True
-            or attrs.get("costs_complete") is not True
-        ):
-            continue
-        previous = periods.get(period)
-        if previous is None or (row.available_at, row.observation_id) > (
-            previous.available_at,
-            previous.observation_id,
-        ):
-            periods[period] = row
-    cursor, profit = start, Decimal(0)
-    evidence: list[str] = []
-    for period, row in sorted(periods.items()):
-        if period[0] != cursor:
-            return {"status": "censored", "reason": "realized_profit_period_gap_or_overlap"}
-        try:
-            revenue = Decimal(str(row.attributes["realized_revenue"]))
-            costs = row.attributes["realized_costs"]
-            total_costs = (
-                sum((Decimal(str(value)) for value in costs.values()), Decimal(0))
-                if isinstance(costs, dict)
-                else Decimal(str(costs))
-            )
-            if not revenue.is_finite() or not total_costs.is_finite() or total_costs < 0:
-                raise ValueError("Invalid realized amount")
-            profit += revenue - total_costs
-        except (KeyError, TypeError, ValueError, InvalidOperation):
-            return {"status": "censored", "reason": "incomplete_realized_costs_or_revenue"}
-        evidence.append(row.observation_id)
-        cursor = period[1]
-    if not periods or cursor != end:
-        return {"status": "censored", "reason": "incomplete_realized_profit_coverage"}
-    return {
-        "status": "measured",
-        "lower": str(profit),
-        "upper": str(profit),
-        "precision": "exact",
-        "evidence_refs": evidence,
-        "unit": currency,
-    }
-
-
 def _product_outcome(
     product_id: str,
     evidence: dict[str, list[Observation]],
@@ -590,6 +363,9 @@ def _product_outcome(
     start: datetime,
     end: datetime,
     config: EvaluationConfig,
+    *,
+    timelines: Mapping[str, EntityTimeline] | None = None,
+    include_references: bool = True,
 ) -> dict[str, Any]:
     kinds = (
         {"video", "commercial_content"}
@@ -605,17 +381,16 @@ def _product_outcome(
     ]
     results = []
     for key in sorted(keys):
-        rows = evidence.get(key, [])
-        result = (
-            _realized_profit(rows, start, end, config.currency)
-            if config.target == "profit"
-            else _count_change(
-                rows,
-                start,
-                end,
-                config.target,
-                timedelta(hours=config.max_boundary_gap_hours),
-            )
+        timeline = (
+            timelines[key]
+            if timelines is not None
+            else EntityTimeline(evidence.get(key, []), config.target, config.currency)
+        )
+        result = timeline.outcome(
+            start,
+            end,
+            timedelta(hours=config.max_boundary_gap_hours),
+            include_references=include_references,
         )
         results.append({"entity_key": key, **result})
     if not results or any(result["status"] != "measured" for result in results):
@@ -677,7 +452,16 @@ def _lead_time(
     end: datetime,
     decision_time: datetime,
     config: EvaluationConfig,
+    *,
+    timelines: Mapping[str, EntityTimeline] | None = None,
 ) -> dict[str, Any]:
+    if timelines is None:
+        timelines = {
+            key: EntityTimeline(values, config.target, config.currency)
+            for key, product in bindings.items()
+            if product == product_id
+            for values in [evidence.get(key, [])]
+        }
     rows = [
         row for key, values in evidence.items() if bindings.get(key) == product_id for row in values
     ]
@@ -689,8 +473,26 @@ def _lead_time(
             boundaries.add(boundary)
     by_id = {row.observation_id: row for row in rows}
     for boundary in sorted(boundaries):
-        candidate = _product_outcome(product_id, evidence, bindings, start, boundary, config)
+        candidate = _product_outcome(
+            product_id,
+            evidence,
+            bindings,
+            start,
+            boundary,
+            config,
+            timelines=timelines,
+            include_references=False,
+        )
         if candidate["status"] == "success":
+            candidate = _product_outcome(
+                product_id,
+                evidence,
+                bindings,
+                start,
+                boundary,
+                config,
+                timelines=timelines,
+            )
             confirmation = max(
                 [
                     boundary,
@@ -842,26 +644,40 @@ def mature_decision(
                 ):
                     if item.entity_key in keys:
                         product_evidence[item.entity_key].append(item)
-            for index, (start, end, state) in enumerate(windows):
+            product_bindings = {key: product_id for key in keys}
+            timelines = {
+                key: EntityTimeline(product_evidence.get(key, []), config.target, config.currency)
+                for key in keys
+            }
+            for index, (start, end, state) in sorted(
+                enumerate(windows), key=lambda item: (item[1][0], item[1][1])
+            ):
                 if state != "matured":
                     continue
                 outcome = _product_outcome(
-                    product_id, product_evidence, snapshot["entity_bindings"], start, end, config
+                    product_id,
+                    product_evidence,
+                    product_bindings,
+                    start,
+                    end,
+                    config,
+                    timelines=timelines,
                 )
                 if outcome["status"] == "success":
                     outcome.update(
                         _lead_time(
                             product_id,
                             product_evidence,
-                            snapshot["entity_bindings"],
+                            product_bindings,
                             start,
                             end,
                             decision_time,
                             config,
+                            timelines=timelines,
                         )
                     )
                 measured[index][product_id] = outcome
-            del product_evidence
+            del product_evidence, timelines
 
     for index, scenario in enumerate(scenarios):
         state = scenario["status"]

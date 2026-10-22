@@ -319,10 +319,9 @@ class Pipeline:
                 since=as_of - timedelta(days=policy.lookback_days),
             )
 
-        for batch, (observations, manifests) in bounded_product_batches(
+        for batch, entity_keys, (observations, manifests) in bounded_product_batches(
             products, links, self.settings.analysis_product_batch_size, load
         ):
-            entity_keys = {row.entity_key for row in observations}
             dataset_ids.update(
                 item["dataset_id"]
                 for item in manifests

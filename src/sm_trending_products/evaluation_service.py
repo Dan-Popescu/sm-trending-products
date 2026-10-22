@@ -128,7 +128,7 @@ class EvaluationService:
         def load(keys: set[str]) -> tuple[list[Observation], set[str]]:
             return self._read_scope(cutoff, synthetic, keys, since, cutoff)
 
-        for batch, (observations, dependencies) in bounded_product_batches(
+        for batch, _keys, (observations, dependencies) in bounded_product_batches(
             products, links, self.history.settings.analysis_product_batch_size, load
         ):
             eligible = eligible_evidence(

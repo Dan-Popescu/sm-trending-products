@@ -21,7 +21,7 @@ def bounded_product_batches[T](
     links: Sequence[ProductLink],
     batch_size: int,
     load: Callable[[set[str]], T],
-) -> Iterator[tuple[list[Product], T]]:
+) -> Iterator[tuple[list[Product], set[str], T]]:
     """Read bounded scopes, splitting only on the reader's typed budget signal.
 
     A product that alone exceeds the limit remains an explicit error. Consumers
@@ -33,7 +33,7 @@ def bounded_product_batches[T](
     for link in links:
         keys_by_product[link.product_id].add(link.entity_key)
 
-    def read_partition(batch: list[Product]) -> Iterator[tuple[list[Product], T]]:
+    def read_partition(batch: list[Product]) -> Iterator[tuple[list[Product], set[str], T]]:
         keys = {key for product in batch for key in keys_by_product[product.product_id]}
         try:
             loaded = load(keys)
@@ -44,7 +44,7 @@ def bounded_product_batches[T](
             yield from read_partition(batch[:midpoint])
             yield from read_partition(batch[midpoint:])
         else:
-            yield batch, loaded
+            yield batch, keys, loaded
 
     for start in range(0, len(products), batch_size):
         yield from read_partition(list(products[start : start + batch_size]))
