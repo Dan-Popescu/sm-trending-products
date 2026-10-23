@@ -10,10 +10,12 @@ from __future__ import annotations
 import math
 import re
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from types import MappingProxyType
 from typing import Any
 
 import polars as pl
@@ -26,6 +28,64 @@ METRIC_ALIASES = {
     "units_sold": ("units_sold", "sold_count"),
     "purchase_intent_count": ("purchase_intent_count",),
 }
+
+
+@dataclass(frozen=True)
+class AssessmentIdentity:
+    """One globally resolved ownership snapshot shared by bounded partitions.
+
+    Resolving before partitioning retains newer owners outside a product batch.
+    The grouped immutable view also avoids regrouping all global links for each
+    partition. Its scope is checked at the analytical boundary before reuse.
+    """
+
+    cutoff: datetime
+    synthetic: bool
+    min_confidence: float
+    owners: Mapping[str, ProductLink]
+    by_product: Mapping[str, tuple[ProductLink, ...]]
+
+    @classmethod
+    def resolve(
+        cls,
+        products: Sequence[Product],
+        links: Sequence[ProductLink],
+        as_of: datetime,
+        synthetic: bool,
+        min_confidence: float,
+    ) -> AssessmentIdentity:
+        cutoff = utc(as_of)
+        other_namespace_ids = {
+            product.product_id for product in products if product.synthetic != synthetic
+        }
+        owners = resolve_links(
+            [link for link in links if link.product_id not in other_namespace_ids],
+            cutoff,
+            min_confidence=min_confidence,
+        )
+        grouped: dict[str, list[ProductLink]] = defaultdict(list)
+        for link in owners.values():
+            grouped[link.product_id].append(link)
+        return cls(
+            cutoff,
+            synthetic,
+            min_confidence,
+            MappingProxyType(owners),
+            MappingProxyType(
+                {
+                    key: tuple(sorted(values, key=lambda link: link.entity_key))
+                    for key, values in grouped.items()
+                }
+            ),
+        )
+
+    def validate(self, cutoff: datetime, synthetic: bool, min_confidence: float) -> None:
+        if (self.cutoff, self.synthetic, self.min_confidence) != (
+            cutoff,
+            synthetic,
+            min_confidence,
+        ):
+            raise ValueError("Prepared assessment identity has a different scope")
 
 
 def _unknown(reason: str, status: str = "unknown") -> dict[str, Any]:
@@ -915,6 +975,7 @@ def assess(
     policy: AssessmentPolicy | None = None,
     *,
     normalize: bool = True,
+    identity: AssessmentIdentity | None = None,
 ) -> list[dict[str, Any]]:
     """Assess products from evidence and identity decisions known at ``as_of``.
 
@@ -928,19 +989,11 @@ def assess(
         for product in products
         if product.synthetic == synthetic and utc(product.created_at) <= cutoff
     }
-    other_namespace_ids = {
-        product.product_id for product in products if product.synthetic != synthetic
-    }
-    # Unknown IDs may belong to another bounded product partition. Their newer
-    # decisions must still supersede old links into this partition.
-    link_map = resolve_links(
-        [link for link in links if link.product_id not in other_namespace_ids],
-        cutoff,
-        min_confidence=policy.min_link_confidence,
+    identity = identity or AssessmentIdentity.resolve(
+        products, links, cutoff, synthetic, policy.min_link_confidence
     )
-    identity_links: dict[str, list[ProductLink]] = defaultdict(list)
-    for owned_link in link_map.values():
-        identity_links[owned_link.product_id].append(owned_link)
+    identity.validate(cutoff, synthetic, policy.min_link_confidence)
+    link_map = identity.owners
     grouped: dict[str, list[Observation]] = defaultdict(list)
     excluded: dict[str, int] = defaultdict(int)
     since = cutoff - timedelta(days=policy.lookback_days)
@@ -966,7 +1019,7 @@ def assess(
     rows = []
     for product_id, product in sorted(product_map.items()):
         evidence = grouped[product_id]
-        resolved = sorted(identity_links[product_id], key=lambda link: link.entity_key)
+        resolved = identity.by_product.get(product_id, ())
         attention, features = _attention(evidence, cutoff, policy)
         demand, demand_features = _demand(evidence, cutoff, policy)
         features.update(demand_features)

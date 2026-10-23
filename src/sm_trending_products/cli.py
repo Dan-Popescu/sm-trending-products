@@ -38,6 +38,13 @@ def parser() -> argparse.ArgumentParser:
         "--create-bucket", action="store_true", help="Create a missing bucket explicitly"
     )
     command("status", "Inspect health, freshness, queues, capabilities, and storage traffic")
+    capacity = command("capacity", "Compare an explicit video workload with planning budgets")
+    capacity.add_argument("--products", type=int, required=True)
+    capacity.add_argument("--videos-per-product", type=int, required=True)
+    capacity.add_argument("--refreshes-per-day", type=float, required=True)
+    capacity.add_argument("--videos-per-request", type=int, default=20)
+    capacity.add_argument("--history-days", type=int, default=90)
+    capacity.add_argument("--source-requests-per-day", type=int)
     tasks = command(
         "enqueue", "Queue a bounded source request with an idempotency key", synthetic=True
     )
@@ -179,10 +186,23 @@ def read_json(path: Path | None, default=None):
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     try:
-        from .pipeline import Pipeline
+        if arguments.command == "capacity":
+            from .capacity import WorkloadProfile
+            from .settings import PlanningSettings
 
-        with Pipeline.from_env() as pipeline:
-            result = dispatch(pipeline, arguments)
+            result = WorkloadProfile(
+                products=arguments.products,
+                videos_per_product=arguments.videos_per_product,
+                refreshes_per_day=arguments.refreshes_per_day,
+                videos_per_request=arguments.videos_per_request,
+                history_days=arguments.history_days,
+                source_requests_per_day=arguments.source_requests_per_day,
+            ).report(PlanningSettings())
+        else:
+            from .pipeline import Pipeline
+
+            with Pipeline.from_env() as pipeline:
+                result = dispatch(pipeline, arguments)
         print(canonical(result), flush=True)
         return 1 if isinstance(result, dict) and result.get("ok") is False else 0
     except KeyboardInterrupt:
@@ -242,7 +262,16 @@ def dispatch(pipeline, args):
                 if not args.loop:
                     return result
                 print(canonical(result), flush=True)
-                stop.wait(args.poll_seconds)
+                # Drain a busy queue without an artificial pause between bounded
+                # batches. Empty/partial work and backpressure still wait, and
+                # every next batch checks the signal event before claiming work.
+                if (
+                    result.get("processed", 0) < args.batch_size
+                    or result.get("errors")
+                    or result.get("waiting")
+                    or result.get("quota_waiting")
+                ):
+                    stop.wait(args.poll_seconds)
             return {"status": "stopped"}
         case "schedule":
             return pipeline.schedule(

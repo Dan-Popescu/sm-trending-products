@@ -31,6 +31,12 @@ Separate discovery from refresh, allocate a bounded exploration budget, and refr
 - `scheduled` and `refresh_scheduled` report physical tasks; `refresh_entities_scheduled` reports the entity intentions covered. Discovery and refresh counts can overlap when one task serves both purposes.
 - A zero effective task budget returns explicit backpressure after persisting policy activation, without scanning or deferring candidate entities. Policy changes remain effective while a queue is full.
 - PostgreSQL coordinates due work and shared quotas. The application scheduler chooses what to collect; Dagster starts and observes bounded batches. Do not create one orchestration run per video.
+- Planning admission and analytical publication have independent configurable
+  cadences. The collection job does not rebuild the analytical universe after
+  every small batch. An explicit workload profile reports required refresh
+  requests versus the configured planning bound and any declared source budget;
+  it never infers runtime capacity or granted access. Busy workers continue after
+  successful full batches, while idle, failed or quota-deferred batches wait.
 - Record planned versus achieved intervals, skipped work, source update delay, policy version, and selection reasons. Evaluation uses the actual sampled universe and intervals.
 - The operator can inspect persisted plans through workspace-scoped summary and
   selected-member pages. Policy inputs remain frozen; current candidate timestamps

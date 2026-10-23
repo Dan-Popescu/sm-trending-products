@@ -313,7 +313,7 @@ class Pipeline:
         synthetic: bool = False,
         policy: AssessmentPolicy | None = None,
     ) -> dict:
-        from .analytics import assess, normalize_assessments
+        from .analytics import AssessmentIdentity, assess, normalize_assessments
 
         as_of, policy = utc(as_of or now()), policy or AssessmentPolicy()
         links = [ProductLink.model_validate(item) for item in self.links(as_of, synthetic)]
@@ -322,6 +322,10 @@ class Pipeline:
             for item in self._all_products(synthetic, as_of)
             if utc(item["created_at"]) <= as_of
         ]
+        identity = AssessmentIdentity.resolve(
+            products, links, as_of, synthetic, policy.min_link_confidence
+        )
+        resolved_links = tuple(identity.owners.values())
         rows: list[dict] = []
         dataset_ids: set[str] = set()
 
@@ -334,7 +338,7 @@ class Pipeline:
             )
 
         for batch, entity_keys, (observations, manifests) in bounded_product_batches(
-            products, links, self.settings.analysis_product_batch_size, load
+            products, resolved_links, self.settings.analysis_product_batch_size, load
         ):
             dataset_ids.update(
                 item["dataset_id"]
@@ -344,7 +348,16 @@ class Pipeline:
                 )
             )
             rows.extend(
-                assess(observations, batch, links, as_of, synthetic, policy, normalize=False)
+                assess(
+                    observations,
+                    batch,
+                    links,
+                    as_of,
+                    synthetic,
+                    policy,
+                    normalize=False,
+                    identity=identity,
+                )
             )
         rows = normalize_assessments(rows, policy)
         body = {

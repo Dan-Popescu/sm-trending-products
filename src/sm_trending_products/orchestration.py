@@ -14,11 +14,12 @@ from dagster import (
 
 from .contracts import now
 from .pipeline import Pipeline
+from .settings import PlanningSettings
 
 
 class BatchConfig(Config):
     synthetic: bool = False
-    request_budget: int = 100
+    request_budget: int | None = None
     batch_size: int = 20
 
 
@@ -47,7 +48,10 @@ def _report_batch(context: AssetExecutionContext, result: dict, **counts: int) -
 @asset
 def collection_schedule(context: AssetExecutionContext, config: BatchConfig) -> dict:
     with Pipeline.from_env() as pipeline:
-        result = pipeline.schedule(config.request_budget, synthetic=config.synthetic)
+        budget = config.request_budget
+        if budget is None:
+            budget = PlanningSettings().scheduler_request_budget
+        result = pipeline.schedule(budget, synthetic=config.synthetic)
     context.add_output_metadata(
         {"synthetic": config.synthetic, "scheduled": result.get("scheduled", 0)}
     )
@@ -122,9 +126,10 @@ def history_compaction(context: AssetExecutionContext, config: BatchConfig) -> d
 
 collection_job = define_asset_job(
     "collection_batches",
-    selection=AssetSelection.assets(
-        collection_schedule, observation_batch, opportunity_assessments
-    ),
+    selection=AssetSelection.assets(collection_schedule, observation_batch),
+)
+assessment_job = define_asset_job(
+    "opportunity_rankings", selection=AssetSelection.assets(opportunity_assessments)
 )
 forward_job = define_asset_job(
     "forward_decisions", selection=AssetSelection.assets(prospective_decisions)
@@ -150,7 +155,7 @@ defs = Definitions(
         source_retention,
         history_compaction,
     ],
-    jobs=[collection_job, forward_job, outcomes_job, retention_job, compaction_job],
+    jobs=[collection_job, assessment_job, forward_job, outcomes_job, retention_job, compaction_job],
     schedules=[
         ScheduleDefinition(
             job=compaction_job,
@@ -159,7 +164,12 @@ defs = Definitions(
         ),
         ScheduleDefinition(
             job=collection_job,
-            cron_schedule="*/15 * * * *",
+            cron_schedule=PlanningSettings.cron(PlanningSettings().collection_schedule_minutes),
+            default_status=DefaultScheduleStatus.RUNNING,
+        ),
+        ScheduleDefinition(
+            job=assessment_job,
+            cron_schedule=PlanningSettings.cron(PlanningSettings().assessment_schedule_minutes),
             default_status=DefaultScheduleStatus.RUNNING,
         ),
         ScheduleDefinition(

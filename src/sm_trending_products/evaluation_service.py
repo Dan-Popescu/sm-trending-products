@@ -11,7 +11,7 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 
 from .analysis_batches import bounded_product_batches
-from .analytics import assess, normalize_assessments
+from .analytics import AssessmentIdentity, assess, normalize_assessments
 from .catalog import Catalog
 from .collector import redact
 from .contracts import (
@@ -129,6 +129,9 @@ class EvaluationService:
             if link.product_id in product_ids
         ]
         config.validate_ledger_scope(links)
+        identity = AssessmentIdentity.resolve(
+            products, links, cutoff, synthetic, policy.min_link_confidence
+        )
         counts: Counter[str] = Counter()
         refs: dict[str, list[str]] = defaultdict(list)
         rows: list[dict[str, Any]] = []
@@ -158,7 +161,18 @@ class EvaluationService:
             )
             for row in eligible:
                 refs[row.entity_key].append(row.observation_id)
-            rows.extend(assess(eligible, batch, links, cutoff, synthetic, policy, normalize=False))
+            rows.extend(
+                assess(
+                    eligible,
+                    batch,
+                    links,
+                    cutoff,
+                    synthetic,
+                    policy,
+                    normalize=False,
+                    identity=identity,
+                )
+            )
 
         normalized = normalize_assessments(rows, policy)
         snapshot = freeze_decision(
