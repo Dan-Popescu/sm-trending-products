@@ -154,3 +154,13 @@ envelope. To repeat the same gate locally after building the collector:
 TEST_DATABASE_URL=postgresql://test_user:test_password@127.0.0.1:5432/pipeline_test \
   bash scripts/ci-benchmark.sh
 ```
+
+## Compact analytical result publication
+
+The [100-product retained-history measurement](../verification/compact-results.md)
+measures all immutable provenance nodes, uploads and SQL dependency edges for
+240,000 observations, an unchanged cutoff and one appended refresh wave. Its
+opt-in probe is separate from the ordinary suite. The measured small result
+header must not be used as the total storage or request cost: cold publication
+adds many objects, while repeated runs reuse them. Feature projection and actual
+source collection require their own timing and traffic evidence.

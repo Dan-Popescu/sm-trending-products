@@ -6,6 +6,7 @@ import json
 from datetime import timedelta
 
 import pytest
+from analytical_results import backtest_reports, backtest_snapshots
 from streamlit.testing.v1 import AppTest
 from test_evaluation_integration import outcome_config, record, seed_product
 
@@ -135,8 +136,8 @@ def test_sales_bounds_missingness_estimates_late_inputs_and_baseline_eligibility
     assert pipeline.mature(frozen["evaluation_id"], end) == original
     assert pipeline.evaluation(original["evaluation_id"], True)["payload"] == original["result"]
     historical = pipeline.backtest([decision], late, True, config)["result"]
-    assert historical["snapshots"] == [frozen["result"]]
-    assert historical["reports"] == [revised["result"]]
+    assert backtest_snapshots(pipeline, historical) == [frozen["result"]]
+    assert backtest_reports(pipeline, historical) == [revised["result"]]
 
     next_decision = decision + timedelta(days=5)
     rows = []
@@ -229,7 +230,7 @@ def test_transaction_baseline_requires_a_common_period_without_rewriting_old_dec
     assert newer["result"]["baselines"]["sales_popularity"] == ["calendar", "lifetime"]
     assert pipeline.evaluation(original["evaluation_id"], True)["payload"] == original["result"]
     replay = pipeline.backtest([decision], later, True, config)
-    assert replay["result"]["snapshots"] == [original["result"]]
+    assert backtest_snapshots(pipeline, replay["result"]) == [original["result"]]
 
 
 def test_defined_financial_ledgers_survive_price_offers_corrections_restart_and_review(
@@ -307,8 +308,8 @@ def test_defined_financial_ledgers_survive_price_offers_corrections_restart_and_
         == frozen["result"]["config"]["profit_contract"]
     )
     historical = pipeline.backtest([decision], first_cutoff, True, config)
-    assert historical["result"]["snapshots"] == [frozen["result"]]
-    assert historical["result"]["reports"] == [original["result"]]
+    assert backtest_snapshots(pipeline, historical["result"]) == [frozen["result"]]
+    assert backtest_reports(pipeline, historical["result"]) == [original["result"]]
     assert historical["result"]["methodology"]["profit_claim"] is False
     assert historical["result"]["methodology"]["measured_financial_outcome_count"] == 2
 

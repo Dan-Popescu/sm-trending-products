@@ -6,6 +6,12 @@ import time
 from datetime import timedelta
 
 import pytest
+from analytical_results import (
+    backtest_reports,
+    backtest_snapshots,
+    reference_ids,
+    snapshot_semantics,
+)
 
 from sm_trending_products.contracts import Product, ProductLink, now
 from sm_trending_products.evaluation import EvaluationConfig, freeze_decision
@@ -118,7 +124,7 @@ def test_replay_uses_old_identity_and_excludes_a_later_available_counter(pipelin
     result = pipeline.backtest(
         [decision_time], decision_time + timedelta(days=4), synthetic=True, config=outcome_config()
     )["result"]
-    snapshot = result["snapshots"][0]
+    snapshot = backtest_snapshots(pipeline, result)[0]
     assert snapshot["selected"] == ["original-owner"]
     assert snapshot["universe"][0]["features"]["view_count"] == 200
     assert snapshot["entity_bindings"][entity_key] == "original-owner"
@@ -139,7 +145,7 @@ def test_historical_shared_family_survives_later_family_changes(pipeline):
         synthetic=True,
         config=outcome_config(top_k=2),
     )["result"]
-    snapshot = result["snapshots"][0]
+    snapshot = backtest_snapshots(pipeline, result)[0]
     assert snapshot["coverage"]["family_count"] == 1
     assert len(snapshot["selected"]) == 1
     assert {row["family_id"] for row in snapshot["universe"]} == {"shared-original-family"}
@@ -160,8 +166,8 @@ def test_capability_history_keeps_a_later_grant_out_of_an_earlier_decision(pipel
     evaluation = pipeline.backtest(
         [decision_time], now() + timedelta(seconds=1), synthetic=True, config=outcome_config()
     )["result"]
-    assert evaluation["snapshots"][0]["selected"] == []
-    assert evaluation["snapshots"][0]["status"] == "insufficient_history"
+    assert backtest_snapshots(pipeline, evaluation)[0]["selected"] == []
+    assert backtest_snapshots(pipeline, evaluation)[0]["status"] == "insufficient_history"
     assert pipeline.capabilities()[0]["state"] == "available"
 
 
@@ -192,8 +198,18 @@ def test_normalization_replay_does_not_duplicate_or_change_backtest_evidence(pip
     assert len(pipeline.datasets()) == 2
     assert before["result"]["evaluation_id"] == after["result"]["evaluation_id"]
     assert before["evaluation_id"] == after["evaluation_id"]
-    assert after["result"]["snapshots"][0]["entity_bindings"][entity_key] == "replayed-product"
-    assert len(after["result"]["snapshots"][0]["evidence_refs"]) == 2
+    assert (
+        backtest_snapshots(pipeline, after["result"])[0]["entity_bindings"][entity_key]
+        == "replayed-product"
+    )
+    assert (
+        len(
+            reference_ids(
+                pipeline, backtest_snapshots(pipeline, after["result"])[0]["evidence_refs"]
+            )
+        )
+        == 2
+    )
 
 
 def test_prepared_history_adequacy_matches_raw_decisions_with_metadata_revisions(pipeline):
@@ -215,7 +231,10 @@ def test_prepared_history_adequacy_matches_raw_decisions_with_metadata_revisions
         row["attributes"]["normalizer_version"] = "2"
         revisions.append(row)
     pipeline.import_records(revisions, synthetic=True)
-    assert pipeline.freeze(cutoff, synthetic=True, config=config)["result"] == original
+    revised = pipeline.freeze(cutoff, synthetic=True, config=config)["result"]
+    assert revised["status"] == "insufficient_history"
+    assert revised["selected"] == original["selected"] == []
+    assert revised["input_provenance"]["count"] == 4
 
     late = record(
         entity_id,
@@ -224,7 +243,7 @@ def test_prepared_history_adequacy_matches_raw_decisions_with_metadata_revisions
         available_at=cutoff + timedelta(days=1),
     )
     pipeline.import_records([late], synthetic=True)
-    assert pipeline.freeze(cutoff, synthetic=True, config=config)["result"] == original
+    assert pipeline.freeze(cutoff, synthetic=True, config=config)["result"] == revised
     genuine = {
         **late,
         "observation_id": "genuine-third-known-time",
@@ -241,13 +260,15 @@ def test_prepared_history_adequacy_matches_raw_decisions_with_metadata_revisions
         EvaluationConfig.model_validate(config),
         synthetic=True,
     )
-    assert persisted == direct
+    assert snapshot_semantics(pipeline, persisted) == snapshot_semantics(pipeline, direct)
     assert persisted["status"] == "frozen"
     assert persisted["selected"] == ["revision-history"]
-    assert set(persisted["evidence_refs"]) == {row.observation_id for row in evidence}
-    assert len(persisted["evidence_refs"]) == 5
-    assert late["observation_id"] not in persisted["evidence_refs"]
-    assert set(persisted["universe"][0]["attention"]["evidence_refs"]) == {
+    assert set(reference_ids(pipeline, persisted["evidence_refs"])) == {
+        row.observation_id for row in evidence
+    }
+    assert len(reference_ids(pipeline, persisted["evidence_refs"])) == 5
+    assert late["observation_id"] not in reference_ids(pipeline, persisted["evidence_refs"])
+    assert set(reference_ids(pipeline, persisted["universe"][0]["attention"]["evidence_refs"])) == {
         row["observation_id"] for row in [*revisions, genuine]
     }
     assert persisted["universe"][0]["features"]["view_count"] == 300
@@ -294,14 +315,14 @@ def test_evaluation_partitions_ignore_unrelated_history_under_a_small_row_budget
     }
     assert len(frozen["result"]["universe"]) == 3
     assert frozen["result"]["selected"] == ["partition-product-2"]
-    assert len(frozen["result"]["evidence_refs"]) == 120
+    assert len(reference_ids(pipeline, frozen["result"]["evidence_refs"])) == 120
     matured = pipeline.mature(frozen["evaluation_id"], cutoff + timedelta(days=4))
     assert matured["result"]["scenarios"][0]["methods"]["policy"]["precision_at_k"] == 1
     replayed = pipeline.backtest(
         [cutoff], cutoff + timedelta(days=4), synthetic=True, config=outcome_config()
     )
-    assert replayed["result"]["snapshots"][0] == frozen["result"]
-    assert replayed["result"]["reports"][0] == matured["result"]
+    assert backtest_snapshots(pipeline, replayed["result"])[0] == frozen["result"]
+    assert backtest_reports(pipeline, replayed["result"])[0] == matured["result"]
     assert sum(row["row_count"] for row in pipeline.datasets()) > 300
 
 
@@ -392,7 +413,7 @@ def test_direct_and_persisted_decisions_use_the_same_declared_history_window(
         policy=policy,
     )
     stored = pipeline.freeze(cutoff, True, config.model_dump(mode="json"), policy=policy)["result"]
-    assert direct == stored
+    assert snapshot_semantics(pipeline, direct) == snapshot_semantics(pipeline, stored)
     oldest = min(observations, key=lambda row: row.observed_at).observation_id
     assert oldest not in direct["evidence_refs"]
     assert direct["selected"] == (["windowed"] if minimum_history == 2 else [])

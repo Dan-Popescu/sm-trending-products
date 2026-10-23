@@ -86,7 +86,9 @@ def test_runner_rejects_unbounded_input_before_creating_state(tmp_path):
     assert not list(tmp_path.iterdir())
 
 
-def test_native_case_reports_real_binary_default_layout_and_cleans_only_owned_state(tmp_path):
+def test_native_case_reports_real_binary_default_layout_and_cleans_only_owned_state(
+    tmp_path, monkeypatch
+):
     database_url = os.environ.get("TEST_DATABASE_URL")
     binary = Path(
         os.environ.get("TEST_BENCHMARK_COLLECTOR", ROOT / "collector/target/debug/sm-collector")
@@ -98,6 +100,9 @@ def test_native_case_reports_real_binary_default_layout_and_cleans_only_owned_st
         connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(sentinel)))
     output = tmp_path / "report.json"
     profile = "release" if "release" in binary.parts else "debug"
+    # This case verifies a successful run; the independent guard case below
+    # verifies stopping under low headroom without depending on host page cache.
+    monkeypatch.setattr(runner, "memory_headroom", lambda: 4 * runner.GIB)
     try:
         report = runner.run_case(
             ["--records", "4", "--product-count", "1", "--output", str(output)],
@@ -129,7 +134,7 @@ def test_native_case_reports_real_binary_default_layout_and_cleans_only_owned_st
             connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(sentinel)))
 
 
-def test_native_deadline_retains_final_queue_and_cleans_schema(tmp_path):
+def test_native_deadline_retains_final_queue_and_cleans_schema(tmp_path, monkeypatch):
     database_url = os.environ.get("TEST_DATABASE_URL")
     if not database_url:
         pytest.skip("Native test database required")
@@ -137,6 +142,9 @@ def test_native_deadline_retains_final_queue_and_cleans_schema(tmp_path):
     binary.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(60)\n")
     binary.chmod(0o700)
     output = tmp_path / "deadline.json"
+    # Exercise the deadline independently of unrelated cgroup page-cache pressure.
+    # The separate low-headroom case below exercises the real guard branch.
+    monkeypatch.setattr(runner, "memory_headroom", lambda: 4 * runner.GIB)
     report = runner.run_case(
         ["--records", "40", "--product-count", "4", "--output", str(output)],
         collector_binary=binary,
@@ -148,6 +156,35 @@ def test_native_deadline_retains_final_queue_and_cleans_schema(tmp_path):
     assert report["runner"]["samples"]
     states = {row["state"]: row["count"] for row in report["final_database_snapshot"]["queue"]}
     assert sum(states.values()) == 2 and states.get("leased") == 1
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        assert (
+            connection.execute(
+                "SELECT to_regnamespace(%s)", (report["runner"]["schema"],)
+            ).fetchone()[0]
+            is None
+        )
+
+
+def test_native_low_headroom_stops_before_deadline_and_cleans_schema(tmp_path, monkeypatch):
+    database_url = os.environ.get("TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("Native test database required")
+    binary = tmp_path / "memory-guard-collector"
+    binary.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(60)\n")
+    binary.chmod(0o700)
+    monkeypatch.setattr(runner, "memory_headroom", lambda: runner.GIB)
+    report = runner.run_case(
+        ["--records", "40", "--product-count", "4", "--output", str(tmp_path / "memory.json")],
+        collector_binary=binary,
+        case_timeout=4,
+    )
+    assert report["ok"] is False
+    assert report["status"] == "memory_headroom_limit"
+    assert report["runner"]["cleanup_errors"] == []
+    assert report["runner"]["samples"]
+    assert all(
+        sample["memory_headroom_bytes"] == runner.GIB for sample in report["runner"]["samples"]
+    )
     with psycopg.connect(database_url, autocommit=True) as connection:
         assert (
             connection.execute(

@@ -30,6 +30,11 @@ Show separately explained attention, demand, competition, and commercial-feasibi
 - Feasibility accepts provenance-preserving manual/imported costs, delivery constraints, and return assumptions. Contributions remain scenarios until actual costs and outcomes are available; missing values do not become zero.
 - Polars computes versioned features in bounded partitions. Publish reusable results for Streamlit; interactive views do not scan the entire historical store. DuckDB queries immutable dataset versions without a shared writable database file.
 - The private review surface loads only the selected view. Assessment, alert, and evaluation lists use bounded SQL projections; full snapshots are fetched only for the selected item. Product links are paged after resolving ownership at the selected cutoff. Evidence pages use cursors scoped to the selected product, cutoff, and workspace; historical preparation is shown explicitly and can be continued without advancing that cursor. Reads refresh on each interaction; successful mutations refresh the lists and advance the review cutoff. Database/object clients are session-scoped resources, replaced and closed when configuration or credentials change. Provider-file selectors and default shared AWS files participate through path/stat identity only; credential-file contents never enter the resource key.
+- New persisted results use compact schema `2`: evidence identifiers live in
+  immutable bounded provenance trees, with full input provenance retained even for
+  excluded rows. Selected-product details page references through the authoritative
+  publication lifecycle; new results never load an entire universe for review.
+  Old stored results remain unchanged. See [ADR0008](../adr/0008-compact-analytical-provenance.md).
 - Retain each dimension and confidence separately. A configurable ranking policy may combine them, but must expose weights, missing-data treatment, minimum evidence, scope, and reasons. Do not default unknown demand to zero or call an attention-only ranking a sales ranking.
 - Alert deduplication and cooldown are explicit policies. Frozen alerts retain evidence references, coverage, availability cutoff, identity version, and scoring version.
 - Published assessment rows carry an `identity` snapshot: a deterministic hash of

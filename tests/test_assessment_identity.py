@@ -144,3 +144,41 @@ def test_published_assessment_resolves_once_for_multiple_native_partitions(pipel
     assert [row["features"]["growth_per_hour"] for row in result["rows"]] == pytest.approx(
         [100] * 7
     )
+
+
+def test_projection_age_anchor_uses_only_the_same_usable_video_timelines():
+    cutoff = BASE + timedelta(days=4)
+    product = Product(product_id="p", name="Product", created_at=BASE, synthetic=True)
+    links = [
+        ProductLink(product_id="p", entity_key=f"fixture:video:v{i}", available_at=BASE)
+        for i in range(4)
+    ]
+    rows = []
+    for index in range(4):
+        times = (
+            [cutoff - timedelta(hours=1)]
+            if index == 2
+            else [BASE + timedelta(hours=1), BASE + timedelta(hours=2)]
+            if index == 3
+            else [cutoff - timedelta(hours=2), cutoff - timedelta(hours=1)]
+        )
+        for point, when in enumerate(times):
+            rows.append(
+                Observation(
+                    observation_id=f"v{index}-{point}",
+                    source="fixture",
+                    entity_type="video",
+                    entity_id=f"v{index}",
+                    observed_at=when,
+                    available_at=when,
+                    published_at=BASE + timedelta(hours=index) if index != 3 else BASE,
+                    synthetic=True,
+                    metrics={"view_count": Measurement(lower=point * 100, upper=point * 100)},
+                )
+            )
+    anchors = {}
+    oracle = analytics.assess(rows, [product], links, cutoff, True)
+    prepared = analytics.assess(rows, [product], links, cutoff, True, age_anchors=anchors)
+    assert prepared == oracle
+    assert anchors == {"p": BASE}
+    assert prepared[0]["features"]["age_hours"] == 96

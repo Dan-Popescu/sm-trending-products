@@ -7,6 +7,7 @@ from copy import deepcopy
 from datetime import timedelta
 
 import pytest
+from analytical_results import reference_ids
 from streamlit.testing.v1 import AppTest
 from test_pipeline_integration import video_observation
 
@@ -77,8 +78,12 @@ def test_published_attention_and_identity_remain_auditable_after_resets_and_reas
         row["decision_id"] for row in decisions if row["product_id"] == "broad"
     )
     evidence = pipeline.evidence("broad", cutoff, True)
-    assert set(broad["evidence_refs"]) == {row["observation_id"] for row in evidence}
-    assert set(broad["attention"]["evidence_refs"]) == set(broad["evidence_refs"])
+    assert set(reference_ids(pipeline, broad["evidence_refs"])) == {
+        row["observation_id"] for row in evidence
+    }
+    assert set(reference_ids(pipeline, broad["attention"]["evidence_refs"])) == set(
+        reference_ids(pipeline, broad["evidence_refs"])
+    )
     for row in first["rows"]:
         assert {"attention", "demand", "competition", "feasibility"} <= row.keys()
         assert row["demand"]["score"] is None and row["feasibility"]["score"] is None

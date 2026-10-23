@@ -105,6 +105,17 @@ class DashboardPipeline(Protocol):
         cursor: str | None = None,
     ) -> Row: ...
 
+    def analytical_page(
+        self,
+        kind: str,
+        identifier: str,
+        synthetic: bool = False,
+        *,
+        path: Sequence[str | int],
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Row: ...
+
 
 def display_safe(value: Any) -> Any:
     """Remove secret-bearing metadata before rendering a public facade result."""
@@ -199,6 +210,133 @@ def _records(label: str, records: Sequence[Row]) -> None:
         st.info(f"No {label} recorded in this workspace.")
 
 
+def _analytical_details(
+    pipeline: DashboardPipeline,
+    kind: str,
+    identifier: str,
+    synthetic: bool,
+    value: Any,
+    *,
+    prefix: tuple[str | int, ...] = (),
+    depth: int = 0,
+) -> None:
+    """Read one published collection page and one selected record per level."""
+    if depth >= 6:
+        return
+    found: list[tuple[tuple[str | int, ...], Row]] = []
+    pending: list[tuple[tuple[str | int, ...], Any]] = [((), value)]
+    visited = 0
+    while pending and visited < 1000:
+        path, item = pending.pop()
+        visited += 1
+        if isinstance(item, dict):
+            if item.get("format") in {"sharded-provenance-v1", "sharded-records-v1"}:
+                found.append((path, item))
+            elif len(path) < 8:
+                pending.extend(
+                    (path + (key,), child)
+                    for key, child in reversed(list(item.items()))
+                    if isinstance(key, str) and not SECRET_KEY.search(key)
+                )
+        elif isinstance(item, list) and len(path) < 8:
+            pending.extend((path + (index,), child) for index, child in enumerate(item[:20]))
+    if not found:
+        return
+    scope = hashlib.sha256(
+        canonical(
+            [
+                kind,
+                identifier,
+                synthetic,
+                prefix,
+                [(path, descriptor.get("root")) for path, descriptor in found],
+            ]
+        ).encode()
+    ).hexdigest()[:20]
+    labels = {
+        "snapshots": "Frozen decisions",
+        "reports": "Outcome reports",
+        "universe": "Candidate products",
+        "evidence_refs": "Evidence references",
+    }
+
+    def label(index: int) -> str:
+        return (
+            " / ".join(
+                labels.get(str(part), str(part).replace("_", " ").title())
+                for part in found[index][0]
+            )
+            or "Published records"
+        )
+
+    selected = st.selectbox(
+        "Inspect published details",
+        list(range(len(found))),
+        format_func=label,
+        key=f"analytical_collection_{scope}",
+    )
+    if selected is None:
+        return
+    path, descriptor = found[selected]
+    full_path = prefix + path
+    count = descriptor.get("count", 0)
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+        st.error("This published collection has invalid metadata.")
+        return
+    st.caption(f"{count:,} published items. Details load one page at a time.")
+    page_scope = scope + "_" + str(selected)
+    page = st.number_input(
+        "Detail page",
+        min_value=1,
+        max_value=max(1, (count + EVIDENCE_PAGE_SIZE - 1) // EVIDENCE_PAGE_SIZE),
+        value=1,
+        step=1,
+        key=f"analytical_page_{page_scope}",
+    )
+    result: Row = _read(
+        "published details",
+        lambda: pipeline.analytical_page(
+            kind,
+            identifier,
+            synthetic,
+            path=full_path,
+            limit=EVIDENCE_PAGE_SIZE,
+            offset=(int(page) - 1) * EVIDENCE_PAGE_SIZE,
+        ),
+        {},
+    )
+    if "references" in result:
+        references = result["references"][:EVIDENCE_PAGE_SIZE]
+        if references:
+            st.dataframe(
+                {"Observation ID": [display_safe(item) for item in references]},
+                hide_index=True,
+                width="stretch",
+            )
+        return
+    records = result.get("records", [])[:EVIDENCE_PAGE_SIZE]
+    if not records:
+        return
+    chosen = st.selectbox(
+        "Inspect published item",
+        list(range(len(records))),
+        format_func=lambda index: str(display_safe(records[index]["id"])),
+        key=f"analytical_record_{page_scope}_{int(page)}",
+    )
+    if chosen is not None:
+        record = records[chosen]
+        st.json(display_safe(record["value"]), expanded=False)
+        _analytical_details(
+            pipeline,
+            kind,
+            identifier,
+            synthetic,
+            record["value"],
+            prefix=full_path + (record["id"],),
+            depth=depth + 1,
+        )
+
+
 def _evidence(
     pipeline: DashboardPipeline, product_id: str, as_of: datetime, synthetic: bool
 ) -> None:
@@ -269,6 +407,7 @@ def _opportunities(
         )
         if selected_row is not None:
             st.json(display_safe(selected_row), expanded=False)
+            _analytical_details(pipeline, "assessment", selected, synthetic, selected_row)
     else:
         st.info(
             "No published assessments. Run the analytical batch after collecting "
@@ -454,6 +593,13 @@ def _history(pipeline: DashboardPipeline, synthetic: bool) -> None:
             )
             if detail is not None:
                 st.json(display_safe(detail), expanded=False)
+                _analytical_details(
+                    pipeline,
+                    "evaluation",
+                    evaluations[selected_index]["evaluation_id"],
+                    synthetic,
+                    detail.get("payload", {}),
+                )
 
 
 def _collection_plan(pipeline: DashboardPipeline, synthetic: bool) -> None:

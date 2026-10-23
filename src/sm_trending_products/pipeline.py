@@ -9,6 +9,7 @@ import shutil
 import socket
 import uuid
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from .contracts import (
 )
 from .evaluation_service import EvaluationService
 from .history import History, HistoryIndexPending
+from .provenance import Provenance
 from .replay import ReplayService
 from .settings import Settings
 
@@ -61,6 +63,7 @@ class Pipeline:
         os.environ.setdefault("POLARS_MAX_THREADS", str(settings.polars_max_threads))
         self.catalog = Catalog(settings.database_url.get_secret_value())
         self.history = History(settings, self.catalog)
+        self.provenance = Provenance(self.catalog, self.history)
         self.collector = Collector(settings)
         self.worker_id = settings.worker_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:12]}"
         self._collection = SourceCollection(
@@ -327,7 +330,7 @@ class Pipeline:
         )
         resolved_links = tuple(identity.owners.values())
         rows: list[dict] = []
-        dataset_ids: set[str] = set()
+        input_scopes = []
 
         def load(entity_keys: set[str]) -> tuple[list[Observation], list[dict]]:
             return self._observations(
@@ -337,41 +340,48 @@ class Pipeline:
                 since=as_of - timedelta(days=policy.lookback_days),
             )
 
-        for batch, entity_keys, (observations, manifests) in bounded_product_batches(
+        for batch, _entity_keys, (observations, _manifests) in bounded_product_batches(
             products, resolved_links, self.settings.analysis_product_batch_size, load
         ):
-            dataset_ids.update(
-                item["dataset_id"]
-                for item in manifests
-                if any(
-                    set(obj["entity_keys"]) & entity_keys for obj in item["manifest"]["normalized"]
-                )
+            input_scopes.extend(
+                self.provenance.audit_products(observations, identity.owners, synthetic)
             )
             rows.extend(
-                assess(
+                self.provenance.compact(
+                    assess(
+                        observations,
+                        batch,
+                        links,
+                        as_of,
+                        synthetic,
+                        policy,
+                        normalize=False,
+                        identity=identity,
+                    ),
                     observations,
-                    batch,
-                    links,
-                    as_of,
                     synthetic,
-                    policy,
-                    normalize=False,
-                    identity=identity,
                 )
             )
         rows = normalize_assessments(rows, policy)
         body = {
+            "schema_version": "2",
             "as_of": as_of,
             "synthetic": synthetic,
             "policy": policy.model_dump(mode="json"),
             "rows": rows,
-            "datasets": sorted(dataset_ids),
+            "datasets": {"location": "sharded_provenance", "scope": "source_deliveries"},
+            "input_provenance": self.provenance.combine(input_scopes, synthetic),
         }
         run_id = digest(body)
         key = f"assessments/{'synthetic' if synthetic else 'live'}/{run_id}.json"
-        self.catalog.stage_derivation(key, sorted(dataset_ids))
+        self.catalog.stage_derivation(key, ())
         with self.catalog.transaction() as connection:
-            self.catalog.guard_inputs(connection, sorted(dataset_ids))
+            self.provenance.attach(connection, key, self.provenance.roots(body))
+            connection.execute(
+                "UPDATE derived_publications SET object_sha256=%s,object_bytes=%s "
+                "WHERE object_key=%s",
+                (run_id, len(canonical(body).encode()), key),
+            )
             self.history.put(
                 key,
                 canonical(body).encode(),
@@ -387,7 +397,7 @@ class Pipeline:
                     synthetic,
                     Jsonb(policy.model_dump(mode="json")),
                     key,
-                    Jsonb(sorted(dataset_ids)),
+                    Jsonb([]),
                 ),
             )
             for row in rows:
@@ -471,6 +481,68 @@ class Pipeline:
             (product_id, synthetic),
         )
         return row["payload"] if row else None
+
+    def _analytical_value(
+        self,
+        kind: str,
+        identifier: str,
+        synthetic: bool,
+        path: Sequence[str | int],
+    ):
+        if len(path) > 32:
+            raise ValueError("Analytical paths may contain at most 32 selectors")
+        if kind == "assessment":
+            value = self.assessment(identifier, synthetic)
+        elif kind == "evaluation":
+            evaluation = self.evaluation(identifier, synthetic)
+            value = evaluation["payload"] if evaluation else None
+        else:
+            raise ValueError("Analytical kind must be assessment or evaluation")
+        if value is None:
+            raise ValueError("No analytical result exists in the selected workspace")
+        for part in path:
+            if isinstance(value, dict) and value.get("format") == "sharded-records-v1":
+                value = self.provenance.record(value, str(part))
+            elif isinstance(value, dict) and isinstance(part, str):
+                value = value.get(part)
+            elif isinstance(value, list) and isinstance(part, int) and 0 <= part < len(value):
+                value = value[part]
+            else:
+                raise ValueError("Analytical path does not select an available value")
+            if value is None:
+                raise ValueError("Analytical record is unavailable")
+        return value
+
+    def analytical_page(
+        self,
+        kind: str,
+        identifier: str,
+        synthetic: bool = False,
+        *,
+        path: Sequence[str | int] = ("evidence_refs",),
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict:
+        """Read one reference/record page from a selected stored result."""
+        return self.provenance.page(
+            self._analytical_value(kind, identifier, synthetic, path),
+            limit=limit,
+            offset=offset,
+        )
+
+    def analytical_record(
+        self,
+        kind: str,
+        identifier: str,
+        record_id: str,
+        synthetic: bool = False,
+        *,
+        path: Sequence[str | int],
+    ):
+        """Select one immutable record through its hash index, without sibling scans."""
+        return self.provenance.record(
+            self._analytical_value(kind, identifier, synthetic, path), record_id
+        )
 
     @staticmethod
     def _review_page(limit: int, offset: int) -> tuple[int, int]:

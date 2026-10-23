@@ -35,6 +35,14 @@ Replay recorded knowledge at each decision time, compare policies with simple ba
 - Use temporal train/validation/test periods where fitting occurs, keep families grouped, report repeated-alert dependence, and preserve the same collection constraints across policies. A frozen final test is not repeatedly tuned against.
 - Reports show precision at K for predefined observable targets, coverage, lead-time distributions, missing/censored outcomes, sample sizes, uncertainty intervals, and collection cost. Separate predictive comparison from evidence of business profit.
 - A forward test stores immutable decision snapshots, matures each horizon, and records changes to future policy versions without rewriting prior decisions. Snapshots include evidence sufficient for audit within retention constraints.
+- New persisted schema `2` decisions and outcomes reference bounded immutable
+  audit trees. All loaded outcome inputs are dependencies, including incomplete
+  corrections that censor a result. Backtests retain paged decision/report
+  records and nested product/outcome collections, rather than duplicate whole
+  universes inside one SQL value. Selected record and reference paths are
+  inspectable without globally hydrating provenance. Stored schema `1`
+  configuration, snapshot and report hashes retain exact legacy semantics.
+  [ADR0008](../adr/0008-compact-analytical-provenance.md) defines the representation.
 - Realized profit resolves the latest available revision of each ledger period
   before checking currency, realized status and cost completeness. A later
   incomplete or incompatible ledger censors that period rather than reviving a

@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
+from analytical_results import reference_ids
 
 from sm_trending_products.benchmark import _disk_usage, _group_videos, benchmark
 from sm_trending_products.contracts import utc
@@ -58,7 +59,9 @@ def test_parallel_skewed_workload_compacts_without_changing_the_published_record
     assert report["compaction"]["status"] == "compacted"
     assert report["checks"]["post_compaction_semantics_unchanged"] is True
     assert report["checks"]["post_cold_warm_same_run"] is True
-    assert report["analysis_runs"]["pre"]["cold"] != report["analysis_runs"]["post"]["cold"]
+    # Compaction changes physical files while the frozen original-delivery audit
+    # tree, analytical values and resulting content-addressed publication stay stable.
+    assert report["analysis_runs"]["pre"]["cold"] == report["analysis_runs"]["post"]["cold"]
     for label in ("pre", "post"):
         cold = report["phases"][f"analysis_{label}_cold"]
         warm = report["phases"][f"analysis_{label}_warm"]
@@ -159,7 +162,16 @@ def test_benchmark_measures_actual_evidence_and_preserves_shared_cache(pipeline,
     products = pipeline.latest_assessments(synthetic=True)
     assert len(products) == 4
     assert all(row["score"] is not None for row in products)
-    assert len({reference for row in products for reference in row["evidence_refs"]}) == 40
+    assert (
+        len(
+            {
+                reference
+                for row in products
+                for reference in reference_ids(pipeline, row["evidence_refs"])
+            }
+        )
+        == 40
+    )
     forward = [row for row in pipeline.evaluations(synthetic=True) if row["kind"] == "forward"]
     assert len(forward) == 1
     assert len(forward[0]["payload"]["selected"]) == 4
