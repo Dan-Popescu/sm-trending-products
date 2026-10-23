@@ -684,23 +684,60 @@ class Catalog:
 
     def invalidate_dataset(self, dataset_id: str, reason: str) -> None:
         with self.transaction() as connection:
+            self.guard_retention(connection, exclusive=True)
+            connection.execute(
+                "CREATE TEMP TABLE invalidated_datasets ON COMMIT DROP AS "
+                "SELECT dataset_id FROM dataset_publication_closure(ARRAY[%s]) LIMIT 10001",
+                (dataset_id,),
+            )
+            dataset_count = connection.execute(
+                "SELECT count(*) AS count FROM invalidated_datasets"
+            ).fetchone()
+            if dataset_count and dataset_count["count"] > 10000:
+                raise ValueError("Source invalidation exceeds its atomic dataset budget")
+            connection.execute(
+                "CREATE TEMP TABLE invalidated_artifacts ON COMMIT DROP AS "
+                "SELECT object_key FROM analytical_artifact_ancestors("
+                "ARRAY(SELECT dataset_id FROM invalidated_datasets)) LIMIT 10001",
+            )
+            affected = connection.execute(
+                "SELECT count(*) AS count FROM invalidated_artifacts"
+            ).fetchone()
+            if affected and affected["count"] > 10000:
+                raise ValueError("Source invalidation exceeds its atomic artifact budget")
             connection.execute(
                 "UPDATE datasets SET state='invalidated',invalid_reason=%s "
-                "WHERE dataset_id=%s AND state<>'deleted'",
-                (reason, dataset_id),
+                "WHERE dataset_id IN (SELECT dataset_id FROM invalidated_datasets) "
+                "AND state<>'deleted'",
+                (reason,),
             )
             connection.execute(
-                "UPDATE assessment_runs SET invalidated=true WHERE evidence_datasets ? %s",
-                (dataset_id,),
+                "UPDATE assessment_runs SET invalidated=true WHERE evidence_datasets ?| "
+                "ARRAY(SELECT dataset_id FROM invalidated_datasets) "
+                "OR object_key IN (SELECT object_key FROM invalidated_artifacts)",
+            )
+            connection.execute(
+                "UPDATE derived_publications SET state='invalidated' WHERE state<>'deleted' "
+                "AND object_key IN (SELECT object_key FROM invalidated_artifacts)"
             )
             connection.execute(
                 "UPDATE alerts SET invalidated=true WHERE run_id IN "
                 "(SELECT run_id FROM assessment_runs WHERE invalidated)",
             )
             connection.execute(
+                "WITH RECURSIVE affected(evaluation_id) AS ("
+                "SELECT evaluation_id FROM evaluation_dependencies "
+                "WHERE dataset_id IN (SELECT dataset_id FROM invalidated_datasets) "
+                "UNION SELECT evaluation_id FROM evaluation_artifacts "
+                "WHERE object_key IN (SELECT object_key FROM invalidated_artifacts) "
+                "UNION SELECT child.evaluation_id FROM evaluation_runs child "
+                "JOIN affected parent ON child.parent_id=parent.evaluation_id) "
                 "UPDATE evaluation_runs SET invalidated=true WHERE evaluation_id IN "
-                "(SELECT evaluation_id FROM evaluation_dependencies WHERE dataset_id=%s)",
-                (dataset_id,),
+                "(SELECT evaluation_id FROM affected)",
+            )
+            connection.execute(
+                "UPDATE datasets SET compacted_into=NULL WHERE state='committed' "
+                "AND compacted_into IN (SELECT dataset_id FROM invalidated_datasets)"
             )
 
     def export_state(self) -> dict[str, Any]:

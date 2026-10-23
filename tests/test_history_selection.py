@@ -91,7 +91,9 @@ def test_object_index_upgrade_reads_legacy_descriptors_and_indexes_later_publica
         connection.execute("DROP TABLE observation_deliveries")
         connection.execute("DROP TABLE normalized_object_entities")
         connection.execute("DROP TABLE normalized_objects")
-        connection.execute("DELETE FROM schema_migrations WHERE version>=14")
+        # Rebuild only the dropped object-reference schema and its collation/
+        # compact-reference upgrades. Independent later schemas remain installed.
+        connection.execute("DELETE FROM schema_migrations WHERE version IN (14,15,20)")
     pipeline.catalog.initialize()
     rows, manifests = pipeline.history.observations(
         now(),

@@ -36,11 +36,13 @@ from .evaluation import (
 )
 from .history import History
 from .identity import Identity
+from .provenance import Provenance
 
 
 class EvaluationService:
     def __init__(self, catalog: Catalog, history: History, identity: Identity):
         self.catalog, self.history, self.identity = catalog, history, identity
+        self.provenance = Provenance(catalog, history)
 
     def _evaluation_inputs(self, as_of: datetime, synthetic: bool) -> dict[str, Any]:
         """Read compact catalog histories, never the entire observation lake."""
@@ -133,17 +135,19 @@ class EvaluationService:
             products, links, cutoff, synthetic, policy.min_link_confidence
         )
         counts: Counter[str] = Counter()
-        refs: dict[str, list[str]] = defaultdict(list)
         rows: list[dict[str, Any]] = []
-        datasets: set[str] = set()
+        input_scopes = []
         since = cutoff - timedelta(days=policy.lookback_days)
 
         def load(keys: set[str]) -> tuple[list[Observation], set[str]]:
             return self._read_scope(cutoff, synthetic, keys, since, cutoff)
 
-        for batch, _keys, (observations, dependencies) in bounded_product_batches(
+        for batch, _keys, (observations, _dependencies) in bounded_product_batches(
             products, links, self.history.settings.analysis_product_batch_size, load
         ):
+            input_scopes.extend(
+                self.provenance.audit_products(observations, identity.owners, synthetic)
+            )
             eligible = eligible_evidence(
                 observations,
                 cutoff,
@@ -152,25 +156,26 @@ class EvaluationService:
                 metadata["capabilities"],
                 since=since,
             )
-            datasets.update(dependencies)
             counts.update(
                 entity_key
                 for entity_key, _observed_at in {
                     (row.entity_key, utc(row.observed_at)) for row in eligible
                 }
             )
-            for row in eligible:
-                refs[row.entity_key].append(row.observation_id)
             rows.extend(
-                assess(
+                self.provenance.compact(
+                    assess(
+                        eligible,
+                        batch,
+                        links,
+                        cutoff,
+                        synthetic,
+                        policy,
+                        normalize=False,
+                        identity=identity,
+                    ),
                     eligible,
-                    batch,
-                    links,
-                    cutoff,
                     synthetic,
-                    policy,
-                    normalize=False,
-                    identity=identity,
                 )
             )
 
@@ -187,9 +192,19 @@ class EvaluationService:
             capabilities=metadata["capabilities"],
             precomputed_assessments=normalized,
             observation_counts=counts,
-            evidence_refs_by_entity=refs,
+            evidence_refs_by_entity={},
         )
-        return snapshot, datasets
+        snapshot["schema_version"] = "2"
+        snapshot["evidence_refs"] = self.provenance.combine(
+            [row["evidence_refs"] for row in snapshot["universe"]], synthetic
+        )
+        snapshot["input_provenance"] = self.provenance.combine(input_scopes, synthetic)
+        snapshot["coverage"]["observations"] = sum(
+            row["coverage"]["observations"] for row in snapshot["universe"]
+        )
+        snapshot.pop("snapshot_id")
+        snapshot["snapshot_id"] = digest(snapshot)
+        return snapshot, set()
 
     @staticmethod
     def _initial_due(payload: dict[str, Any]) -> datetime:
@@ -218,6 +233,8 @@ class EvaluationService:
         evaluation_id = digest({"kind": kind, "synthetic": synthetic, "payload": payload})
         with self.catalog.transaction() as connection:
             self.catalog.guard_inputs(connection, dataset_ids)
+            artifacts = self.provenance.roots(payload)
+            self.provenance.guard(connection, artifacts)
             if parent_id:
                 parent = connection.execute(
                     "SELECT invalidated FROM evaluation_runs WHERE evaluation_id=%s",
@@ -244,6 +261,12 @@ class EvaluationService:
                     "VALUES(%s,%s) ON CONFLICT DO NOTHING",
                     (evaluation_id, dataset_id),
                 )
+            for artifact in artifacts:
+                connection.execute(
+                    "INSERT INTO evaluation_artifacts(evaluation_id,object_key) "
+                    "VALUES(%s,%s) ON CONFLICT DO NOTHING",
+                    (evaluation_id, artifact["key"]),
+                )
             if kind == "forward":
                 connection.execute(
                     "INSERT INTO forward_frontier(evaluation_id,synthetic,next_due_at) "
@@ -269,7 +292,8 @@ class EvaluationService:
             raise ValueError("A backtest cannot contain a future decision")
         metadata = self._evaluation_inputs(cutoff, synthetic)
         snapshots, reports = [], []
-        dataset_ids: set[str] = set()
+        snapshot_headers: dict[str, Any] = {}
+        report_headers: dict[str, Any] = {}
         for timestamp in dates:
             snapshot, dependencies = self._prepare_decision(
                 metadata,
@@ -279,19 +303,129 @@ class EvaluationService:
                 policy=policy,
             )
             report, outcome_dependencies = self._maturation_payload(snapshot, cutoff, dependencies)
-            snapshots.append(snapshot)
-            reports.append(report)
-            dataset_ids.update(dependencies | outcome_dependencies)
+            # Aggregation needs only selection/family/status fields. Full product
+            # universes and outcomes are immutable paged records, never retained
+            # across all dates or embedded into one PostgreSQL JSON value.
+            snapshots.append(
+                {
+                    "snapshot_id": snapshot["snapshot_id"],
+                    "selected": snapshot["selected"],
+                    "universe": [
+                        {"product_id": row["product_id"], "family_id": row["family_id"]}
+                        for row in snapshot["universe"]
+                        if row["product_id"] in snapshot["selected"]
+                    ],
+                }
+            )
+            reports.append(
+                {
+                    "snapshot_id": report["snapshot_id"],
+                    "scenarios": [
+                        {
+                            "horizon_days": scenario["horizon_days"],
+                            "launch_delay_days": scenario["launch_delay_days"],
+                            "methods": {
+                                method: {
+                                    "outcomes": [
+                                        {
+                                            key: value
+                                            for key, value in outcome.items()
+                                            if key
+                                            in {
+                                                "product_id",
+                                                "status",
+                                                "precision",
+                                                "lead_time_hours",
+                                            }
+                                        }
+                                        for outcome in values["outcomes"]
+                                    ]
+                                }
+                                for method, values in scenario["methods"].items()
+                            },
+                        }
+                        for scenario in report["scenarios"]
+                    ],
+                }
+            )
+            snapshot_headers[snapshot["snapshot_id"]] = self._snapshot_header(snapshot, synthetic)
+            report_headers[report["report_id"]] = self._report_header(report, synthetic)
         payload = summarize_backtest(snapshots, reports, cutoff, configuration, synthetic=synthetic)
+        payload["schema_version"] = "2"
+        payload["snapshots"] = self.provenance.records(snapshot_headers, synthetic)
+        payload["reports"] = self.provenance.records(report_headers, synthetic)
+        payload["comparisons"] = self._report_header(payload["comparisons"], synthetic)
+        payload["config"] = self._config_header(payload["config"], synthetic)
+        payload.pop("evaluation_id")
+        payload["evaluation_id"] = digest(payload)
         return {
             "evaluation_id": self._save_evaluation(
                 payload,
                 "backtest",
                 synthetic,
-                dataset_ids=sorted(dataset_ids),
             ),
             "result": payload,
         }
+
+    def _config_header(self, value: dict[str, Any], synthetic: bool) -> dict[str, Any]:
+        contract = value.get("profit_contract")
+        if not contract:
+            return value
+        return {
+            **value,
+            "profit_contract": {
+                **contract,
+                "ledgers": self.provenance.records(contract["ledgers"], synthetic),
+            },
+        }
+
+    def _snapshot_header(self, snapshot: dict[str, Any], synthetic: bool) -> dict[str, Any]:
+        return {
+            **snapshot,
+            "representation": "sharded-backtest-partition-v1",
+            "config": self._config_header(snapshot["config"], synthetic),
+            "universe": self.provenance.records(
+                {row["product_id"]: row for row in snapshot["universe"]}, synthetic
+            ),
+            "entity_bindings": self.provenance.records(snapshot["entity_bindings"], synthetic),
+            "identity_decisions": self.provenance.records(
+                {str(index): row for index, row in enumerate(snapshot["identity_decisions"])},
+                synthetic,
+            ),
+            "family_memberships": self.provenance.records(
+                snapshot["family_memberships"], synthetic
+            ),
+            "selected": self.provenance.records(
+                {str(index): value for index, value in enumerate(snapshot["selected"])}, synthetic
+            ),
+            "baselines": {
+                key: self.provenance.records(
+                    {str(index): value for index, value in enumerate(values)}, synthetic
+                )
+                for key, values in snapshot["baselines"].items()
+            },
+            "capabilities": self.provenance.records(
+                {str(index): row for index, row in enumerate(snapshot["capabilities"])}, synthetic
+            ),
+        }
+
+    def _report_header(self, value: Any, synthetic: bool) -> Any:
+        if isinstance(value, dict):
+            if value.get("format") in {"sharded-provenance-v1", "sharded-records-v1"}:
+                return value
+            return {
+                key: self.provenance.records(
+                    {str(index): row for index, row in enumerate(child)}, synthetic
+                )
+                if key in {"outcomes", "values_hours"} and isinstance(child, list)
+                else self._config_header(child, synthetic)
+                if key == "config"
+                else self._report_header(child, synthetic)
+                for key, child in value.items()
+            }
+        if isinstance(value, list):
+            return [self._report_header(child, synthetic) for child in value]
+        return value
 
     def freeze(
         self,
@@ -337,6 +471,8 @@ class EvaluationService:
     ) -> tuple[dict[str, Any], set[str]]:
         with self.catalog.transaction() as connection:
             self.catalog.guard_inputs(connection, sorted(dependencies))
+            self.provenance.guard(connection, self.provenance.roots(snapshot))
+        compact = snapshot.get("schema_version") == "2"
         configuration = EvaluationConfig.model_validate(snapshot["config"])
         decision_time, cutoff = utc(snapshot["decision_time"]), utc(as_of)
         gap = timedelta(hours=configuration.max_boundary_gap_hours)
@@ -344,6 +480,7 @@ class EvaluationService:
         final_horizon = decision_time + timedelta(days=max(configuration.horizon_days))
         since, until = first_action - gap, min(cutoff, final_horizon + gap)
         datasets = set(dependencies)
+        input_scopes: list[Any] = []
         keys_by_product: dict[str, set[str]] = defaultdict(set)
         for key in outcome_entity_keys(snapshot["entity_bindings"], configuration):
             keys_by_product[snapshot["entity_bindings"][key]].add(key)
@@ -368,7 +505,12 @@ class EvaluationService:
                 until,
                 period_window=(first_action, final_horizon),
             )
-            datasets.update(used)
+            if compact:
+                input_scopes.append(
+                    self.provenance.audit(observations, bool(snapshot["synthetic"]))
+                )
+            else:
+                datasets.update(used)
             return observations
 
         payload = mature_decision(
@@ -376,8 +518,22 @@ class EvaluationService:
             [],
             cutoff,
             product_evidence_loader=load_product,
-            verified_evidence_refs=snapshot["evidence_refs"],
+            verified_evidence_refs=None if compact else snapshot["evidence_refs"],
+            provenance_verified=compact,
+            outcome_compactor=(
+                lambda outcomes, observations: self.provenance.compact(
+                    outcomes, observations, bool(snapshot["synthetic"])
+                )
+            )
+            if compact
+            else None,
         )
+        if compact:
+            payload["input_provenance"] = self.provenance.combine(
+                input_scopes, bool(snapshot["synthetic"])
+            )
+            payload.pop("report_id")
+            payload["report_id"] = digest(payload)
         return payload, datasets
 
     def mature(

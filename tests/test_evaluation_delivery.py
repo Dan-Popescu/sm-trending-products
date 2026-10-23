@@ -6,6 +6,7 @@ import json
 from datetime import timedelta
 
 import pytest
+from analytical_results import backtest_reports, backtest_snapshots
 from streamlit.testing.v1 import AppTest
 from test_evaluation_integration import outcome_config, record, seed_product
 
@@ -26,8 +27,8 @@ def test_operator_inspects_original_forward_outcome_and_backtest_versions(pipeli
     forward = pipeline.freeze(cutoff, True, config)
     matured = pipeline.mature(forward["evaluation_id"], cutoff + timedelta(days=3))
     backtest = pipeline.backtest([cutoff], cutoff + timedelta(days=3), True, config)
-    assert backtest["result"]["snapshots"] == [forward["result"]]
-    assert backtest["result"]["reports"] == [matured["result"]]
+    assert backtest_snapshots(pipeline, backtest["result"]) == [forward["result"]]
+    assert backtest_reports(pipeline, backtest["result"]) == [matured["result"]]
     monkeypatch.setattr(Pipeline, "from_env", classmethod(lambda cls: cls(pipeline.settings)))
     app = AppTest.from_string("from sm_trending_products.dashboard import main\nmain()").run(
         timeout=20

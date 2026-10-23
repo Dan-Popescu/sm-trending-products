@@ -209,7 +209,11 @@ def _attention(
     evidence: Sequence[Observation],
     as_of: datetime,
     policy: AssessmentPolicy,
+    *,
+    clock: dict[str, datetime | None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    if clock is not None:
+        clock["age_anchor"] = None
     videos = [row for row in evidence if row.entity_type == "video"]
     windows = _metric_windows(videos, "view_count")
     latest_observations = {
@@ -239,6 +243,7 @@ def _attention(
     interval_growth: list[bool] = []
     accelerations = []
     published_ages = []
+    published_timestamps = []
     refs: list[str] = []
     for key, timeline in windows.items():
         features["counter_corrections"] += sum(row["counter_correction"] for row in timeline)
@@ -266,6 +271,7 @@ def _attention(
                 (latest["growth_per_hour"] - previous["growth_per_hour"]) / latest["interval_hours"]
             )
         if observation.published_at is not None:
+            published_timestamps.append(utc(observation.published_at))
             published_ages.append(
                 max(0.0, (as_of - observation.published_at).total_seconds() / 3600)
             )
@@ -327,6 +333,10 @@ def _attention(
             "interval_hours": sorted({row["interval_hours"] for row in usable}),
         }
     )
+    if clock is not None and published_timestamps:
+        clock["age_anchor"] = sorted(published_timestamps, reverse=True)[
+            len(published_timestamps) // 2
+        ]
     reasons = [
         "Growth uses actual collection intervals; source counters do not identify exact view timing"
     ]
@@ -976,6 +986,7 @@ def assess(
     *,
     normalize: bool = True,
     identity: AssessmentIdentity | None = None,
+    age_anchors: dict[str, datetime | None] | None = None,
 ) -> list[dict[str, Any]]:
     """Assess products from evidence and identity decisions known at ``as_of``.
 
@@ -1020,7 +1031,11 @@ def assess(
     for product_id, product in sorted(product_map.items()):
         evidence = grouped[product_id]
         resolved = identity.by_product.get(product_id, ())
-        attention, features = _attention(evidence, cutoff, policy)
+        clock: dict[str, datetime | None] | None = {} if age_anchors is not None else None
+        attention, features = _attention(evidence, cutoff, policy, clock=clock)
+        if age_anchors is not None:
+            assert clock is not None
+            age_anchors[product_id] = clock["age_anchor"]
         demand, demand_features = _demand(evidence, cutoff, policy)
         features.update(demand_features)
         rows.append(

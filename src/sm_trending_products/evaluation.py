@@ -696,6 +696,9 @@ def mature_decision(
     *,
     product_evidence_loader: Callable[[str], Sequence[Observation]] | None = None,
     verified_evidence_refs: Sequence[str] | None = None,
+    provenance_verified: bool = False,
+    outcome_compactor: Callable[[list[dict[str, Any]], Sequence[Observation]], list[dict[str, Any]]]
+    | None = None,
 ) -> dict[str, Any]:
     """Measure matured horizons, optionally loading one selected product at a time.
 
@@ -705,13 +708,20 @@ def mature_decision(
     snapshot_body = {key: value for key, value in snapshot.items() if key != "snapshot_id"}
     if snapshot.get("snapshot_id") != digest(snapshot_body):
         raise ValueError("Frozen decision integrity check failed")
-    if snapshot.get("schema_version") != "1":
+    if snapshot.get("schema_version") not in {"1", "2"}:
         raise ValueError("Unsupported decision schema")
     config = EvaluationConfig.model_validate(snapshot["config"])
     cutoff, decision_time = utc(as_of), utc(snapshot["decision_time"])
     if cutoff < decision_time:
         raise ValueError("Evaluation cannot precede the decision")
-    if product_evidence_loader is not None and (observations or verified_evidence_refs is None):
+    compact = snapshot["schema_version"] == "2"
+    if compact and (not provenance_verified or product_evidence_loader is None or observations):
+        raise ValueError("Sharded decisions require verified provenance and partitioned history")
+    if (
+        not compact
+        and product_evidence_loader is not None
+        and (observations or verified_evidence_refs is None)
+    ):
         raise ValueError("Partitioned maturation requires validated references and no raw history")
     eligible = _eligible_observations(
         observations, cutoff, bool(snapshot["synthetic"]), config.market
@@ -724,7 +734,7 @@ def mature_decision(
         if product_evidence_loader is not None
         else {row.observation_id for row in eligible}
     )
-    missing_references = sorted(set(snapshot["evidence_refs"]) - available_ids)
+    missing_references = [] if compact else sorted(set(snapshot["evidence_refs"]) - available_ids)
     methods = {"policy": snapshot["selected"], **snapshot["baselines"]}
     scenarios: list[dict[str, Any]] = []
     windows: list[tuple[datetime, datetime, str]] = []
@@ -807,6 +817,16 @@ def mature_decision(
                         )
                     )
                 measured[index][product_id] = outcome
+            if outcome_compactor is not None:
+                indices = [index for index, values in enumerate(measured) if product_id in values]
+                outcomes = outcome_compactor(
+                    [measured[index][product_id] for index in indices],
+                    [row for values in product_evidence.values() for row in values],
+                )
+                if len(outcomes) != len(indices):
+                    raise ValueError("Outcome compaction changed the scenario count")
+                for index, outcome in zip(indices, outcomes, strict=True):
+                    measured[index][product_id] = outcome
             del product_evidence, timelines
 
     for index, scenario in enumerate(scenarios):
@@ -823,7 +843,7 @@ def mature_decision(
             for method, selected_ids in methods.items()
         }
     report: dict[str, Any] = {
-        "schema_version": "1",
+        "schema_version": "2" if compact else "1",
         "snapshot_id": snapshot["snapshot_id"],
         "decision_time": decision_time.isoformat(),
         "as_of": cutoff.isoformat(),

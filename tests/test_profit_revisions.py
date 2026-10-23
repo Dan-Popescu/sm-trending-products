@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+from analytical_results import backtest_reports, backtest_snapshots
 from test_evaluation_integration import outcome_config, seed_product
 
 from sm_trending_products.contracts import now
@@ -86,5 +87,5 @@ def test_later_incomplete_realized_ledger_censors_without_rewriting_old_reports(
     replayed = pipeline.backtest([decision], later_cutoff, True, frozen["result"]["config"])[
         "result"
     ]
-    assert replayed["snapshots"] == [frozen["result"]]
-    assert replayed["reports"] == [revised["result"]]
+    assert backtest_snapshots(pipeline, replayed) == [frozen["result"]]
+    assert backtest_reports(pipeline, replayed) == [revised["result"]]

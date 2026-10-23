@@ -1,0 +1,133 @@
+{
+  "commit": "839d2cad22c0f6e98eb9f670ebf2df0c092ccb00",
+  "scope": {
+    "products": 100,
+    "videos_per_product": 20,
+    "observations_per_video": 120,
+    "window_days": 30,
+    "sample_hours": 6,
+    "product_batch_size": 10,
+    "collection_model": "one synthetic import per product, not physical API pages",
+    "history_partition_buckets": 4
+  },
+  "phases": {
+    "initial": {
+      "seconds": 63.04907942099817,
+      "history": {
+        "get_requests": 300,
+        "put_requests": 3918,
+        "head_requests": 0,
+        "download_bytes": 11103423,
+        "upload_bytes": 17855101,
+        "cache_hits": 0,
+        "http_attempts": 4218
+      },
+      "provenance_total": {
+        "nodes": 3917,
+        "bytes": 17455355,
+        "input_edges": 3100,
+        "child_edges": 4017
+      },
+      "provenance_new": {
+        "nodes": 3917,
+        "bytes": 17455355,
+        "input_edges": 3100,
+        "child_edges": 4017
+      },
+      "assessment_bytes": 399746,
+      "row_total_bytes": 398980,
+      "max_row_bytes": 3990,
+      "peak_rss_kib": 505780
+    },
+    "unchanged_future_cutoff": {
+      "seconds": 23.65385911300109,
+      "history": {
+        "get_requests": 0,
+        "put_requests": 1,
+        "head_requests": 0,
+        "download_bytes": 0,
+        "upload_bytes": 399746,
+        "cache_hits": 300,
+        "http_attempts": 1
+      },
+      "provenance_total": {
+        "nodes": 3917,
+        "bytes": 17455355,
+        "input_edges": 3100,
+        "child_edges": 4118
+      },
+      "provenance_new": {
+        "nodes": 0,
+        "bytes": 0,
+        "input_edges": 0,
+        "child_edges": 101
+      },
+      "assessment_bytes": 399746,
+      "row_total_bytes": 398980,
+      "max_row_bytes": 3990,
+      "peak_rss_kib": 575484
+    },
+    "one_refresh_wave": {
+      "seconds": 22.12160875099653,
+      "history": {
+        "get_requests": 100,
+        "put_requests": 318,
+        "head_requests": 0,
+        "download_bytes": 897405,
+        "upload_bytes": 1230301,
+        "cache_hits": 300,
+        "http_attempts": 418
+      },
+      "provenance_total": {
+        "nodes": 4234,
+        "bytes": 18280610,
+        "input_edges": 3300,
+        "child_edges": 6135
+      },
+      "provenance_new": {
+        "nodes": 317,
+        "bytes": 825255,
+        "input_edges": 200,
+        "child_edges": 2017
+      },
+      "assessment_bytes": 405046,
+      "row_total_bytes": 404280,
+      "max_row_bytes": 4043,
+      "peak_rss_kib": 575484
+    }
+  },
+  "import_seconds": 88.77287816800526,
+  "source_inventory": {
+    "datasets": 100,
+    "objects": 300,
+    "normalized_bytes": 11103423
+  },
+  "legacy_equivalent_body_bytes": 32514905,
+  "assessment_sql_bytes": 286439,
+  "all_derived_inventory": {
+    "objects": 4237,
+    "bytes": 19485148
+  },
+  "environment": {
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "affinity_cpus": 5,
+    "cgroup_cpu_quota": "400000 100000",
+    "cgroup_memory_max_bytes": 17179869184,
+    "filesystem": "overlay",
+    "python": "3.12.14",
+    "postgresql": "17.11 (Debian 17.11-1.pgdg12+2)",
+    "polars": "2.0.0",
+    "pyarrow": "26.0.0",
+    "psycopg": "3.3.6",
+    "moto": "5.2.4",
+    "polars_max_threads": 2,
+    "rayon_num_threads": 2,
+    "other_workloads": "Concurrent isolated test processes; shared host and database services, no exclusive machine reservation."
+  },
+  "limits": {
+    "legacy_baseline": "Equivalent legacy inline JSON reconstructed from the measured compact rows and exact source identifiers; no old production runtime measurement.",
+    "rss_scope": "Cumulative peak of pytest process including in-process Moto, imports and comparison; excludes PostgreSQL and unrelated processes.",
+    "request_scope": "History counters for each assessment phase, not physical TikTok collection.",
+    "elapsed_scope": "Native PostgreSQL plus loopback HTTP Moto, not remote S3 or a target VPS."
+  }
+}

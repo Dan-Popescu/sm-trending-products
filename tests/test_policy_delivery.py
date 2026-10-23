@@ -7,6 +7,7 @@ from copy import deepcopy
 from datetime import timedelta
 
 import pytest
+from analytical_results import backtest_reports, backtest_snapshots
 from test_evaluation_integration import outcome_config, record
 
 from sm_trending_products.cli import dispatch, parser
@@ -109,8 +110,8 @@ def test_persisted_ranking_policy_changes_new_decisions_and_keeps_prior_outcomes
     original_outcome = pipeline.mature(original["evaluation_id"], final_time)["result"]
     revised_outcome = pipeline.mature(revised["evaluation_id"], final_time)["result"]
     replayed = pipeline.backtest([cutoff], final_time, True, config, policy=policy)["result"]
-    assert replayed["snapshots"] == [revised["result"]]
-    assert replayed["reports"] == [revised_outcome]
+    assert backtest_snapshots(pipeline, replayed) == [revised["result"]]
+    assert backtest_reports(pipeline, replayed) == [revised_outcome]
     assert (
         pipeline.backtest([cutoff], final_time, True, config, policy=policy)["result"] == replayed
     )

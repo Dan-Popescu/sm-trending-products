@@ -233,20 +233,8 @@ class Maintenance:
                 WHERE d.state IN ('committed','staged')
                 AND d.created_at < clock_timestamp()-p.retention_days*interval '1 day'
                 ORDER BY d.created_at,d.dataset_id LIMIT 100
-            ), affected(dataset_id) AS (
-                SELECT dataset_id FROM roots
-                UNION
-                SELECT edge.dataset_id FROM affected current
-                CROSS JOIN LATERAL (
-                    SELECT child_dataset_id AS dataset_id FROM dataset_lineage
-                    WHERE parent_dataset_id=current.dataset_id
-                    UNION
-                    SELECT shared.dataset_id FROM dataset_object_refs origin
-                    JOIN dataset_object_refs shared ON shared.object_key=origin.object_key
-                    WHERE origin.dataset_id=current.dataset_id
-                ) edge
             )
-            SELECT dataset_id FROM affected
+            SELECT dataset_id FROM dataset_publication_closure(ARRAY(SELECT dataset_id FROM roots))
         """
 
     def retention(self, *, apply: bool = False) -> dict[str, Any]:
@@ -287,8 +275,8 @@ class Maintenance:
             )
             connection.execute(
                 "CREATE TEMP TABLE retention_derivations ON COMMIT DROP AS "
-                "SELECT object_key FROM derived_publications WHERE state<>'deleted' "
-                "AND evidence_datasets ?| ARRAY(SELECT dataset_id FROM retention_targets)"
+                "SELECT object_key FROM analytical_artifact_ancestors("
+                "ARRAY(SELECT dataset_id FROM retention_targets))"
             )
             connection.execute(
                 "CREATE TEMP TABLE retention_assessments ON COMMIT DROP AS "
@@ -302,6 +290,8 @@ class Maintenance:
                 "WITH RECURSIVE affected(evaluation_id) AS ("
                 "SELECT evaluation_id FROM evaluation_dependencies "
                 "WHERE dataset_id IN (SELECT dataset_id FROM retention_targets) "
+                "UNION SELECT evaluation_id FROM evaluation_artifacts "
+                "WHERE object_key IN (SELECT object_key FROM retention_derivations) "
                 "UNION SELECT child.evaluation_id FROM evaluation_runs child "
                 "JOIN affected parent ON child.parent_id=parent.evaluation_id) "
                 "SELECT evaluation_id FROM affected"
@@ -316,7 +306,8 @@ class Maintenance:
                 "ON CONFLICT DO NOTHING"
             )
             connection.execute(
-                "UPDATE derived_publications SET state='invalidated' WHERE object_key IN "
+                "UPDATE derived_publications SET state='invalidated' WHERE state<>'deleted' "
+                "AND object_key IN "
                 "(SELECT object_key FROM retention_derivations)"
             )
             connection.execute(
