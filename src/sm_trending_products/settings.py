@@ -6,9 +6,30 @@ from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings):
+class PlanningSettings(BaseSettings):
+    """Planning controls usable before source, database or storage access exists."""
+
     model_config = SettingsConfigDict(env_file=None, extra="ignore", populate_by_name=True)
 
+    scheduler_request_budget: int = Field(default=500, ge=0, le=10_000)
+    collection_schedule_minutes: int = Field(default=5, ge=1, le=60)
+    assessment_schedule_minutes: int = Field(default=15, ge=1, le=60)
+
+    @model_validator(mode="after")
+    def validate_schedule_intervals(self) -> "PlanningSettings":
+        if any(
+            60 % interval
+            for interval in (self.collection_schedule_minutes, self.assessment_schedule_minutes)
+        ):
+            raise ValueError("Schedule intervals must divide an hour")
+        return self
+
+    @staticmethod
+    def cron(minutes: int) -> str:
+        return "0 * * * *" if minutes == 60 else f"*/{minutes} * * * *"
+
+
+class Settings(PlanningSettings):
     database_url: SecretStr
     s3_bucket: str = "sm-trends"
     s3_endpoint_url: str | None = None

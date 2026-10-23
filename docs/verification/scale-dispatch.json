@@ -1,0 +1,163 @@
+{
+  "all_ready": {
+    "pending": 50000,
+    "before": {
+      "median_wall_ms": 385.71041700197384,
+      "individual_ms": [
+        392.0780999978888,
+        378.6896270030411,
+        385.71041700197384,
+        388.67448899691226,
+        384.75101899530273
+      ],
+      "claimed": [
+        {
+          "id": "task-00000999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00001999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00002999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00003999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00004999",
+          "account": "ready",
+          "priority": 999.0
+        }
+      ]
+    },
+    "migration_018": {
+      "median_wall_ms": 2.00812299590325,
+      "individual_ms": [
+        2.8826459965785034,
+        2.1297519997460768,
+        1.8286549966433086,
+        2.00812299590325,
+        1.9021490006707609
+      ],
+      "claimed": [
+        {
+          "id": "task-00005999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00006999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00007999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00008999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00009999",
+          "account": "ready",
+          "priority": 999.0
+        }
+      ]
+    }
+  },
+  "mixed": {
+    "pending": 50000,
+    "before": {
+      "median_wall_ms": 296.09316999994917,
+      "individual_ms": [
+        301.48246400494827,
+        291.5580030021374,
+        298.21593000087887,
+        296.09316999994917,
+        293.28880299726734
+      ],
+      "claimed": [
+        {
+          "id": "task-00020999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00021999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00022999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00023999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00024999",
+          "account": "ready",
+          "priority": 999.0
+        }
+      ]
+    },
+    "migration_018": {
+      "median_wall_ms": 66.16453900642227,
+      "individual_ms": [
+        66.8627880004351,
+        66.29480500123464,
+        65.208658001211,
+        66.16453900642227,
+        66.02699500217568
+      ],
+      "claimed": [
+        {
+          "id": "task-00025999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00026999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00027999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00028999",
+          "account": "ready",
+          "priority": 999.0
+        },
+        {
+          "id": "task-00029999",
+          "account": "ready",
+          "priority": 999.0
+        }
+      ]
+    }
+  },
+  "locked_head": {
+    "locked": "task-00000999",
+    "claimed": "task-00000998"
+  },
+  "baseline": "2136e0485196a574a2745bc216c71d13f006f0df",
+  "change": "Apply SQL migration 018 to the same isolated queue between five-claim samples",
+  "boundary": "Native PostgreSQL; 50,000 metadata-only tasks, no source calls or object-store publication; medians of five complete Catalog.claim calls"
+}

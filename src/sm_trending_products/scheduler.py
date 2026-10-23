@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from itertools import batched
 from typing import Any, Literal
 
 from psycopg.types.json import Jsonb
@@ -259,8 +260,9 @@ class Scheduler:
                 + LINK_STATE_CTES
                 + ", identity AS (SELECT entity_key,product_id FROM resolved_link_owners "
                 "WHERE confidence>=%s) "
-                "SELECT e.*,c.score AS assessment_score,c.payload AS assessment_payload,"
-                "d.manifest AS origin_manifest FROM entities e "
+                "SELECT e.*,c.score AS assessment_score,"
+                "jsonb_build_object('task_request',d.manifest->'task_request') AS origin_manifest "
+                "FROM entities e "
                 "LEFT JOIN identity i ON i.entity_key=e.entity_key "
                 "LEFT JOIN current_assessments c ON c.product_id=i.product_id "
                 "AND c.synthetic=e.synthetic AND EXISTS(SELECT 1 FROM assessment_runs r "
@@ -315,6 +317,7 @@ class Scheduler:
                     )
             deferred_count = 0
             deferred_candidates: list[dict[str, Any]] = []
+            deferred_updates: list[dict[str, Any]] = []
 
             def defer(entity: dict, category: str) -> None:
                 nonlocal deferred_count
@@ -327,12 +330,7 @@ class Scheduler:
                     "original_due_at": entity["next_due_at"].isoformat(),
                     "policy_id": policy_id,
                 }
-                connection.execute(
-                    "UPDATE entities SET schedule_reason=schedule_reason || %s,"
-                    "last_scheduler_inspected_at=%s "
-                    "WHERE entity_key=%s AND synthetic=%s",
-                    (Jsonb({"deferred": detail}), checked_at, entity["entity_key"], synthetic),
-                )
+                deferred_updates.append({"entity_key": entity["entity_key"], "detail": detail})
                 deferred_count += 1
                 if len(deferred_candidates) < 100:
                     deferred_candidates.append({"entity_key": entity["entity_key"], **detail})
@@ -401,6 +399,14 @@ class Scheduler:
                             "estimated_request_cost": request_cost,
                         },
                     }
+                )
+            for batch in batched(deferred_updates, 500):
+                connection.execute(
+                    "UPDATE entities e SET schedule_reason=e.schedule_reason || "
+                    "jsonb_build_object('deferred',u.detail),last_scheduler_inspected_at=%s "
+                    "FROM jsonb_to_recordset(%s) AS u(entity_key text,detail jsonb) "
+                    "WHERE e.entity_key=u.entity_key AND e.synthetic=%s",
+                    (checked_at, Jsonb(list(batch)), synthetic),
                 )
             candidates = group_refreshes(candidates)
             query_history = connection.execute(
@@ -492,6 +498,7 @@ class Scheduler:
                         merged_discovery += 1
                         break
             decisions = []
+            entity_updates = []
             for query, _ in selected_queries:
                 reason = {
                     "policy_id": policy_id,
@@ -574,19 +581,27 @@ class Scheduler:
                     reason=reason,
                 )
                 for member, member_reason in zip(candidate["members"], entity_reasons, strict=True):
-                    connection.execute(
-                        "UPDATE entities SET next_due_at=%s,priority=%s,tier=%s,schedule_reason=%s "
-                        "WHERE entity_key=%s AND synthetic=%s",
-                        (
-                            checked_at + timedelta(hours=member["interval_hours"]),
-                            member["priority"],
-                            member["tier"],
-                            Jsonb({**member_reason, "task_id": task_id}),
-                            member["entity"]["entity_key"],
-                            synthetic,
-                        ),
+                    entity_updates.append(
+                        {
+                            "entity_key": member["entity"]["entity_key"],
+                            "next_due_at": (
+                                checked_at + timedelta(hours=member["interval_hours"])
+                            ).isoformat(),
+                            "priority": member["priority"],
+                            "tier": member["tier"],
+                            "schedule_reason": {**member_reason, "task_id": task_id},
+                        }
                     )
                 decisions.append({"task_id": task_id, **reason})
+            for batch in batched(entity_updates, 500):
+                connection.execute(
+                    "UPDATE entities e SET next_due_at=u.next_due_at,priority=u.priority,"
+                    "tier=u.tier,schedule_reason=u.schedule_reason "
+                    "FROM jsonb_to_recordset(%s) AS u(entity_key text,next_due_at timestamptz,"
+                    "priority double precision,tier text,schedule_reason jsonb) "
+                    "WHERE e.entity_key=u.entity_key AND e.synthetic=%s",
+                    (Jsonb(list(batch)), synthetic),
+                )
             return {
                 "scheduled": len(decisions),
                 "task_ids": [row["task_id"] for row in decisions],
