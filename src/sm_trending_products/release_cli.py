@@ -202,6 +202,7 @@ class ArtifactReader:
 class HostRuntime:
     def __init__(self, config: HostConfig, catalog: Catalog, *, controlled_test: bool = False):
         self.config, self.catalog = config, catalog
+        self.controlled_test = controlled_test
         self.trust = ReleaseTrust(
             config.certificate_identity, (config.image_repository,), str(config.cosign)
         )
@@ -335,6 +336,42 @@ class HostRuntime:
     def apply(self, release_id: str) -> dict:
         return self.controller(self.run(release_id)).apply(release_id)
 
+    def refresh_processing(self, manifest: Path | None, bundle: Path | None) -> dict:
+        if (manifest is None) != (bundle is None):
+            raise ReleaseBlocked("processing_manifest_and_bundle_required")
+        release = None
+        if manifest is not None and bundle is not None:
+            release = self.trust.verify(
+                ReleaseManifest.model_validate_json(
+                    private_file(manifest, controlled_test=self.controlled_test)
+                ),
+                {
+                    "method": "cosign_bundle",
+                    "bundle": json.loads(
+                        private_file(bundle, controlled_test=self.controlled_test)
+                    ),
+                },
+            )
+        return self.refresh_processing_release(release)
+
+    def processing_refresh(self):
+        from .release_processing import ProcessingRefresh
+
+        return ProcessingRefresh(
+            self.catalog,
+            self.host(self.active()),
+            self.trust,
+            self.config.state_directory,
+            freshness_seconds=self.config.freshness_seconds,
+            allow_synthetic=self.controlled_test,
+        )
+
+    def pending_processing(self) -> bool:
+        return self.processing_refresh().pending()
+
+    def refresh_processing_release(self, release: VerifiedRelease | None = None) -> dict:
+        return self.processing_refresh().apply(release)
+
     def pull(self) -> dict:
         active = self.active()
         # Resume accepted unfinished work even when outbound network is down.
@@ -414,12 +451,17 @@ class HostRuntime:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("pull", "apply", "status", "bootstrap", "rollback"))
+    parser.add_argument(
+        "command",
+        choices=("pull", "apply", "status", "bootstrap", "rollback", "refresh-processing"),
+    )
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--release-id")
     parser.add_argument("--revision")
     parser.add_argument("--slot", choices=("blue", "green"), default="blue")
     parser.add_argument("--worker-id")
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--bundle", type=Path)
     parser.add_argument("--controlled-test", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
@@ -439,6 +481,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
             elif args.command == "pull":
                 result = runtime.pull()
+            elif args.command == "refresh-processing":
+                result = runtime.refresh_processing(args.manifest, args.bundle)
             elif args.command == "status" and not args.release_id:
                 active = runtime.active()
                 result = {
