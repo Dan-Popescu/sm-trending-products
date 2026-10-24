@@ -2,6 +2,78 @@
 
 These are native local PostgreSQL/HTTP Moto measurements for [#67](https://github.com/Dan-Popescu/sm-trending-products/issues/67), not a deployed-provider capacity certificate.
 
+## Latest measured checkpoints
+
+| Declared case | Physical seed / after four imports | Completed refresh assessments and oracles | Final cache-evicted rebuild | Overall case |
+| --- | ---: | --- | --- | --- |
+| [3,000 products, 30-day retained history](#updated-3000-product-checkpoint-four-waves-complete-eviction-deadline) | 7,200,000 / 7,440,000 observations | All four | Incomplete at the original four-hour deadline | **NON-ACCEPTED / partial** |
+| [1,000 products, 90-day retained history](#1000-products-90-day-retained-history-complete-case) | 7,200,000 / 7,280,000 observations | All four | Complete, exact final publication hash | **ACCEPTED for the declared native synthetic case** |
+
+Both used the same final application/harness tree, the declared four-GiB **common application/HTTP Moto process** RSS guard and a 30-day analytical lookback. Their product counts, physical import layouts and selected analytical populations differ; this table is not a speedup comparison or a certificate for larger/deployed workloads. Older partial cases remain below with their original source versions and stop reasons.
+
+## 1,000 products: 90-day retained history, complete case
+
+The [condensed report](retained-1000-90-complete.json) records `status: complete`, `ok: true`, exit zero, all four checks true and both cleanup flags true. The supervisor completed in **4,888.33 seconds (81.47 minutes)**, inside the predeclared 14,400-second limit. Four actual refresh ingestions, four assessments and their sampled complete-row/reference oracles completed, followed by a full assessment after local cache files and feature projections were removed. Published immutable derived artifacts remained available; eviction did not delete the source or published artifact store.
+
+The [native seed SQL inventory](retained-1000-90-final-source-sql.json) counted **7,200,000 physical observation-delivery rows**: 1,000 products × 20 distinct videos × 360 observations/video, spanning 89 days 18 hours at four observations/day. Each product went through two normal seed imports of **5,000 and 2,200 observations**, yielding 2,000 physical datasets. These are separate storage coefficients from the 2,400-observation seed imports in the 30-day cases. Each observation's metric/attribute payload is one cumulative `view_count` plus `creator_id`, alongside its ordinary identity and timestamp fields; prices, sales, costs, descriptions, transcripts and media are absent.
+
+Analytics uses its actual **inclusive 30-day window**, selecting exactly **2,420,000 observations (121 samples/video)** in every assessment here. Every assessment returned all 1,000 requested product IDs. Each refresh used 1,000 local delta windows with no duplicate/full rebuild windows. The sampled complete-row/reference oracle covers the declared equal trajectories and their cohort rank, not arbitrary heterogeneous-ranking parity.
+
+| Completed assessment phase | Wall seconds | Common-process CPU seconds | Work | GET | Download bytes | PUT | Upload bytes |
+| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: |
+| Cold | 684.19 | 488.23 | 1,000 full windows | 2,000 | 280,075,207 | 40,249 | 180,244,552 |
+| Warm, same cutoff | 2.70 | 1.75 | 1,000 projection hits | 0 | 0 | 1 | 0 |
+| Refresh 1 | 310.66 | 278.68 | 1,000 delta windows | 1,000 | 9,348,280 | 4,254 | 9,789,894 |
+| Refresh 2 | 370.98 | 329.22 | 1,000 delta windows | 1,000 | 9,349,351 | 5,242 | 15,185,744 |
+| Refresh 3 | 403.36 | 359.89 | 1,000 delta windows | 1,000 | 9,349,389 | 5,247 | 15,254,026 |
+| Refresh 4 | 446.58 | 398.79 | 1,000 delta windows | 1,000 | 9,348,333 | 5,251 | 15,322,096 |
+| Evicted, final cutoff | 487.54 | 477.82 | 1,000 full windows | 6,000 | 317,470,560 | 1 | 0 |
+
+Cold and warm have the same canonical publication hash. The final cache-evicted assessment has exactly the fourth refresh hash, `95d99a2270694a1fc793a1876470f7f78fd28ad09ca5b9ccbd1f92028da88736`, including all published references. Hashing excludes the API-only `run_id` and runs outside the phase wall/CPU timer. Cold and refresh derived object/byte inventory deltas exactly equal their PUT/upload counters. **Warm and evicted each attempt one existing publication PUT plus one HEAD, upload zero bytes and create zero new derived objects**; neither belongs in the PUT-to-new-object equality. Same-cutoff reuse also remains distinct from the moving-clock cost described below.
+
+| Source ingestion | Products / observations | Wall seconds | Common-process CPU seconds | PUT | Upload bytes |
+| --- | --- | ---: | ---: | ---: | ---: |
+| refresh_1 | 1,000 / 20,000 | 42.49 | 26.05 | 3,000 | 12,612,553 |
+| refresh_2 | 1,000 / 20,000 | 39.73 | 25.27 | 3,000 | 12,613,893 |
+| refresh_3 | 1,000 / 20,000 | 41.51 | 26.47 | 3,000 | 12,613,985 |
+| refresh_4 | 1,000 / 20,000 | 49.01 | 28.64 | 3,000 | 12,610,017 |
+
+Seed ingestion took 1,986.64 seconds, with 6,000 PUTs / 625,571,852 uploaded bytes. Its source inventory was 341,700,045 raw bytes, 280,075,207 normalized bytes, 3,796,600 canonical manifest bytes and 5,897,560,064 SQL relation/index bytes. The [post-wave SQL inventory](retained-1000-90-final-daily-source-sql.json) and [independent root-reviewer count](retained-1000-90-final-independent-count.json) both counted **7,280,000 physical rows** after the four imports. The root count was captured while the fourth assessment was active; its scope does not independently certify that assessment or eviction.
+
+The final 6,000 source datasets contain 347,183,940 raw bytes, 317,470,560 normalized bytes and 11,367,800 canonical manifest bytes: **676,022,300 bytes**, exactly the seed plus all four ingestion upload counters. Final committed derivations contain 60,243 objects / 235,796,312 bytes. The post-eviction SQL relation/index total is 6,099,189,760 bytes, and the final local cache is 425,036,260 bytes, below its 2,000,000,000-byte budget.
+
+The 4,631 supervisor samples observed a peak discovered RSS of **1,190,187,008 bytes (1,135.05 MiB)** for the common application/HTTP Moto process, maximum 4,019 descriptors and minimum 7,211,499,520 free disk bytes. No declared guard stopped this case. The soft/hard descriptor limit remained 16,384 and Moto's RAM/spool threshold remained 32 KiB. The CPU model, four-core cgroup quota, 16-GiB cgroup limit, dependency versions and adapter budget are preserved in the report. PostgreSQL CPU/RSS and Dagster/dashboard resources are outside that process measurement; rolling directory allocation observations are not atomic disk totals. Server-global WAL positions are not attributable writes, and no dump size is inferred.
+
+After the supervisor exited, both this agent and the root reviewer independently verified that worker PID 773177, schema `retained_probe_d1ef69e4da304ff2b740baf219240bca` and owned directory `retained-5afqqrh1` were absent. The frozen source remained clean. This is complete acceptance for this particular local synthetic case, not live-source access, provider latency, full deployed-stack memory or a complete 3,000/5,000/10,000-product suite.
+
+### Exact source and declared commands
+
+Public commit [`80696b4`](https://github.com/Dan-Popescu/sm-trending-products/commit/80696b48dc817eff6aa4c715b4a567ef6a8e8a21) is byte-for-byte equivalent to clean local launch `9ed3c44e8435f65abd6126787a011b721a3e1719`: whole Git tree `bb084d5cd07c5310e74193d0cb35d3550e2f87c0`, application tree `fb5b4b9b6c3272d5215f83a0045775b318d12625`, runner SHA256 `3ee3f5ddb99fbe247f979acc7ea92a8e3973c4b4a4f2df8200567ae31de197f6`. The original terminal JSON hashes to `067488358eaaadb3e0ac8c401d86acf9589297e91e0bcc514c2126b8e03e1529`. The condensed file preserves every original field except the explicitly summarized supervisor samples; all three SQL/count sidecars are copied byte-for-byte.
+
+From that checkout, with the [runtime prerequisites](../../operations/retained-history.md) and a dedicated native test database in `TEST_DATABASE_URL`, these are the exact declared shapes. Use fresh output paths and run them **in series**, allowing full cleanup between cases. Neither command enables CPU profiling. The four-GiB RSS guard covers the common application/Moto process; it is not a VPS sizing recommendation.
+
+```sh
+uv run --locked python scripts/retained-history.py \
+  --products 3000 --videos-per-product 20 --history-days 30 \
+  --refreshes-per-day 4 --refresh-waves 4 --seed-batch-rows 5000 \
+  --shared-products-per-import 1 --hot-products 0 --hot-product-batch-rows 100 \
+  --analysis-product-batch-size 10 --cache-bytes 2000000000 \
+  --max-rss-bytes 4294967296 --min-disk-free-bytes 2147483648 \
+  --max-owned-disk-bytes 12884901888 --deadline-seconds 14400 \
+  --output output/retained-3000-30-final.json
+
+uv run --locked python scripts/retained-history.py \
+  --products 1000 --videos-per-product 20 --history-days 90 \
+  --refreshes-per-day 4 --refresh-waves 4 --seed-batch-rows 5000 \
+  --shared-products-per-import 1 --hot-products 0 --hot-product-batch-rows 100 \
+  --analysis-product-batch-size 10 --cache-bytes 2000000000 \
+  --max-rss-bytes 4294967296 --min-disk-free-bytes 2147483648 \
+  --max-owned-disk-bytes 12884901888 --deadline-seconds 14400 \
+  --output output/retained-1000-90-final.json
+```
+
+The second command seeds 90 days of source history; it does not configure a retention TTL or execute a retention job. The analytical lookback stays 30 days. A fresh run will have new timestamps and therefore different compressed bytes/content hashes. Reproduction means the same source, workload, guards and verified contracts, not identical wall times or timestamp-dependent payload bytes.
+
 ## 1,000 products: completed phases, final deadline stop
 
 [Condensed report](retained-1000-30-partial.json) preserves every completed phase and request/byte counter from the original report. Its supervisor summary retains the sample count, peaks, final sample and original report hash. [Native source SQL inventory](retained-1000-30-source-sql.json) separately records per-table/index sizes and an actual `COUNT(*)` of the 2,400,000 observation deliveries.
