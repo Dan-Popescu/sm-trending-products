@@ -4,7 +4,17 @@ An evidence pipeline for detecting emerging physical-product opportunities from 
 
 The project separates attention, purchase demand, competition, and commercial feasibility. Source access and data quality must be verified before drawing business conclusions.
 
-The implementation includes Rust source adapters, a PostgreSQL control plane, immutable S3 raw/Parquet history, adaptive collection, reviewed product identity, four separate assessments, historical replay, forward evaluation, and a private operator interface. Dagster coordinates bounded batches; Polars and DuckDB process the evidence.
+An independent planner admits due work through PostgreSQL; Rust capture workers
+save raw responses durably before separate normalization. Immutable S3
+raw/Parquet history supports reviewed product identity, four assessments,
+historical replay and forward evaluation. Dagster coordinates downstream analysis
+and maintenance; Polars and DuckDB process the evidence.
+
+One application image runs as separately replaceable service containers, alongside
+a separate PostgreSQL image and external S3 storage. A trusted host-local
+controller applies signed releases while preserving the acquisition path. Operator
+interfaces remain private through Tailscale. See the
+[independent acquisition runtime](docs/operations/independent-acquisition.md).
 
 Repository documentation and all technical identifiers use English. The earlier local SQLite experiment is outside the approved architecture.
 
