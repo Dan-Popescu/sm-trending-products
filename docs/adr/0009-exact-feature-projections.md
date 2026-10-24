@@ -118,3 +118,11 @@ is evicted. Observed times were 5.55 s cold, 0.23 s unchanged and 5.02 s for the
 100-product refresh. That fixture has 1,200 initial observations and establishes
 shared parsing and current caller behavior; it does not estimate the runtime of
 a 100-product window with 240,000 observations.
+
+SQL027 removes a compact feature payload in the same retirement transaction when
+its result audit root or all-input audit root becomes invalidated or deleted.
+This physically removes copied prices and histories from the current SQL catalog;
+merely denying cache reuse would leave those facts in subsequent catalog backups.
+The migration also purges preexisting unavailable projections. Both root columns
+have partial indexes, so retiring one artifact does not scan every product cache.
+Local rolling-window bytes retain their existing fenced deletion outbox.

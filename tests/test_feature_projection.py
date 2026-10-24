@@ -162,7 +162,13 @@ def test_policy_identity_backward_time_and_audit_retirement_never_reuse_a_projec
         "UPDATE derived_publications SET state='invalidated' WHERE object_key=%s", (audit_root,)
     )
     read = cache.read_many([scope], cutoff, policy)
-    assert read.reasons == {"p": "unavailable_audit_root"}
+    assert read.reasons == {"p": "missing_projection"}
+    assert (
+        pipeline.catalog.one(
+            "SELECT product_id FROM feature_product_projections WHERE product_id='p'"
+        )
+        is None
+    )
 
 
 def test_new_late_correction_and_retention_change_only_affected_source_frontiers(pipeline):
