@@ -50,3 +50,27 @@ def test_untrusted_incomplete_or_unrelated_evidence_cannot_publish(changes):
 def test_mutable_or_malformed_revisions_are_rejected(revision):
     with pytest.raises(ValueError, match="immutable"):
         verified_main_run({"workflow_runs": [run()]}, revision, REPOSITORY)
+
+
+def test_deployment_request_binds_canonical_manifest_bytes_and_positive_sequence():
+    import hashlib
+    import json
+
+    from sm_trending_products.release_artifacts import build_manifest, build_request
+
+    manifest = build_manifest(
+        "ghcr.io/example/project@sha256:" + "b" * 64,
+        REVISION,
+        {"schema_min": 35, "schema_max": 35, "capture_protocol": 1},
+    )
+    request = json.loads(build_request(manifest, "pilot", 42))
+    assert request == {
+        "target": "pilot",
+        "sequence": 42,
+        "revision": REVISION,
+        "manifest_sha256": hashlib.sha256(manifest).hexdigest(),
+    }
+    with pytest.raises(ValueError, match="canonical"):
+        build_request(manifest.rstrip(), "pilot", 42)
+    with pytest.raises(ValueError):
+        build_request(manifest, "pilot", 0)
