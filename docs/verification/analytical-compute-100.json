@@ -1,0 +1,105 @@
+{
+  "status": "complete",
+  "complete": true,
+  "baseline_commit": "761b7796f77d83a7c10cf818042c01e57cb5e999",
+  "baseline_files": {
+    "analytics_sha256": "f24b49df01df17cfdcb70d680ab5352e4bdc8b6680dbc80c0b433ade5ad0d53d",
+    "windows_sha256": "b56d1408669c3ec5ec5e080a435805038af9c6a355ab94539e79e73f8d930c20"
+  },
+  "environment": {
+    "python": "3.12.14",
+    "platform": "Linux-6.18.55-x86_64-with-glibc2.41",
+    "polars": "2.0.0",
+    "pydantic": "2.14.1",
+    "pyarrow": "26.0.0",
+    "affinity_cpus": 5,
+    "cpu_quota": "400000 100000"
+  },
+  "treatment_files": {
+    "analytics_sha256": "0b5af51867c31640881389edbeadc6ba46d399cd8fd57c96defea3ab2a2130d8",
+    "windows_sha256": "95110442272b3d6aa0cd72a222e10b54071ab131cfdee321347b362a5cb80369"
+  },
+  "workload": {
+    "products": 100,
+    "videos": 20,
+    "samples": 120,
+    "refresh_hours": 6,
+    "repeats": 3,
+    "observations_per_complete_pass": 240000
+  },
+  "bounds": {
+    "max_seconds": 300,
+    "max_rss_bytes": 1073741824,
+    "resident_product_scopes": 1
+  },
+  "completed_products": 100,
+  "complete_assessment_parity": true,
+  "complete_observation_parity": true,
+  "encoded_byte_identity": true,
+  "native_warmup": "One two-observation window per adapter, excluded from timed components",
+  "boundary": "In-memory product-window computation; excludes SQL/S3/provenance and source access",
+  "elapsed_seconds": 82.38702195499991,
+  "peak_process_rss_bytes": 243539968,
+  "sizes": {
+    "baseline_state_bytes": 11570384,
+    "treatment_state_bytes": 11570384
+  },
+  "timings": {
+    "baseline_assess": {
+      "count": 300,
+      "total_seconds": 11.524549078004384,
+      "median_seconds": 0.03201695349980582
+    },
+    "baseline_encode": {
+      "count": 300,
+      "total_seconds": 11.04903917798947,
+      "median_seconds": 0.033443560500018066
+    },
+    "baseline_decode": {
+      "count": 300,
+      "total_seconds": 13.64893157199458,
+      "median_seconds": 0.03569774649986357
+    },
+    "treatment_assess": {
+      "count": 300,
+      "total_seconds": 3.722317612991901,
+      "median_seconds": 0.011318913499962946
+    },
+    "treatment_encode": {
+      "count": 300,
+      "total_seconds": 11.10144051300449,
+      "median_seconds": 0.033473727000455256
+    },
+    "treatment_decode": {
+      "count": 300,
+      "total_seconds": 12.609581456998967,
+      "median_seconds": 0.03310769449990403
+    }
+  },
+  "cpu": {
+    "baseline_assess": {
+      "count": 300,
+      "total_seconds": 11.64714594199994
+    },
+    "baseline_encode": {
+      "count": 300,
+      "total_seconds": 11.085098128000096
+    },
+    "baseline_decode": {
+      "count": 300,
+      "total_seconds": 13.751258098000005
+    },
+    "treatment_assess": {
+      "count": 300,
+      "total_seconds": 3.7350898380000785
+    },
+    "treatment_encode": {
+      "count": 300,
+      "total_seconds": 11.150677912999996
+    },
+    "treatment_decode": {
+      "count": 300,
+      "total_seconds": 12.701537834000112
+    }
+  }
+}

@@ -1,8 +1,8 @@
 """Point-in-time product assessment over bounded evidence partitions.
 
-The caller selects immutable history partitions before invoking this engine. Polars
-performs counter window calculations in native code. The remaining Python work is
-bounded by product/entity count and produces small inspectable review records.
+The caller selects immutable history partitions before invoking this engine.
+Counter summaries avoid expanding historical rows; Polars performs cohort ranking.
+All work remains bounded by the caller's observation and product partitions.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from typing import Any
 
 import polars as pl
 
-from .contracts import AssessmentPolicy, Observation, Product, ProductLink, digest, utc
+from .contracts import AssessmentPolicy, Measurement, Observation, Product, ProductLink, digest, utc
 from .identity_rules import resolve_links
 
 METRIC_ALIASES = {
@@ -92,90 +92,169 @@ def _unknown(reason: str, status: str = "unknown") -> dict[str, Any]:
     return {"score": None, "status": status, "reasons": [reason], "evidence_refs": []}
 
 
-def _metric_windows(
-    observations: Sequence[Observation], metric: str
-) -> dict[str, list[dict[str, Any]]]:
-    rows = []
+@dataclass(frozen=True, slots=True)
+class _CounterPoint:
+    observation: Observation
+    value: Measurement
+    observed_at: datetime
+    available_at: datetime
+    scope: str
+    period: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _CounterWindow:
+    latest: dict[str, Any]
+    previous: dict[str, Any] | None
+    references: tuple[str, ...]
+    corrections: int
+    comparable_intervals: int
+    positive_intervals: int
+    rows: tuple[dict[str, Any], ...] = ()
+
+
+def _counter_row(
+    entity_key: str,
+    point: _CounterPoint,
+    previous: _CounterPoint | None,
+    milliseconds: int | None,
+    valid: bool,
+    correction: bool,
+) -> dict[str, Any]:
+    # Polars' literal true-division compiles to multiplication by its reciprocal.
+    # Retain that rounding, including truncation before division, for old hashes.
+    hours = milliseconds * (1.0 / 3_600_000) if milliseconds is not None else None
+    lower = max(0, point.value.lower - previous.value.upper) if valid and previous else None
+    upper = max(0, point.value.upper - previous.value.lower) if valid and previous else None
+    return {
+        "entity_key": entity_key,
+        "observation_id": point.observation.observation_id,
+        "observed_at": point.observed_at,
+        "available_at": point.available_at,
+        "lower": point.value.lower,
+        "upper": point.value.upper,
+        "precision": point.value.precision,
+        "semantics": point.value.semantics,
+        "counter_scope": point.scope,
+        "counter_period": point.period,
+        "unit": point.value.unit,
+        **{
+            "previous_" + name: getattr(previous.value, name) if previous else None
+            for name in ("lower", "upper", "semantics", "precision", "unit")
+        },
+        "previous_scope": previous.scope if previous else None,
+        "previous_period": previous.period if previous else None,
+        "interval_hours": hours,
+        "valid_interval": valid,
+        "counter_correction": correction,
+        "delta_lower": lower,
+        "delta_upper": upper,
+        "growth_per_hour": float(lower) / hours if lower is not None and hours else None,
+        "growth_upper_per_hour": float(upper) / hours if upper is not None and hours else None,
+    }
+
+
+def _counter_windows(
+    observations: Sequence[Observation], metric: str, *, retain_rows: bool = False
+) -> dict[str, _CounterWindow]:
+    """Resolve revisions and summarize each timeline without expanding historical rows.
+
+    Attention needs all reference IDs and interval/correction counts, but full
+    arithmetic only for the latest two points. Demand consumes the latest one.
+    These ephemeral summaries keep the exact full-window formulas while avoiding
+    a dictionary and floating-point growth calculation for every old observation.
+    """
+    aliases = METRIC_ALIASES.get(metric, (metric,))
+    versions: dict[str, dict[datetime, tuple[datetime, Observation, Measurement]]] = defaultdict(
+        dict
+    )
     for observation in observations:
-        aliases = METRIC_ALIASES.get(metric, (metric,))
         value = next(
             (observation.metrics[key] for key in aliases if key in observation.metrics), None
         )
         if value is None:
             continue
-        rows.append(
-            {
-                "entity_key": observation.entity_key,
-                "observation_id": observation.observation_id,
-                "observed_at": observation.observed_at,
-                "available_at": observation.available_at,
-                "lower": value.lower,
-                "upper": value.upper,
-                "precision": value.precision,
-                "semantics": value.semantics,
-                "counter_scope": str(observation.attributes.get("counter_scope", "unspecified")),
-                "counter_period": _counter_period(observation, metric),
-                "unit": value.unit,
-            }
-        )
-    if not rows:
-        return {}
-    frame = pl.from_dicts(rows).sort(
-        ["entity_key", "observed_at", "available_at", "observation_id"]
-    )
-    frame = frame.unique(subset=["entity_key", "observed_at"], keep="last", maintain_order=True)
-    frame = (
-        frame.with_columns(
-            pl.col("lower").shift(1).over("entity_key").alias("previous_lower"),
-            pl.col("upper").shift(1).over("entity_key").alias("previous_upper"),
-            pl.col("semantics").shift(1).over("entity_key").alias("previous_semantics"),
-            pl.col("precision").shift(1).over("entity_key").alias("previous_precision"),
-            pl.col("counter_scope").shift(1).over("entity_key").alias("previous_scope"),
-            pl.col("counter_period").shift(1).over("entity_key").alias("previous_period"),
-            pl.col("unit").shift(1).over("entity_key").alias("previous_unit"),
-            (pl.col("observed_at") - pl.col("observed_at").shift(1).over("entity_key"))
-            .dt.total_milliseconds()
-            .truediv(3_600_000)
-            .alias("interval_hours"),
-        )
-        .with_columns(
-            (
-                (pl.col("semantics") == "cumulative")
-                & (pl.col("previous_semantics") == "cumulative")
-                & (pl.col("counter_scope") == pl.col("previous_scope"))
-                & pl.col("counter_period").is_not_null()
-                & (pl.col("counter_period") == pl.col("previous_period"))
-                & (pl.col("unit") == pl.col("previous_unit"))
-                & (pl.col("precision") != "estimated")
-                & (pl.col("previous_precision") != "estimated")
-                & (pl.col("interval_hours") > 0)
-                & (pl.col("upper") >= pl.col("previous_lower"))
+        entity_key = observation.entity_key
+        observed_at, available_at = utc(observation.observed_at), utc(observation.available_at)
+        previous = versions[entity_key].get(observed_at)
+        if previous is not None and (available_at, observation.observation_id) < (
+            previous[0],
+            previous[1].observation_id,
+        ):
+            continue
+        versions[entity_key][observed_at] = available_at, observation, value
+    output: dict[str, _CounterWindow] = {}
+    for entity_key, points in sorted(versions.items()):
+        previous_point: _CounterPoint | None = None
+        last_rows: list[dict[str, Any]] = []
+        references = []
+        corrections = comparable = positive = 0
+        for index, (observed_at, (available_at, observation, value)) in enumerate(
+            sorted(points.items())
+        ):
+            point = _CounterPoint(
+                observation,
+                value,
+                observed_at,
+                available_at,
+                str(observation.attributes.get("counter_scope", "unspecified")),
+                _counter_period(observation, metric),
             )
-            .fill_null(False)
-            .alias("valid_interval"),
-            (pl.col("upper") < pl.col("previous_lower"))
-            .fill_null(False)
-            .alias("counter_correction"),
+            references.append(observation.observation_id)
+            milliseconds = None
+            if previous_point is not None:
+                elapsed = observed_at - previous_point.observed_at
+                milliseconds = (
+                    elapsed.days * 86_400_000
+                    + elapsed.seconds * 1000
+                    + elapsed.microseconds // 1000
+                )
+            valid = bool(
+                previous_point is not None
+                and value.semantics == previous_point.value.semantics == "cumulative"
+                and point.scope == previous_point.scope
+                and point.period is not None
+                and point.period == previous_point.period
+                and value.unit == previous_point.value.unit
+                and value.precision != "estimated"
+                and previous_point.value.precision != "estimated"
+                and milliseconds is not None
+                and milliseconds > 0
+                and value.upper >= previous_point.value.lower
+            )
+            correction = bool(
+                previous_point is not None and value.upper < previous_point.value.lower
+            )
+            corrections += correction
+            comparable += valid
+            positive += bool(
+                valid and previous_point is not None and value.lower > previous_point.value.upper
+            )
+            if retain_rows or index >= len(points) - 2:
+                last_rows.append(
+                    _counter_row(entity_key, point, previous_point, milliseconds, valid, correction)
+                )
+            previous_point = point
+        output[entity_key] = _CounterWindow(
+            last_rows[-1],
+            last_rows[-2] if len(last_rows) > 1 else None,
+            tuple(references),
+            corrections,
+            comparable,
+            positive,
+            tuple(last_rows) if retain_rows else (),
         )
-        .with_columns(
-            pl.when(pl.col("valid_interval"))
-            .then((pl.col("lower") - pl.col("previous_upper")).clip(lower_bound=0))
-            .otherwise(None)
-            .alias("delta_lower"),
-            pl.when(pl.col("valid_interval"))
-            .then((pl.col("upper") - pl.col("previous_lower")).clip(lower_bound=0))
-            .otherwise(None)
-            .alias("delta_upper"),
-        )
-        .with_columns(
-            (pl.col("delta_lower") / pl.col("interval_hours")).alias("growth_per_hour"),
-            (pl.col("delta_upper") / pl.col("interval_hours")).alias("growth_upper_per_hour"),
-        )
-    )
-    output: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in frame.iter_rows(named=True):
-        output[row["entity_key"]].append(row)
-    return dict(output)
+    return output
+
+
+def _metric_windows(
+    observations: Sequence[Observation], metric: str
+) -> dict[str, list[dict[str, Any]]]:
+    """Preserve generic timeline inspection through the same counter kernel."""
+    return {
+        key: list(value.rows)
+        for key, value in _counter_windows(observations, metric, retain_rows=True).items()
+    }
 
 
 def _counter_period(observation: Observation, metric: str) -> str | None:
@@ -206,7 +285,7 @@ def _counter_period(observation: Observation, metric: str) -> str | None:
 
 
 def _attention(
-    evidence: Sequence[Observation],
+    evidence: _Evidence,
     as_of: datetime,
     policy: AssessmentPolicy,
     *,
@@ -214,11 +293,9 @@ def _attention(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if clock is not None:
         clock["age_anchor"] = None
-    videos = [row for row in evidence if row.entity_type == "video"]
-    windows = _metric_windows(videos, "view_count")
+    windows = _counter_windows(evidence.videos, "view_count")
     latest_observations = {
-        row.entity_key: row
-        for row in sorted(videos, key=lambda row: (row.observed_at, row.available_at))
+        key: row for key, row in evidence.latest.items() if row.entity_type == "video"
     }
     features: dict[str, Any] = {
         "view_count": None,
@@ -240,14 +317,14 @@ def _attention(
     usable = []
     latest_counts = []
     creators = set()
-    interval_growth: list[bool] = []
+    comparable_intervals = positive_intervals = 0
     accelerations = []
     published_ages = []
     published_timestamps = []
     refs: list[str] = []
     for key, timeline in windows.items():
-        features["counter_corrections"] += sum(row["counter_correction"] for row in timeline)
-        latest = timeline[-1]
+        features["counter_corrections"] += timeline.corrections
+        latest = timeline.latest
         observation = latest_observations[key]
         age = (as_of - latest["observed_at"]).total_seconds() / 3600
         if age > policy.max_age_hours:
@@ -256,17 +333,21 @@ def _attention(
             latest_counts.append(latest["lower"])
         else:
             latest_counts.append(None)
-        if len(timeline) < policy.min_observations or not latest["valid_interval"]:
+        if len(timeline.references) < policy.min_observations or not latest["valid_interval"]:
             continue
         usable.append(latest)
-        refs.extend(row["observation_id"] for row in timeline)
+        refs.extend(timeline.references)
         creator = observation.attributes.get("creator_id") or observation.account_id
         if creator:
             creators.add(str(creator))
-        valid = [row for row in timeline if row["valid_interval"]]
-        interval_growth.extend(row["delta_lower"] > 0 for row in valid)
-        if len(timeline) > 2 and timeline[-2]["valid_interval"]:
-            previous = timeline[-2]
+        comparable_intervals += timeline.comparable_intervals
+        positive_intervals += timeline.positive_intervals
+        if (
+            len(timeline.references) > 2
+            and timeline.previous
+            and timeline.previous["valid_interval"]
+        ):
+            previous = timeline.previous
             accelerations.append(
                 (latest["growth_per_hour"] - previous["growth_per_hour"]) / latest["interval_hours"]
             )
@@ -323,8 +404,8 @@ def _attention(
             "independent_spread_concentration": independent_concentration,
             "verified_creative_count": len(fingerprints),
             "repeated_creative_count": fingerprinted_count - len(fingerprints),
-            "positive_interval_fraction": sum(interval_growth) / len(interval_growth)
-            if interval_growth
+            "positive_interval_fraction": positive_intervals / comparable_intervals
+            if comparable_intervals
             else None,
             "age_hours": sorted(published_ages)[len(published_ages) // 2]
             if published_ages
@@ -365,21 +446,34 @@ def _cohort(age_hours: float | None) -> str:
     return "under_1d" if age_hours < 24 else "1_to_7d" if age_hours < 168 else "over_7d"
 
 
-def _fresh_latest(
-    evidence: Sequence[Observation],
-    as_of: datetime,
-    policy: AssessmentPolicy,
-) -> list[Observation]:
-    latest: dict[str, Observation] = {}
-    for observation in sorted(
-        evidence, key=lambda row: (row.observed_at, row.available_at, row.observation_id)
-    ):
-        latest[observation.entity_key] = observation
-    return [
-        row
-        for row in latest.values()
-        if (as_of - row.observed_at).total_seconds() <= policy.max_age_hours * 3600
-    ]
+@dataclass(frozen=True)
+class _Evidence:
+    """One ephemeral view of the already ordered product window."""
+
+    rows: Sequence[Observation]
+    videos: list[Observation]
+    offers: list[Observation]
+    latest: dict[str, Observation]
+    fresh: list[Observation]
+
+    @classmethod
+    def from_ordered(
+        cls, rows: Sequence[Observation], cutoff: datetime, policy: AssessmentPolicy
+    ) -> _Evidence:
+        videos, offers = [], []
+        latest = {}
+        for row in rows:
+            latest[row.entity_key] = row
+            if row.entity_type == "video":
+                videos.append(row)
+            elif row.entity_type == "offer":
+                offers.append(row)
+        fresh = [
+            row
+            for row in latest.values()
+            if (cutoff - row.observed_at).total_seconds() <= policy.max_age_hours * 3600
+        ]
+        return cls(rows, videos, offers, latest, fresh)
 
 
 def _declared_sales_intervals(
@@ -422,18 +516,18 @@ def _declared_sales_intervals(
 
 
 def _demand(
-    evidence: Sequence[Observation],
+    evidence: _Evidence,
     as_of: datetime,
     policy: AssessmentPolicy,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    offers = [row for row in evidence if row.entity_type == "offer"]
-    fresh = {row.entity_key: row for row in _fresh_latest(offers, as_of, policy)}
-    windows = _metric_windows(offers, "units_sold")
+    offers = evidence.offers
+    fresh = {row.entity_key: row for row in evidence.fresh if row.entity_type == "offer"}
+    windows = _counter_windows(offers, "units_sold")
     latest = [
-        rows[-1]
+        rows.latest
         for key, rows in windows.items()
         if key in fresh
-        and (as_of - rows[-1]["observed_at"]).total_seconds() <= policy.max_age_hours * 3600
+        and (as_of - rows.latest["observed_at"]).total_seconds() <= policy.max_age_hours * 3600
     ]
     features: dict[str, Any] = {
         "units_sold": None,
@@ -452,11 +546,7 @@ def _demand(
         ),
     }
     if not latest:
-        proxy_rows = [
-            row
-            for row in _fresh_latest(evidence, as_of, policy)
-            if "purchase_intent_count" in row.metrics
-        ]
+        proxy_rows = [row for row in evidence.fresh if "purchase_intent_count" in row.metrics]
         if proxy_rows:
             return {
                 "score": None,
@@ -773,11 +863,11 @@ def _price_evolution(
 
 
 def _competition(
-    evidence: Sequence[Observation],
+    evidence: _Evidence,
     as_of: datetime,
     policy: AssessmentPolicy,
 ) -> dict[str, Any]:
-    latest = _fresh_latest(evidence, as_of, policy)
+    latest = evidence.fresh
     offers = [row for row in latest if row.entity_type == "offer"]
     ads = [row for row in latest if row.entity_type in {"ad", "commercial_content"}]
     creatives = [row for row in latest if row.entity_type in {"video", "ad", "commercial_content"}]
@@ -788,7 +878,7 @@ def _competition(
         and row.attributes["creative_fingerprint"].strip()
     ]
     fingerprints = {str(row.attributes["creative_fingerprint"]) for row in fingerprinted}
-    prices = _price_evolution(evidence, as_of, policy)
+    prices = _price_evolution(evidence.rows, as_of, policy)
     extra = {
         "observed_creative_count": len(fingerprints) if fingerprinted else None,
         "creative_coverage": {
@@ -840,7 +930,7 @@ def _competition(
 
 
 def _feasibility(
-    evidence: Sequence[Observation],
+    evidence: _Evidence,
     as_of: datetime,
     policy: AssessmentPolicy,
 ) -> dict[str, Any]:
@@ -854,7 +944,7 @@ def _feasibility(
         "return_rate",
         "return_cost",
     )
-    costs = [row for row in _fresh_latest(evidence, as_of, policy) if row.entity_type == "cost"]
+    costs = [row for row in evidence.fresh if row.entity_type == "cost"]
     scenarios: list[dict[str, Any]] = []
     failures = []
     for row in costs:
@@ -1030,13 +1120,14 @@ def assess(
     rows = []
     for product_id, product in sorted(product_map.items()):
         evidence = grouped[product_id]
+        prepared = _Evidence.from_ordered(evidence, cutoff, policy)
         resolved = identity.by_product.get(product_id, ())
         clock: dict[str, datetime | None] | None = {} if age_anchors is not None else None
-        attention, features = _attention(evidence, cutoff, policy, clock=clock)
+        attention, features = _attention(prepared, cutoff, policy, clock=clock)
         if age_anchors is not None:
             assert clock is not None
             age_anchors[product_id] = clock["age_anchor"]
-        demand, demand_features = _demand(evidence, cutoff, policy)
+        demand, demand_features = _demand(prepared, cutoff, policy)
         features.update(demand_features)
         rows.append(
             {
@@ -1056,12 +1147,12 @@ def assess(
                 "features": features,
                 "attention": attention,
                 "demand": demand,
-                "competition": _competition(evidence, cutoff, policy),
-                "feasibility": _feasibility(evidence, cutoff, policy),
+                "competition": _competition(prepared, cutoff, policy),
+                "feasibility": _feasibility(prepared, cutoff, policy),
                 "evidence_refs": sorted({row.observation_id for row in evidence}),
                 "coverage": {
                     "observations": len(evidence),
-                    "entities": len({row.entity_key for row in evidence}),
+                    "entities": len(prepared.latest),
                     "market_excluded_observations": excluded[product_id],
                     "scope": "observed_candidates_only",
                     "global_coverage": "unknown",
