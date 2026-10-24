@@ -12,6 +12,8 @@ if [[ $# -eq 2 ]]; then
   exercise_synthetic=true
 fi
 backup_directory="$(cd "$1" && pwd)"
+backup_parent="$(dirname "$backup_directory")"
+backup_name="$(basename "$backup_directory")"
 python3 - "$backup_directory" <<'PY'
 import hashlib
 import json
@@ -20,7 +22,7 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 metadata = json.loads((root / "backup.json").read_text())
-if metadata.get("schema_version") != 1 or metadata.get("complete") is not True:
+if metadata.get("schema_version") not in (1, 2) or metadata.get("complete") is not True:
     raise SystemExit("Incomplete or unsupported backup")
 for name, expected in metadata["sha256"].items():
     if Path(name).name != name:
@@ -31,7 +33,11 @@ for name, expected in metadata["sha256"].items():
             result.update(chunk)
     if result.hexdigest() != expected:
         raise SystemExit("Backup checksum mismatch")
-objects = json.loads((root / "objects/snapshot.json").read_text())
+snapshot_path = root / "objects/snapshot.json"
+if metadata.get("object_snapshot_sha256"):
+    if hashlib.sha256(snapshot_path.read_bytes()).hexdigest() != metadata["object_snapshot_sha256"]:
+        raise SystemExit("Object snapshot metadata checksum mismatch")
+objects = json.loads(snapshot_path.read_text())
 if objects.get("copied_objects") is not True or objects.get("complete") is not True:
     raise SystemExit("Isolated restore requires --copy-objects backup")
 PY
@@ -101,8 +107,8 @@ for _attempt in $(seq 1 60); do
 done
 [[ "$objects_ready" == true ]] || { echo 'Isolated object store did not become ready.' >&2; exit 1; }
 docker run --rm --user "$(id -u):$(id -g)" --network "$restore_network" "${restore_environment[@]}" \
-  --volume "$backup_directory:/backup:ro" "$pipeline_image" \
-  python scripts/object_snapshot.py restore /backup/objects --bucket "$restore_bucket" --create-bucket
+  --volume "$backup_parent:/backups:ro" "$pipeline_image" \
+  python scripts/object_snapshot.py restore "/backups/$backup_name/objects" --bucket "$restore_bucket" --create-bucket
 docker run --rm --network "$restore_network" "${restore_environment[@]}" "$pipeline_image" \
   sm-trends verify --json
 docker run --rm --network "$restore_network" "${restore_environment[@]}" "$pipeline_image" \
