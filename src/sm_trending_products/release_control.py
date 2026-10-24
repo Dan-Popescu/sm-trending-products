@@ -300,6 +300,7 @@ class DeploymentController:
                 "phase",
                 "status",
                 "reason",
+                "abort_requested",
                 "fence",
                 "created_at",
                 "updated_at",
@@ -349,10 +350,11 @@ class DeploymentController:
         reason = changes.get("reason")
         evidence = changes.get("evidence", row["evidence"])
         candidate_generation = changes.get("candidate_generation", row["candidate_generation"])
+        abort_requested = changes.get("abort_requested", row["abort_requested"])
         with connection.transaction():
             changed = connection.execute(
                 "UPDATE deployment_runs r SET phase=%s,status=%s,reason=%s,evidence=%s,fence=%s,"
-                "candidate_generation=%s,"
+                "candidate_generation=%s,abort_requested=%s,"
                 "updated_at=clock_timestamp() FROM deployment_targets t "
                 "WHERE r.release_id=%s AND t.target=r.target AND t.fence=%s RETURNING r.release_id",
                 (
@@ -362,6 +364,7 @@ class DeploymentController:
                     Jsonb(evidence),
                     fence,
                     candidate_generation,
+                    abort_requested,
                     row["release_id"],
                     fence,
                 ),
@@ -375,7 +378,41 @@ class DeploymentController:
             evidence=evidence,
             fence=fence,
             candidate_generation=candidate_generation,
+            abort_requested=abort_requested,
         )
+
+    def _abort(self, connection, row: dict, fence: int) -> None:
+        active = connection.execute(
+            "SELECT active_manifest,active_worker_id FROM deployment_targets WHERE target=%s",
+            (row["target"],),
+        ).fetchone()
+        connection.commit()
+        if (
+            not active
+            or active["active_manifest"] != row["prior_manifest"]
+            or active["active_worker_id"] != row["prior_worker_id"]
+        ):
+            raise ReleaseBlocked("active_release_changed")
+        self.workers.resume(row["prior_worker_id"], row["prior_generation"])
+        if row["phase"] == "planned":
+            self._record(connection, row, fence, status="aborted")
+            return
+        candidate = ReleaseManifest.model_validate(row["candidate_manifest"])
+        slot = "green" if row["prior_slot"] == "blue" else "blue"
+        worker = self.workers.status(row["candidate_worker_id"])
+        if not worker:
+            raise ReleaseBlocked("candidate_worker_unavailable")
+        if worker["generation"] != row["candidate_generation"]:
+            if not self.host.healthy(row["target"], candidate, slot, row["candidate_worker_id"]):
+                raise ReleaseBlocked("candidate_identity_unavailable")
+            self._record(connection, row, fence, candidate_generation=worker["generation"])
+        drained = self.workers.request_drain(
+            row["candidate_worker_id"], row["candidate_generation"]
+        )
+        if not drained.get("drained"):
+            raise ReleaseBlocked("candidate_busy")
+        self.host.retire(row["target"], candidate, slot, row["candidate_worker_id"])
+        self._record(connection, row, fence, status="aborted")
 
     def _require_replacement(self, row: dict, manifest: ReleaseManifest, slot: str) -> None:
         worker = self.workers.status(row["candidate_worker_id"])
@@ -411,6 +448,12 @@ class DeploymentController:
             connection.commit()
             assert row is not None
             if row["status"] in {"completed", "aborted"}:
+                return self.status(release_id)
+            if row["abort_requested"]:
+                try:
+                    self._abort(connection, row, fence)
+                except ReleaseBlocked as error:
+                    self._record(connection, row, fence, status="blocked", reason=str(error))
                 return self.status(release_id)
             try:
                 active = connection.execute(
@@ -582,30 +625,11 @@ class DeploymentController:
             connection.commit()
             assert row is not None
             if row["phase"] not in {"committed", "retired"}:
-                active = connection.execute(
-                    "SELECT active_manifest FROM deployment_targets WHERE target=%s",
-                    (row["target"],),
-                ).fetchone()
-                connection.commit()
-                if not active or active["active_manifest"] != row["prior_manifest"]:
-                    raise ReleaseBlocked("active_release_changed")
-                self.workers.resume(row["prior_worker_id"], row["prior_generation"])
-                if row["phase"] == "planned":
-                    self._record(connection, row, fence, status="aborted")
-                else:
-                    # A candidate may have in-flight captures. Drain it before retirement.
-                    drained = self.workers.request_drain(
-                        row["candidate_worker_id"], row["candidate_generation"]
-                    )
-                    if not drained.get("drained"):
-                        self._record(
-                            connection, row, fence, status="blocked", reason="candidate_busy"
-                        )
-                    else:
-                        candidate = ReleaseManifest.model_validate(row["candidate_manifest"])
-                        slot = "green" if row["prior_slot"] == "blue" else "blue"
-                        self.host.retire(row["target"], candidate, slot, row["candidate_worker_id"])
-                        self._record(connection, row, fence, status="aborted")
+                self._record(connection, row, fence, abort_requested=True)
+                try:
+                    self._abort(connection, row, fence)
+                except ReleaseBlocked as error:
+                    self._record(connection, row, fence, status="blocked", reason=str(error))
                 return self.status(release_id)
         rollback_release = VerifiedRelease(
             ReleaseManifest.model_validate(row["prior_manifest"]), row["prior_proof"]

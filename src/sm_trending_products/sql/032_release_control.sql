@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS deployment_runs (
     schema_version integer NOT NULL,
     synthetic boolean NOT NULL,
     rollback_of text REFERENCES deployment_runs(release_id),
+    abort_requested boolean NOT NULL DEFAULT false,
     phase text NOT NULL DEFAULT 'planned' CHECK(phase IN
       ('planned','prepared','started','ready','draining','verified','committed','retired')),
     status text NOT NULL DEFAULT 'pending' CHECK(status IN

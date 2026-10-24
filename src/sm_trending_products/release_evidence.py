@@ -67,6 +67,7 @@ class CatalogCaptureVerifier:
                 "AND o.durable_at IS NOT NULL AND o.durable_at<=%s "
                 "AND o.captured_at<=%s "
                 "AND o.captured_at<=o.deadline_at AND d.state='committed' "
+                "AND d.quarantine_count=0 "
                 "AND d.manifest->>'kind'='raw_capture' "
                 "AND d.manifest->>'acquisition_protocol'='1' "
                 "AND d.manifest#>>'{capture,worker_id}'=%s "

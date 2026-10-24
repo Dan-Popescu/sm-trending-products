@@ -314,3 +314,29 @@ def test_candidate_restart_rebinds_proof_and_never_drains_a_new_predecessor_gene
     result = controller.apply(reverse["release_id"])
     assert result["reason"] == "predecessor_generation_changed"
     assert result["status"] == "blocked" and "green" in host.running
+
+
+def test_blocked_cancellation_is_durable_and_apply_never_resumes_forward_rollout(pipeline):
+    host, workers, evidence = Host(), Workers(), Evidence()
+    controller = DeploymentController(
+        pipeline.catalog, host, workers, evidence, allow_synthetic=True
+    )
+    planned = controller.plan(
+        release("b"),
+        target="fixture",
+        current=release("a"),
+        current_slot="blue",
+        current_worker_id="old",
+        schema_version=32,
+        synthetic=True,
+    )
+    assert controller.apply(planned["release_id"])["reason"] == "capture_proof_missing"
+    workers.busy = True
+    cancellation = controller.rollback(planned["release_id"])
+    assert cancellation["reason"] == "candidate_busy" and cancellation["abort_requested"]
+    evidence.ready = True
+    assert controller.apply(planned["release_id"])["reason"] == "candidate_busy"
+    assert "old" not in workers.drained and "blue" in host.running
+    workers.busy = False
+    assert controller.apply(planned["release_id"])["status"] == "aborted"
+    assert set(host.running) == {"blue"}

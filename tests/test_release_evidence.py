@@ -14,7 +14,7 @@ from sm_trending_products.release_evidence import CatalogCaptureVerifier
 pytestmark = pytest.mark.integration
 
 
-def publish(pipeline, task, name, *, worker="candidate", generation=1):
+def publish(pipeline, task, name, *, worker="candidate", generation=1, quarantine_count=0):
     stamp = now()
     body = gzip.compress(b"real controlled response")
     raw, manifest_key = f"release/{name}.gz", f"release/{name}.json"
@@ -27,6 +27,7 @@ def publish(pipeline, task, name, *, worker="candidate", generation=1):
         "acquisition_protocol": "1",
         "transform_version": "1",
         "row_count": 0,
+        "quarantine_count": quarantine_count,
         "normalized": [],
         "manifest_key": manifest_key,
         "raw": {"key": raw, "sha256": hashlib.sha256(body).hexdigest(), "bytes": len(body)},
@@ -113,3 +114,18 @@ def test_invalidated_window_receipt_is_a_breach_despite_fresh_same_scope_capture
             )
             is None
         )
+
+
+def test_durable_unusable_raw_envelope_is_not_replacement_readiness(pipeline):
+    CaptureContracts(pipeline.catalog).register(historical(), synthetic=True)
+    start = now()
+    enqueue(pipeline, "unknown-envelope", now())
+    task = pipeline.catalog.claim("candidate", 180, True, 8)
+    assert task
+    publish(pipeline, task, "quarantined-raw-parent", quarantine_count=1)
+    assert (
+        CatalogCaptureVerifier(pipeline.catalog).verify(
+            worker_id="candidate", generation=1, since=start, synthetic=True
+        )
+        is None
+    )
