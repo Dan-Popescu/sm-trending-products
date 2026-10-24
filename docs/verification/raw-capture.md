@@ -46,6 +46,14 @@ policy. Registered revoked receipts use existing dataset invalidation and retire
 their normalized children. Temporary S3 cleanup failures preserve local bytes
 while independent source acquisition continues.
 
+`test_capture_retirement.py` exercises the database retirement authority seam.
+Borrowing another account's revocation, unverified retention, or a future expiry
+cannot create a certificate. Source-removal journals and retirement certificates
+reject updates/deletions. A crash after certificate/cancellation commit but
+before unlink can finish cleanup after policy changes, with the original audit
+unchanged. Retiring an old business-error attempt leaves the newer attempt
+active, and positive-attempt identities receive their own qualified certificate.
+
 Legacy regression checks run `test_collector_contract.py`,
 `test_collection_review.py`, `test_replay_delivery.py`, and
 `test_replay_versions.py` alongside these scenarios. Rust formatting, Clippy with

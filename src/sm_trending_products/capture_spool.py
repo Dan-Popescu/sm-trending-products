@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from psycopg.types.json import Jsonb
+
 from .collector import CollectionError
 from .contracts import now, utc
 from .source_contracts import SOURCES
@@ -173,13 +175,34 @@ class CaptureSpool:
             "reason": reason,
         }
 
-    def _authority(self, connection, receipt: dict) -> str | None:
+    def _authority(self, connection, receipt: dict) -> dict | None:
         request, capture = receipt["request"], receipt["capture"]
         acquired_at = utc(capture.get("captured_at", capture.get("started_at")))
         started_at = utc(capture.get("started_at", acquired_at))
+        recorded = connection.execute(
+            "SELECT reason,authority_kind,authority_ref FROM capture_spool_retirements "
+            "WHERE capture_id=%s AND task_id=%s AND page_index=%s AND capture_attempt=%s "
+            "AND source=%s AND account_id=%s AND synthetic=%s",
+            (
+                capture["capture_id"],
+                capture["task_id"],
+                capture["page_index"],
+                capture.get("capture_attempt", 0),
+                request["source"],
+                request["account_id"],
+                request["synthetic"],
+            ),
+        ).fetchone()
+        if recorded:
+            return {
+                "category": recorded["reason"],
+                "authority_kind": recorded["authority_kind"],
+                "authority_ref": recorded["authority_ref"],
+                "recorded": True,
+            }
         revoked = connection.execute(
-            "SELECT 1 FROM capture_spool_revocations WHERE source=%s AND account_id=%s "
-            "AND synthetic=%s AND captured_before>=%s LIMIT 1",
+            "SELECT * FROM capture_spool_revocations WHERE source=%s AND account_id=%s "
+            "AND synthetic=%s AND captured_before>=%s ORDER BY captured_before LIMIT 1",
             (
                 request["source"],
                 request["account_id"],
@@ -188,9 +211,17 @@ class CaptureSpool:
             ),
         ).fetchone()
         if revoked:
-            return "capture_source_removed"
+            return {
+                "category": "capture_source_removed",
+                "authority_kind": "source_revocation",
+                "authority_ref": {
+                    "captured_before": revoked["captured_before"].isoformat(),
+                    "requested_at": revoked["requested_at"].isoformat(),
+                    "reason": revoked["reason"],
+                },
+            }
         policy = connection.execute(
-            "SELECT retention_days FROM source_policies WHERE source=%s AND verified",
+            "SELECT retention_days,updated_at FROM source_policies WHERE source=%s AND verified",
             (request["source"],),
         ).fetchone()
         # A reservation's timestamp precedes body completion. Allow one full
@@ -200,19 +231,39 @@ class CaptureSpool:
             policy
             and acquired_at + timedelta(days=policy["retention_days"], seconds=grace) <= now()
         ):
-            return "capture_retention_expired"
+            return {
+                "category": "capture_retention_expired",
+                "authority_kind": "retention_expiry",
+                "authority_ref": {
+                    "retention_days": policy["retention_days"],
+                    "policy_updated_at": policy["updated_at"].isoformat(),
+                    "reservation_grace_seconds": grace,
+                    "deadline": (
+                        acquired_at + timedelta(days=policy["retention_days"], seconds=grace)
+                    ).isoformat(),
+                },
+            }
         dataset = connection.execute(
-            "SELECT state FROM datasets WHERE dataset_id=%s", (capture["capture_id"],)
+            "SELECT state,invalid_reason FROM datasets WHERE dataset_id=%s",
+            (capture["capture_id"],),
         ).fetchone()
         if dataset and dataset["state"] in {"invalidated", "deleted"}:
-            return "capture_source_removed"
+            return {
+                "category": "capture_source_removed",
+                "authority_kind": "dataset_invalidation",
+                "authority_ref": {
+                    "dataset_id": capture["capture_id"],
+                    "state": dataset["state"],
+                    "invalid_reason": dataset["invalid_reason"],
+                },
+            }
         return None
 
     def assert_publishable(self, connection, receipt: dict) -> None:
         self.catalog.guard_retention(connection)
         reason = self._authority(connection, receipt)
         if reason:
-            raise CollectionError(reason, 3600)
+            raise CollectionError(reason["category"], 3600)
         request = receipt["request"]
         if not request["synthetic"]:
             row = connection.execute(
@@ -235,13 +286,39 @@ class CaptureSpool:
                 if not reason:
                     return False
                 capture = receipt["capture"]
+                request = receipt["request"]
+                if not reason.get("recorded"):
+                    captured_at = (
+                        utc(capture["captured_at"]) if "capture_version" in receipt else None
+                    )
+                    connection.execute(
+                        "INSERT INTO capture_spool_retirements(capture_id,task_id,page_index,"
+                        "capture_attempt,source,account_id,synthetic,captured_at,started_at,"
+                        "complete_receipt,reason,authority_kind,authority_ref) "
+                        "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (
+                            path.stem,
+                            capture["task_id"],
+                            capture["page_index"],
+                            capture.get("capture_attempt", 0),
+                            request["source"],
+                            request["account_id"],
+                            request["synthetic"],
+                            captured_at,
+                            utc(capture.get("started_at", capture.get("captured_at"))),
+                            captured_at is not None,
+                            reason["category"],
+                            reason["authority_kind"],
+                            Jsonb(reason["authority_ref"]),
+                        ),
+                    )
                 connection.execute(
                     "UPDATE collection_tasks SET state='cancelled',"
                     "lease_owner=NULL,lease_until=NULL,lease_version=lease_version+1,"
                     "last_error=%s WHERE task_id=%s AND page_index=%s "
                     "AND capture_attempt=%s AND state IN ('pending','leased','quarantined')",
                     (
-                        reason,
+                        reason["category"],
                         capture["task_id"],
                         capture["page_index"],
                         capture.get("capture_attempt", 0),
@@ -253,7 +330,7 @@ class CaptureSpool:
             # Cancellation is durable before touching files. A stale publisher
             # is fenced by task ownership and the publication-time policy guard.
             if dataset and dataset["state"] in {"staged", "committed"}:
-                self.catalog.invalidate_dataset(path.stem, reason)
+                self.catalog.invalidate_dataset(path.stem, reason["category"])
             self._remove_files(path.stem, (".json", ".part", ".reserve"))
             return True
 

@@ -112,6 +112,11 @@ def test_display_query_missing_member_diagnostics_are_derived_after_normalizatio
     derived = pipeline.history.raw(child)
     assert derived["requested_entity_ids"] == ["missing", "returned"]
     assert derived["missing_entity_ids"] == ["missing"]
+    alias = acquisition.replay.replay(child_id, "2")
+    upgraded = pipeline.catalog.one(
+        "SELECT * FROM datasets WHERE dataset_id=%s", (alias["dataset_id"],)
+    )
+    assert pipeline.history.raw(upgraded)["missing_entity_ids"] == ["missing"]
 
 
 def test_auth_business_error_blocks_then_allows_fresh_attempt_after_access_recovery(pipeline):

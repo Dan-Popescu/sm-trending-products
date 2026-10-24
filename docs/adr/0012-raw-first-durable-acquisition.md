@@ -73,6 +73,16 @@ request that completes later. Retention for complete receipts starts at physical
 capture time; an incomplete reservation receives an additional collector-timeout
 grace. The exact task/page/attempt is durably cancelled before removing bytes;
 registered datasets retire through the existing invalidation lifecycle.
+Before cancellation, store an immutable operational retirement certificate with
+the task/page/attempt, source/account/workspace, original physical clock and
+exact authority reference. A SQL trigger independently verifies the canonical
+capture identity and either its scoped revocation journal row, verified policy
+snapshot with elapsed deadline, or exact invalidated dataset. The database owns
+the retirement clock. This certificate distinguishes lawful withdrawal from an
+ordinary missed or cancelled obligation without inventing a capture receipt.
+Retiring an old diagnostic attempt does not withdraw a newer active attempt on
+the same page. Committed certificates survive cleanup failure and later policy
+changes, so retries can finish deleting already-retired local bytes safely.
 Publication-time guards under the retention fence reject expired/revoked receipts
 and recheck current live source access. A stale in-memory body cannot republish
 after its local file is removed. The scoped spool-removal API does not replace

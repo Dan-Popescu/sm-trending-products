@@ -112,7 +112,7 @@ class ReplayService:
                     row.model_copy(update={"available_at": available_at}) for row in observations
                 ]
             if (
-                dataset["manifest"].get("kind") == "raw_capture"
+                parent["manifest"].get("kind") == "raw_capture"
                 and raw["request"]["source"] == "tiktok_display"
                 and raw["request"]["operation"] == "query"
             ):
