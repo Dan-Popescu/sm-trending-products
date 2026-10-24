@@ -80,3 +80,39 @@ The supervisor stopped after 8,289.20 seconds. Its sampled peak discovered RSS w
 The child exited under supervision, and native rechecks found no remaining `retained_probe_%` schema, worker process or owned configuration directory. Both cleanup flags are true. Free disk returned to 14,742,061,056 bytes. PostgreSQL CPU/RSS and attributable WAL remain unmeasured; the server-global WAL positions are not treated as this case's write volume.
 
 This baseline used clean local launch `045dc65`, exactly reproducible on public [`0c1fbe8`](https://github.com/Dan-Popescu/sm-trending-products/commit/0c1fbe842cd333a061ea1dde809ee36f17f244d8), complete Git tree `711e50778b027c7e47eefde3439c35cd3f9f78f3`, application tree `bc5ab3a3b4fb2d4d7813447d5d81b39043a0b401`, and archived harness SHA256 `bef1fc190a07d27107cd7ff7d4d22262e84145273e5d18ca4427fea59a1d6a0c`. It precedes the later window-priority cache policy and explicit per-phase publication-hash check. The partial case neither certifies four daily waves nor transfers its timings to that newer code.
+
+## Updated 3,000-product checkpoint: four waves complete, eviction deadline
+
+[Condensed final-source report](retained-3000-30-final-partial.json) records a **NON-ACCEPTED / partial overall case**. Its original 14,400-second wall guard stopped the final cache-evicted assessment. All four refresh ingestions, their complete assessments and their sampled complete-row/reference oracles finished first. The missing `evicted` phase, final hash and `evicted_exact_publication` check remain missing; no parity result is reconstructed from the last successful publication.
+
+This was a separately declared run after the earlier two-GiB stop. It used the updated window-priority cache policy and released each verified refresh payload before the next wave. The common application/HTTP Moto RSS guard was declared as 4,294,967,296 bytes before startup; products, history, source layout, two-billion-byte cache, batch size ten, 5,000-row seed batches, two-GiB disk floor, twelve-GiB owned-data budget and four-hour deadline were retained. The earlier stopped case was not amended, downsized or granted extra time. Because both code and the common-process memory guard changed, this is not an isolated before/after speedup measurement.
+
+Every requested observation went through normal imports and identity review. The [native seed snapshot](retained-3000-30-final-source-sql.json) counted **7,200,000 physical observation-delivery rows** for 3,000 products and 60,000 distinct videos; seed ingestion took 2,059.14 seconds. Its raw objects occupied 342,095,257 bytes, normalized objects 304,277,919 bytes, canonical manifests 5,740,800 bytes and native schema relations/indexes 5,845,188,608 bytes. Each record has the declared homogeneous cumulative `view_count` and `creator_id` fixture shape, without prices, sales, costs, descriptions, transcripts or media payloads.
+
+| Completed assessment phase | Wall seconds | Common-process CPU seconds | Work | GET | Download bytes | PUT | Upload bytes |
+| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: |
+| Cold | 2,191.85 | 1,571.72 | 3,000 full windows | 3,000 | 304,277,919 | 120,419 | 536,429,288 |
+| Warm, same cutoff | 9.75 | 5.95 | 3,000 projection hits | 0 | 0 | 1 | 0 |
+| Refresh 1 | 1,413.52 | 1,311.66 | 3,000 delta windows | 3,000 | 28,091,889 | 9,365 | 38,930,906 |
+| Refresh 2 | 1,640.59 | 1,528.52 | 3,000 delta windows | 3,000 | 28,091,959 | 12,383 | 29,272,715 |
+| Refresh 3 | 1,984.71 | 1,858.53 | 3,000 delta windows | 3,000 | 28,094,544 | 15,393 | 45,472,360 |
+| Refresh 4 | 2,306.29 | 2,172.85 | 3,000 delta windows | 3,000 | 28,091,589 | 15,391 | 45,672,846 |
+
+Cold selected exactly 7,200,000 observations and returned every requested product. Warm had the same canonical publication hash. Every refresh selected exactly 7,260,000 observations in the inclusive 30-day window, used 3,000 local delta windows, and completed its sampled full-row/reference oracle. The oracle covers these equal trajectories and their cohort rank; it is not arbitrary heterogeneous-ranking evidence. The API-returned `assessment_bytes` includes the extra `run_id`; publication hashes and transfer counters describe the canonical stored body.
+
+| Source ingestion | Products / observations | Wall seconds | Common-process CPU seconds | PUT | Upload bytes |
+| --- | --- | ---: | ---: | ---: | ---: |
+| refresh_1 | 3,000 / 60,000 | 125.80 | 77.13 | 9,000 | 37,930,798 |
+| refresh_2 | 3,000 / 60,000 | 111.00 | 70.46 | 9,000 | 37,930,727 |
+| refresh_3 | 3,000 / 60,000 | 138.60 | 82.86 | 9,000 | 37,933,540 |
+| refresh_4 | 3,000 / 60,000 | 131.33 | 81.33 | 9,000 | 37,922,213 |
+
+The [post-ingestion native snapshot](retained-3000-30-final-daily-source-sql.json) and a [separate root-reviewer `COUNT(*)`](retained-3000-30-final-independent-count.json) independently found **7,440,000 physical rows** after all four waves. At that checkpoint, 15,000 committed datasets contained 358,551,354 raw bytes, 416,647,900 normalized bytes and 28,632,000 canonical manifest bytes. Their total exactly equals the seed plus four completed ingestion upload counters. Cold and refresh derived inventory byte/object deltas also exactly match their upload bytes and PUT counts. Warm instead attempted an existing publication (one PUT and one HEAD, zero new payload bytes) without creating a derived object; it is excluded from the PUT-to-new-object equality. The fourth completed assessment had 172,951 committed derived objects / 695,778,115 bytes; its native schema relation/index total was 6,624,321,536 bytes. These are checkpoint inventories, not a fabricated final post-eviction inventory.
+
+The cache-evicted reconstruction began, but did not return a complete assessment before the deadline. The supervisor stopped at 14,401.11 seconds, with exit -15 and global `ok: false`. Its 13,305 one-second-scale samples observed a peak discovered RSS of 2,518,970,368 bytes (2,402.28 MiB), for the **common application plus HTTP Moto process**. PostgreSQL CPU/RSS and Dagster/dashboard processes are outside that measurement. The maximum observed descriptor count was 6,020; minimum free disk was 6,229,082,112 bytes. The RSS, descriptor and disk guards did not cause this stop. Directory accounting remains a rolling allocated-block observation.
+
+Cleanup completed before the independent 90-day case started. The measurement and root reviewer both verified the old PID and schema were absent; the owned `retained-jix8n98l` directory was also absent. Both cleanup flags are true. No result from the unfinished eviction is promoted to a passing check.
+
+Reproduction uses public commit [`80696b4`](https://github.com/Dan-Popescu/sm-trending-products/commit/80696b48dc817eff6aa4c715b4a567ef6a8e8a21), exactly equivalent to clean local launch `9ed3c44e8435f65abd6126787a011b721a3e1719`, whole Git tree `bb084d5cd07c5310e74193d0cb35d3550e2f87c0`. The archived runner SHA256 is `3ee3f5ddb99fbe247f979acc7ea92a8e3973c4b4a4f2df8200567ae31de197f6`. The recorded Moto, Polars, PyArrow, Psycopg, Boto3 and Pydantic versions match that checkout's `uv.lock`. The original terminal report SHA256 is `73bb80a307045463a605810a99014756d9f6b3a422ff0588669de653aec6bd1e`; the condensed report preserves all completed phases and replaces raw supervisor samples only with an explicit summary.
+
+This proves actual retained-row ingestion and four completed synthetic refresh assessments on the stated code and machine. It does not certify the complete 3,000-product suite, application-only memory, commercial source/object-store latency, full deployed-stack capacity, or a 5,000/10,000-product workload. WAL positions remain server-global and no attributable WAL or dump size is invented.
