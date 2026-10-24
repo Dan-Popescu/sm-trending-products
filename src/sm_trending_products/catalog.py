@@ -938,6 +938,26 @@ class Catalog:
             # Any persisted job, including a completed tombstone, hashes both.
             if journal and journal["present"]:
                 tables += ("source_invalidations", "source_invalidation_work")
+            # Legal capture contracts and withdrawal certificates affect evidence
+            # interpretation. Keep legacy fingerprints when these newer relations
+            # are absent/empty, and inspect them through the same imported cut.
+            for table in (
+                "capture_policies",
+                "capture_obligations",
+                "capture_spool_revocations",
+                "capture_spool_retirements",
+            ):
+                relation = connection.execute(
+                    "SELECT to_regclass(%s) AS relation", (table,)
+                ).fetchone()
+                if relation and relation["relation"]:
+                    populated = connection.execute(
+                        sql.SQL("SELECT EXISTS(SELECT 1 FROM {}) AS present").format(
+                            sql.Identifier(table)
+                        )
+                    ).fetchone()
+                    if populated and populated["present"]:
+                        tables += (table,)
             for table in tables:
                 hasher = hashlib.sha256(b"[")
                 separator = b""
