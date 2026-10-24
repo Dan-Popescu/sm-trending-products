@@ -50,10 +50,11 @@ objects and verifies idempotency after reopening the restored application.
 
 The [seven-case native measurement](../verification/controlled-envelope.md)
 advances T14 with declared resource limits and explicit measurement gaps. The
-remaining priority is target-VPS/private-access and production-object-store
-acceptance, followed by representative retained-history/full-stack measurements
-and dated provider prices. These need the specified infrastructure, independently
-of TikTok access. T15 remains pending actual approved credentials, scopes and
+current offline priority is the approved [massive-collection follow-up](../implementation/scale-delivery.md#approved-massive-collection-follow-up):
+retained-history load measurement, changed-product calculation, large
+invalidation and dated provider-price scenarios. These can proceed without a VPS
+or TikTok credentials. Target-VPS/private-access and production-object-store
+acceptance still require the selected infrastructure. T15 remains pending actual approved credentials, scopes and
 intended use; synthetic tests cannot complete it. No production predictive value,
 actual profit or universal capacity is established by controlled fixtures.
 
