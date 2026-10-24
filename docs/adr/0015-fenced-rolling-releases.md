@@ -42,6 +42,11 @@ between SQL active-pointer commit and its private checkpoint resumes from the
 sealed verified phase and rechecks actual candidate captures and drain before
 recommitting. This extra journal is deployment metadata only; source task,
 publication and quota ownership remain in PostgreSQL.
+New authority starts from fixed planned progress, regardless of SQL progress
+observed while sealing. Release identity binds the complete planned predecessor,
+candidate, slot, schema and request identity; the candidate worker is derived
+from that identity. The private authorization clock sets capture qualification's
+start time. Existing authority is preserved on retries, including reverse plans.
 
 The existing worker and optional worker-green Compose services are the only
 mutable host slots. Fixed arguments select the local Docker socket, private

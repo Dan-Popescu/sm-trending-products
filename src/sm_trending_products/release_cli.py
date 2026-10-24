@@ -349,7 +349,10 @@ class HostRuntime:
                 VerifiedRelease(
                     ReleaseManifest.model_validate(row["candidate_manifest"]),
                     row["candidate_proof"],
-                )
+                ),
+                previous=VerifiedRelease(
+                    ReleaseManifest.model_validate(row["prior_manifest"]), row["prior_proof"]
+                ),
             )
             return {**refreshed, "release_id": release_id, "capture_phase": "retired"}
         return result
@@ -357,10 +360,12 @@ class HostRuntime:
     def rollback(self, release_id: str) -> dict:
         row = self.run(release_id)
         self.authorization.verify(row)
+        execution = self.authorization.execution(row)
+        row = execution.bind(row)
         if row["phase"] not in {"committed", "retired"}:
             self.authorization.cancel(row)
         controller = self.controller(row)
-        controller.execution = self.authorization.execution(row)
+        controller.execution = execution
         result = controller.rollback(release_id)
         if result["release_id"] != release_id:
             self.authorization.rollback(self.run(result["release_id"]), row)
@@ -409,6 +414,16 @@ class HostRuntime:
         return self.processing_refresh().apply(release, previous=previous, supersede=supersede)
 
     def pull(self) -> dict:
+        reverse = self.catalog.one(
+            "SELECT * FROM deployment_runs WHERE target=%s AND rollback_of IS NOT NULL "
+            "AND status NOT IN ('completed','aborted') ORDER BY created_at,release_id LIMIT 1",
+            (self.config.target,),
+        )
+        if reverse:
+            # SQL cannot confer priority or rollback authority. Verify the
+            # private parent-linked seal before preempting failed processing.
+            self.authorization.verify(reverse)
+            return self.apply(reverse["release_id"])
         if self.pending_processing():
             return self.refresh_processing_release()
         active = self.active()

@@ -13,12 +13,13 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .catalog import Catalog
-from .contracts import canonical
+from .contracts import canonical, now
 from .release_control import (
     DeploymentRequest,
     ReleaseBlocked,
     ReleaseManifest,
     ReleaseTrust,
+    release_intent_id,
     release_manifest_bytes,
 )
 
@@ -50,7 +51,6 @@ class HostAuthorization:
                         "schema_version",
                         "synthetic",
                         "rollback_of",
-                        "created_at",
                     )
                 }
             )
@@ -155,7 +155,8 @@ class HostAuthorization:
                 {
                     "intent": intent,
                     "action": "apply",
-                    "progress": AuthorizedExecution.progress(row),
+                    "progress": AuthorizedExecution.initial_progress(),
+                    "authorized_at": now().isoformat(),
                     "authority": {
                         "kind": "request",
                         "request": request.model_dump(mode="json"),
@@ -178,6 +179,16 @@ class HostAuthorization:
             != request.manifest_sha256
         ):
             raise ReleaseBlocked("deployment_request_run_mismatch")
+        HostAuthorization._bound_identity(row, request_id=f"signed-{request.sequence}")
+
+    @staticmethod
+    def _bound_identity(row: dict, *, request_id: str = "") -> None:
+        expected = release_intent_id(row, request_id=request_id)
+        worker = (
+            f"{row['target']}-{'green' if row['prior_slot'] == 'blue' else 'blue'}-{expected[:12]}"
+        )
+        if row["release_id"] != expected or row["candidate_worker_id"] != worker:
+            raise ReleaseBlocked("deployment_plan_identity_mismatch")
 
     def verify(self, row: dict, *, parent: bool = False, depth: int = 0) -> str:
         if depth > 32:
@@ -230,12 +241,25 @@ class HostAuthorization:
 
     def rollback(self, row: dict, original: dict) -> None:
         self.verify(original)
+        self._bound_identity(row)
+        if (
+            row["rollback_of"] != original["release_id"]
+            or row["candidate_manifest"] != original["prior_manifest"]
+            or row["prior_manifest"] != original["candidate_manifest"]
+        ):
+            raise ReleaseBlocked("deployment_rollback_authorization_invalid")
+        existing = self._read(self._path(row["release_id"]), missing=True)
+        if existing:
+            if existing["intent"] != self.intent(row):
+                raise ReleaseBlocked("deployment_intent_changed")
+            return  # An idempotent retry cannot promote mutable SQL progress.
         self._write(
             self._path(row["release_id"]),
             {
                 "intent": self.intent(row),
                 "action": "apply",
-                "progress": AuthorizedExecution.progress(row),
+                "progress": AuthorizedExecution.initial_progress(),
+                "authorized_at": now().isoformat(),
                 "authority": {"kind": "host_rollback", "parent_release_id": original["release_id"]},
             },
         )
@@ -246,6 +270,17 @@ class AuthorizedExecution:
 
     def __init__(self, authority: HostAuthorization, row: dict):
         self.authority, self.intent = authority, authority.intent(row)
+
+    @staticmethod
+    def initial_progress() -> dict:
+        return {
+            "phase": "planned",
+            "status": "pending",
+            "reason": None,
+            "evidence": {},
+            "candidate_generation": None,
+            "abort_requested": False,
+        }
 
     @staticmethod
     def progress(row: dict) -> dict:
@@ -278,6 +313,7 @@ class AuthorizedExecution:
             **self.intent,
             **value["progress"],
             "abort_requested": value.get("action") == "abort",
+            "created_at": value["authorized_at"],
         }
 
     def checkpoint(self, row: dict) -> None:

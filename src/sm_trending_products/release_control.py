@@ -63,6 +63,28 @@ def deployment_request_bytes(request: DeploymentRequest) -> bytes:
     return (canonical(request.model_dump(mode="json")) + "\n").encode()
 
 
+def release_intent_id(intent: dict, *, request_id: str = "") -> str:
+    return digest(
+        {
+            **{
+                key: intent[key]
+                for key in (
+                    "target",
+                    "candidate_manifest",
+                    "prior_manifest",
+                    "prior_slot",
+                    "prior_worker_id",
+                    "prior_generation",
+                    "schema_version",
+                    "synthetic",
+                    "rollback_of",
+                )
+            },
+            "request_id": request_id,
+        }
+    )
+
+
 @dataclass(frozen=True)
 class VerifiedRelease:
     manifest: ReleaseManifest
@@ -221,17 +243,19 @@ class DeploymentController:
             release.manifest.model_dump(mode="json"),
             current.manifest.model_dump(mode="json"),
         )
-        release_id = digest(
+        release_id = release_intent_id(
             {
                 "target": target,
-                "candidate": value,
-                "prior": previous,
+                "candidate_manifest": value,
+                "prior_manifest": previous,
+                "prior_slot": current_slot,
                 "prior_worker_id": current_worker_id,
                 "prior_generation": current_generation,
+                "schema_version": schema_version,
                 "synthetic": synthetic,
                 "rollback_of": rollback_of,
-                "request_id": request_id,
-            }
+            },
+            request_id=request_id,
         )
         candidate_worker = (
             f"{target}-{'green' if current_slot == 'blue' else 'blue'}-{release_id[:12]}"

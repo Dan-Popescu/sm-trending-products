@@ -21,7 +21,7 @@ from sm_trending_products.release_control import (
 pytestmark = pytest.mark.integration
 
 
-def authorized(pipeline, tmp_path):
+def authorized(pipeline, tmp_path, *, before_seal=None):
     binary = tmp_path / "controlled-verifier"
     binary.write_text("#!" + sys.executable + "\nraise SystemExit(0)\n")
     binary.chmod(0o700)
@@ -44,10 +44,16 @@ def authorized(pipeline, tmp_path):
         current_worker_id="old",
         schema_version=35,
         synthetic=True,
+        request_id="signed-1",
     )
     row = pipeline.catalog.one(
         "SELECT * FROM deployment_runs WHERE release_id=%s", (plan["release_id"],)
     )
+    if before_seal is not None:
+        before_seal(row)
+        row = pipeline.catalog.one(
+            "SELECT * FROM deployment_runs WHERE release_id=%s", (row["release_id"],)
+        )
     request = DeploymentRequest(
         target="fixture",
         sequence=1,
@@ -95,7 +101,7 @@ def test_private_sequence_survives_lost_sql_acceptance_and_refuses_changed_inten
     with pytest.raises(ReleaseBlocked, match="deployment_request_journal_changed"):
         authority.verify(row)
     changed = {**row, "prior_generation": 2}
-    with pytest.raises(ReleaseBlocked, match="deployment_intent_changed"):
+    with pytest.raises(ReleaseBlocked, match="deployment_plan_identity_mismatch"):
         authority.record_request(changed, request, {"method": "cosign_bundle", "bundle": {}})
 
 
@@ -108,7 +114,7 @@ def test_authorized_source_handover_refreshes_all_roles_and_reverse_too(pipeline
     runtime.controller = lambda current: controller
     refreshed = []
 
-    def processing(release=None):
+    def processing(release=None, **kwargs):
         refreshed.append(release)
         return {"status": "completed", "target": "fixture"}
 
@@ -121,9 +127,10 @@ def test_authorized_source_handover_refreshes_all_roles_and_reverse_too(pipeline
     runtime.apply(row["release_id"])
     assert len(refreshed) == 2
     reverse = runtime.rollback(row["release_id"])
-    runtime.apply(reverse["release_id"])
-    assert refreshed[-1].manifest == release("a").manifest
     runtime.pending_processing = lambda: True
+    result = runtime.pull()
+    assert result["release_id"] == reverse["release_id"]
+    assert refreshed[-1].manifest == release("a").manifest
     result = runtime.pull()
     assert result["status"] == "completed" and refreshed[-1] is None
 
@@ -230,3 +237,45 @@ def test_private_execution_resumes_after_host_and_cross_journal_crashes(
     controller.execution = authority.execution(fresh)
     result = controller.apply(row["release_id"])
     assert result["status"] == "completed" and set(controller.host.running) == {"green"}
+
+
+@pytest.mark.parametrize("forgery", ["completed", "candidate_identity"])
+def test_first_private_seal_cannot_promote_forged_sql_progress_or_worker_identity(
+    pipeline, tmp_path, forgery
+):
+    def forged(row):
+        if forgery == "completed":
+            pipeline.catalog.execute(
+                "UPDATE deployment_runs SET phase='retired',status='completed'"
+            )
+        else:
+            pipeline.catalog.execute(
+                "UPDATE deployment_runs SET candidate_worker_id=prior_worker_id"
+            )
+
+    if forgery == "candidate_identity":
+        with pytest.raises(ReleaseBlocked, match="deployment_plan_identity_mismatch"):
+            authorized(pipeline, tmp_path, before_seal=forged)
+        return
+    authority, controller, row, _, _ = authorized(pipeline, tmp_path, before_seal=forged)
+    controller.execution = authority.execution(row)
+    result = controller.apply(row["release_id"])
+    assert result["status"] == "blocked" and result["reason"] == "capture_proof_missing"
+    assert "retire" not in controller.host.events and "blue" in controller.host.running
+
+
+def test_explicit_rollback_uses_private_phase_before_persisting_cancellation(pipeline, tmp_path):
+    authority, controller, row, evidence, _ = authorized(pipeline, tmp_path)
+    controller.execution = authority.execution(row)
+    assert controller.apply(row["release_id"])["reason"] == "capture_proof_missing"
+    pipeline.catalog.execute("UPDATE deployment_runs SET phase='retired',status='completed'")
+    runtime = object.__new__(HostRuntime)
+    runtime.catalog = pipeline.catalog
+    runtime.config = SimpleNamespace(target="fixture")
+    runtime.authorization = authority
+    runtime.controller = lambda current: controller
+    controller.workers.busy = True
+    assert runtime.rollback(row["release_id"])["reason"] == "candidate_busy"
+    evidence.ready = True
+    assert runtime.apply(row["release_id"])["reason"] == "candidate_busy"
+    assert authority.verify(row) == "abort" and "blue" in controller.host.running
