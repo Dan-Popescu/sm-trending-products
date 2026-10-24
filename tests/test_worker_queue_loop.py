@@ -18,6 +18,24 @@ def _run_fixture(mode: str) -> None:
     from sm_trending_products import cli, pipeline
 
     class FixturePipeline:
+        worker_id = "controlled-worker"
+
+        @property
+        def worker_control(self):
+            return self
+
+        def start_worker(self, synthetic=False):
+            return {"generation": 1}
+
+        def heartbeat(self, *args):
+            return {"state": "running"}
+
+        def acknowledge_drain(self, *args):
+            return {"state": "running"}
+
+        def finish(self, *args):
+            pass
+
         @classmethod
         def from_env(cls):
             return cls()
@@ -28,7 +46,7 @@ def _run_fixture(mode: str) -> None:
         def __exit__(self, *_):
             return None
 
-        def collect_batch(self, batch_size, synthetic=False):
+        def collect_batch(self, batch_size, synthetic=False, *, should_stop=None):
             time.sleep(0.01)  # Bound the fake busy worker and keep output small.
             result = {
                 "processed": batch_size,

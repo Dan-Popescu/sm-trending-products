@@ -17,6 +17,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from .contracts import Observation, canonical, digest, utc
+from .worker_control import WorkerControl
 
 # Shared protocol with the literal in SQL migration 003_maintenance.sql triggers.
 # Changing the key requires coordinating both Python writers and database guards.
@@ -262,8 +263,13 @@ class Catalog:
         max_attempts: int,
         *,
         credential_keys: dict[str, str] | None = None,
+        worker_generation: int | None = None,
     ) -> dict[str, Any] | None:
         with self.transaction() as connection:
+            if not WorkerControl.claim_admitted(
+                connection, worker_id, synthetic, worker_generation
+            ):
+                return None
             self.guard_namespace(connection, synthetic)
             connection.execute(
                 "WITH exhausted AS (SELECT task_id FROM collection_tasks "
