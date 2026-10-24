@@ -105,6 +105,12 @@ resumes this intent before blocked processing or network requests. A completed
 rollback remains effective against the unchanged old forward request; a newer
 signed sequence can supersede it. Old reverse authorities cannot be replayed
 after such supersession.
+The atomic accepted-request pointer alone determines supersession. The rollback
+routing cache is ignored when older, and can be reconstructed from the durable
+per-release action after an interrupted marker write. An interrupted SQL request
+acceptance can be restored offline from that exact private pointer, sealed plan
+and verified request bundle. Recovery rechecks the pointer under the admission
+lock and never overwrites conflicting SQL acceptance metadata.
 
 Schema expansion must already be compatible with both versions; arbitrary SQL or
 scripts are not accepted in manifests. Destructive contraction belongs to a later

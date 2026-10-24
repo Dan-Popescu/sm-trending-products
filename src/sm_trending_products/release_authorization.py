@@ -12,6 +12,8 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+from psycopg.types.json import Jsonb
+
 from .catalog import Catalog
 from .contracts import canonical, now
 from .release_control import (
@@ -168,9 +170,57 @@ class HostAuthorization:
             self.directory / "accepted-request.json",
             {"request": request.model_dump(mode="json"), "release_id": row["release_id"]},
         )
-        rollback = self._read(self.directory / "rollback-intent.json", missing=True)
-        if rollback and request.sequence > rollback["sequence"]:
-            self._write(self.directory / "rollback-intent.json", {**rollback, "superseded": True})
+        # This atomic high-water pointer is supersession authority. An old
+        # rollback cache never needs a second independently durable flag update.
+
+    def recover_accepted_request(self) -> None:
+        highest = self._read(self.directory / "accepted-request.json", missing=True)
+        if not highest:
+            return
+        row = self.catalog.one(
+            "SELECT * FROM deployment_runs WHERE release_id=%s", (highest["release_id"],)
+        )
+        value = self._read(self._path(highest["release_id"]))
+        if not row or not value or value.get("intent") != self.intent(row):
+            raise ReleaseBlocked("deployment_execution_authority_invalid")
+        authority = value.get("authority", {})
+        request = DeploymentRequest.model_validate(highest["request"])
+        if authority.get("kind") != "request" or authority.get("request") != highest["request"]:
+            raise ReleaseBlocked("deployment_authority_invalid")
+        proof = authority["proof"]
+        self.trust.verify_request(request, proof)
+        self._bound_request(row, request)
+        # The private pointer can commit immediately before its SQL acceptance
+        # transaction rolls back. Restore only that exact sealed signed intent.
+        with self.catalog.transaction() as connection:
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s,492371215))", (request.target,)
+            )
+            if self._read(self.directory / "accepted-request.json") != highest:
+                raise ReleaseBlocked("deployment_request_concurrent")
+            stored = connection.execute(
+                "SELECT * FROM deployment_requests WHERE target=%s AND sequence=%s",
+                (request.target, request.sequence),
+            ).fetchone()
+            if stored:
+                if (
+                    stored["request"] != highest["request"]
+                    or stored["proof"] != proof
+                    or stored["release_id"] != row["release_id"]
+                ):
+                    raise ReleaseBlocked("deployment_request_journal_changed")
+            else:
+                connection.execute(
+                    "INSERT INTO deployment_requests(target,sequence,request,proof,release_id) "
+                    "VALUES(%s,%s,%s,%s,%s)",
+                    (
+                        request.target,
+                        request.sequence,
+                        Jsonb(highest["request"]),
+                        Jsonb(proof),
+                        row["release_id"],
+                    ),
+                )
 
     @staticmethod
     def _bound_request(row: dict, request: DeploymentRequest) -> None:
@@ -248,12 +298,13 @@ class HostAuthorization:
     def begin_rollback(self, row: dict) -> None:
         self.verify(row)
         with self._exclusive():
+            self.verify(row)
             highest = self._read(self.directory / "accepted-request.json")
             assert highest is not None
             existing = self._read(self.directory / "rollback-intent.json", missing=True)
             if (
                 existing
-                and not existing.get("superseded")
+                and existing["sequence"] == highest["request"]["sequence"]
                 and existing["origin"] == row["release_id"]
             ):
                 return
@@ -268,13 +319,34 @@ class HostAuthorization:
                     "release_id": row["release_id"],
                     "sequence": highest["request"]["sequence"],
                     "completed": False,
-                    "superseded": False,
                 },
             )
 
     def rollback_state(self) -> dict | None:
         state = self._read(self.directory / "rollback-intent.json", missing=True)
-        if not state or state.get("superseded"):
+        highest = self._read(self.directory / "accepted-request.json", missing=True)
+        if not highest:
+            return None
+        sequence = highest["request"]["sequence"]
+        if state and state["sequence"] < sequence:
+            state = None  # Effective supersession precedes obsolete reverse verification.
+        selected = state["release_id"] if state else highest["release_id"]
+        seal = self._read(self._path(selected))
+        if not seal:
+            raise ReleaseBlocked("deployment_authority_invalid")
+        if seal.get("action") == "rollback" and (
+            not state or state["origin"] != selected or state["completed"]
+        ):
+            # Per-release action is authority; the routing cache is derivable
+            # after a crash between the action write and global marker write.
+            state = {
+                "origin": selected,
+                "release_id": selected,
+                "sequence": sequence,
+                "completed": False,
+            }
+            self._write(self.directory / "rollback-intent.json", state)
+        if not state:
             return None
         row = self.catalog.one(
             "SELECT * FROM deployment_runs WHERE release_id=%s", (state["release_id"],)
@@ -289,7 +361,8 @@ class HostAuthorization:
             state = self._read(self.directory / "rollback-intent.json", missing=True)
             if (
                 state
-                and not state.get("superseded")
+                and (highest := self._read(self.directory / "accepted-request.json", missing=True))
+                and state["sequence"] == highest["request"]["sequence"]
                 and state["release_id"] == release_id
                 and state["release_id"] != state["origin"]
             ):
@@ -305,6 +378,7 @@ class HostAuthorization:
         ):
             raise ReleaseBlocked("deployment_rollback_authorization_invalid")
         with self._exclusive():
+            self.verify(original)
             highest = self._read(self.directory / "accepted-request.json")
             assert highest is not None
             sequence = highest["request"]["sequence"]
@@ -335,7 +409,6 @@ class HostAuthorization:
                     "release_id": row["release_id"],
                     "sequence": sequence,
                     "completed": False,
-                    "superseded": False,
                 },
             )
 

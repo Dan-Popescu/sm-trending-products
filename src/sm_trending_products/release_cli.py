@@ -437,6 +437,7 @@ class HostRuntime:
         return self.processing_refresh().apply(release, previous=previous, supersede=supersede)
 
     def pull(self) -> dict:
+        self.authorization.recover_accepted_request()
         override = self.authorization.rollback_state()
         if override and not override["completed"]:
             return self.apply(override["release_id"])
