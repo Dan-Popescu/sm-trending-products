@@ -79,8 +79,17 @@ def parser() -> argparse.ArgumentParser:
     ):
         control = command(name, description)
         control.add_argument("--worker-id", required=True)
-        if name == "worker-resume":
+        if name in {"worker-drain", "worker-resume"}:
             control.add_argument("--generation", required=True, type=int)
+        if name == "worker-drain":
+            control.add_argument(
+                "--timeout-seconds", type=float, default=5, help="Maximum admission-lock wait"
+            )
+            control.add_argument(
+                "--wait-seconds",
+                type=float,
+                help="Also wait for acknowledgement, or report blocked",
+            )
     schedule = command(
         "schedule", "Allocate exploration and refresh tasks within quotas", synthetic=True
     )
@@ -339,7 +348,17 @@ def dispatch(pipeline, args):
                 raise ValueError("Unknown worker")
             return state
         case "worker-drain":
-            return pipeline.worker_control.request_drain(args.worker_id)
+            if args.wait_seconds is not None and not 0 < args.wait_seconds <= 3600:
+                raise ValueError("Drain wait must be positive and at most 3600 seconds")
+            control = pipeline.worker_control
+            state = control.request_drain(
+                args.worker_id, args.generation, timeout_seconds=args.timeout_seconds
+            )
+            if state.get("ok") is False or args.wait_seconds is None:
+                return state
+            return control.wait_drained(
+                args.worker_id, args.generation, timeout_seconds=args.wait_seconds
+            )
         case "worker-resume":
             return pipeline.worker_control.resume(args.worker_id, args.generation)
         case "schedule":

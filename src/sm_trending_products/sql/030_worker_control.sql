@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS collection_workers (
     state text NOT NULL CHECK (state IN ('running','draining','drained','stopped')),
     registered_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     heartbeat_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    -- Durable admission intent: retained across registration, cleared only by resume.
     drain_requested_at timestamptz,
     drain_acknowledged_at timestamptz,
     stopped_at timestamptz
