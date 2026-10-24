@@ -33,6 +33,14 @@ the expected worker identity labels; schema expansion and platform initializatio
 must already be complete. The controller runs no migration or arbitrary script.
 Both old and new image descriptors must support the actual SQL schema version.
 
+GitHub publishes a signed candidate after successful main-branch CI. Repository
+visibility and GHCR package visibility are separate: make this public-code image
+package public once if the host should pull without registry credentials. A
+private package instead needs a read-only registry credential in a private Docker
+configuration readable by the host controller. The application image contains no
+production environment files or credentials. Never put a registry token in the
+Compose template or GitHub release assets.
+
 Configure the actual Docker data root and shared spool volume mountpoint in the
 private configuration. Measured host admission runs before image pull and new
 candidate start. It checks effective RAM/CPU ceilings, existing running container
@@ -147,3 +155,10 @@ The offline tests cover native PostgreSQL, bounded local HTTP downloads, actual
 CLI subprocesses and explicit Docker/verifier command fixtures. They do not
 demonstrate cryptographic publication, actual VPS rollout or TikTok continuity;
 those require their separate qualification evidence.
+
+Back up the private controller configuration, accepted-request counter,
+authorization seals and processing journal separately through a trusted encrypted
+host-admin backup. The application PostgreSQL/S3 checkpoint deliberately cannot
+read these root-only files. After disaster recovery, keep the deployment timer
+disabled until the restored SQL, actual containers and private controller state
+are reconciled; an older SQL dump must not silently reset deployment authority.

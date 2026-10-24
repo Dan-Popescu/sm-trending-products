@@ -16,7 +16,8 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Native source/restore checks and the actual two-image campaign run here.
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:17.11-bookworm

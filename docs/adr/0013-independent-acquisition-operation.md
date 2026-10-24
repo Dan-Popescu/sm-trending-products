@@ -8,6 +8,11 @@ under a nonblocking, workspace-scoped PostgreSQL ownership lock. Its next due ti
 and last successful completion are durable. Restarting or replacing an analytical
 Dagster process does not advance or erase an unfinished planning obligation.
 Failure retains the original due boundary and a safe error category.
+Ownership, scheduling mutations and cadence progress share one transaction;
+losing that PostgreSQL backend rolls them back together. A successful tick also
+records the planner container identity and completion time. A replacement must
+demonstrate its own naturally due tick before its predecessor can retire;
+another container's recent tick is insufficient.
 
 An ordinary application release retains PostgreSQL, S3, Tailscale and persistent
 volumes. Acquisition, normalization and review may pin different digests of the
@@ -22,6 +27,7 @@ owns timely planning and source capture. The application policy, queue and
 publication rules are reused, not reimplemented as another scheduler or broker.
 Legacy Dagster collection entry points remain available during the compatibility
 transition; deployed dedicated acquisition disables their scheduled activation.
+It also rejects manual use of the legacy combined source path.
 
 The added coordinator journal stores planning progress, not source observations.
 Capture obligations, raw publication and release ownership each remain at their
