@@ -3,16 +3,23 @@ set -euo pipefail
 umask 077
 
 if [[ $# -lt 1 || -z "$1" ]]; then
-  echo 'Usage: scripts/backup.sh /absolute/new/backup-directory [--copy-objects] [--base /absolute/completed/base-directory]' >&2
+  echo 'Usage: scripts/backup.sh /absolute/new/backup-directory [--copy-objects] [--base /absolute/completed/base-directory] [--online|--offline]' >&2
   exit 2
 fi
 backup_directory="$1"
 shift
 copy_objects=false
 base_directory=
+online=false
+mode_given=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --copy-objects) copy_objects=true; shift ;;
+    --online|--offline)
+      [[ "$mode_given" == false ]] || { echo 'Choose one backup mode.' >&2; exit 2; }
+      mode_given=true
+      [[ "$1" == --online ]] && online=true || online=false
+      shift ;;
     --base)
       [[ $# -ge 2 && -n "$2" ]] || { echo 'A base directory is required.' >&2; exit 2; }
       base_directory="$2"; shift 2 ;;
@@ -41,19 +48,26 @@ if [[ "${SM_BACKUP_DEADLINE_ACTIVE:-}" != true ]]; then
   bounded_arguments=("$backup_directory")
   if [[ "$copy_objects" == true ]]; then bounded_arguments+=(--copy-objects); fi
   if [[ -n "$base_directory" ]]; then bounded_arguments+=(--base "$base_directory"); fi
+  if [[ "$online" == true ]]; then
+    bounded_arguments+=(--online)
+  else
+    bounded_arguments+=(--offline)
+  fi
   exec timeout --signal=TERM --kill-after=30s "$backup_deadline" bash "$0" "${bounded_arguments[@]}"
 fi
 command -v docker >/dev/null || { echo 'Docker Compose is required.' >&2; exit 1; }
 mkdir -p "$backup_directory"
 docker compose config --quiet
-# A deployment checkpoint pauses writers only for catalog/inventory and SQL dumps.
-# Other deployments/importers must be stopped by the operator for this checkpoint.
+# Legacy checkpoints pause writers. Online mode instead exports one application
+# snapshot shared by catalog verification, object requirements and pg_dump.
 writer_services=()
-while IFS= read -r service; do
-  case "$service" in
-    worker|dagster-daemon|dagster-webserver|dashboard) writer_services+=("$service") ;;
-  esac
-done < <(docker compose ps --services --status running)
+if [[ "$online" != true ]]; then
+  while IFS= read -r service; do
+    case "$service" in
+      worker|dagster-daemon|dagster-webserver|dashboard) writer_services+=("$service") ;;
+    esac
+  done < <(docker compose ps --services --status running)
+fi
 resume_writers() {
   if [[ ${#writer_services[@]} -gt 0 ]]; then
     docker compose start "${writer_services[@]}" >/dev/null
@@ -85,6 +99,9 @@ snapshot_arguments=(capture --output "/backups/$backup_name/objects"
   --deadline-seconds "$backup_deadline")
 if [[ "$copy_objects" == true ]]; then snapshot_arguments+=(--copy-objects); fi
 if [[ -n "$base_directory" ]]; then snapshot_arguments+=(--base "/backups/$(basename "$base_directory")/objects"); fi
+if [[ "$online" == true ]]; then
+  snapshot_arguments+=(--online --catalog-state "/backups/$backup_name/catalog-state.json")
+fi
 echo 'Capturing a fenced object inventory and catalog checkpoint.'
 docker compose run --rm --no-deps --name "$capture_container" --user "$(id -u):$(id -g)" \
   --volume "$backup_parent:/backups" initialize \
@@ -97,17 +114,35 @@ while [[ ! -f "$backup_directory/checkpoint-ready.json" ]]; do
   sleep 0.1
 done
 
-docker compose run --rm --no-deps -T initialize python - <<'PY' > "$backup_directory/catalog-state.json"
+if [[ "$online" != true ]]; then
+  docker compose run --rm --no-deps -T initialize python - <<'PY' > "$backup_directory/catalog-state.json"
 from sm_trending_products.contracts import canonical
 from sm_trending_products.pipeline import Pipeline
 
 with Pipeline.from_env() as application:
     print(canonical(application.catalog.export_state()))
 PY
+fi
 echo 'Capturing application and orchestration database dumps.'
-docker compose exec -T postgres sh -c \
-  'exec pg_dump --format=custom --no-owner --username="$POSTGRES_USER" --dbname="$POSTGRES_DB"' \
-  > "$backup_directory/pipeline.dump.partial"
+if [[ "$online" == true ]]; then
+  postgres_snapshot="$(python3 - "$backup_directory/checkpoint-ready.json" <<'PY'
+import json
+import re
+import sys
+value = json.load(open(sys.argv[1])).get("snapshot_id")
+if not isinstance(value, str) or not re.fullmatch(r"[0-9A-Fa-f]+-[0-9A-Fa-f]+-[0-9]+", value):
+    raise SystemExit("Invalid exported PostgreSQL snapshot")
+print(value)
+PY
+)"
+  docker compose exec -T --env "BACKUP_SNAPSHOT_ID=$postgres_snapshot" postgres sh -c \
+    'exec pg_dump --format=custom --no-owner --snapshot="$BACKUP_SNAPSHOT_ID" --username="$POSTGRES_USER" --dbname="$POSTGRES_DB"' \
+    > "$backup_directory/pipeline.dump.partial"
+else
+  docker compose exec -T postgres sh -c \
+    'exec pg_dump --format=custom --no-owner --username="$POSTGRES_USER" --dbname="$POSTGRES_DB"' \
+    > "$backup_directory/pipeline.dump.partial"
+fi
 mv "$backup_directory/pipeline.dump.partial" "$backup_directory/pipeline.dump"
 docker compose exec -T postgres sh -c \
   'exec pg_dump --format=custom --no-owner --username="$POSTGRES_USER" --dbname=dagster' \
@@ -122,7 +157,7 @@ resume_writers
 wait "$capture_pid"
 capture_pid=
 mv "$backup_directory/object-summary.json.partial" "$backup_directory/object-summary.json"
-python3 - "$backup_directory" <<'PY'
+python3 - "$backup_directory" "$online" <<'PY'
 import hashlib
 import json
 import sys
@@ -151,6 +186,12 @@ checksums = {name: checksum(root / name) for name in (
 metadata = {"schema_version": 2, "complete": True,
     "created_at": datetime.now(UTC).isoformat(), "sha256": checksums,
     "object_snapshot_sha256": checksum(root / "objects/snapshot.json")}
+metadata["application_checkpoint"] = (
+    "exported_snapshot" if sys.argv[2] == "true" else "paused_writers"
+)
+# PostgreSQL snapshots cannot be shared between separate databases. Dagster is
+# orchestration metadata, not the authoritative evidence/task publication state.
+metadata["dagster_checkpoint"] = "independent_database_snapshot"
 (root / "backup.json").write_text(json.dumps(metadata, indent=2) + "\n")
 PY
 echo "Backup completed: $backup_directory"
