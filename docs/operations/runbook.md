@@ -143,7 +143,9 @@ Cache eviction must affect only reproducible local copies. If a cached object fa
 `HISTORY_TARGET_ROWS_PER_FILE` defaults to 1,000 rows and bounds physical fanout
 under `HISTORY_PARTITION_BUCKETS`; small source pages therefore avoid producing
 one Parquet object per entity. The `history_compaction` Dagster job runs at minute
-45 each hour and compacts one compatible group of at most 100 datasets. Its
+45 each hour. The maintenance service can drain multiple compatible groups,
+retaining at most 100 datasets per atomic group; see
+[resource-budgeted maintenance](maintenance.md) for limits and backlog semantics. Its
 default workspace is live; run it explicitly with `synthetic=true` for synthetic
 history. It preserves raw provenance and may correctly report `no_work` when no
 two eligible small datasets fit the row limit.

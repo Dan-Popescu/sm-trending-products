@@ -46,6 +46,23 @@ It does not copy all transitive raw dependencies onto every analytical result.
 New derived objects record authoritative `object_sha256` and `object_bytes` before
 upload, allowing backup inventory verification without a bucket listing.
 
+SQL026 assigns a stable internal bigint identity on the existing publication row.
+Child edges, source-input associations and evaluation associations reference that
+identity, avoiding repeated full immutable object paths in their heaps and both
+index directions. Public object keys, descriptors, SHA256 values, result hashes
+and object-store contents retain their formats. Recursive removal traverses IDs
+and resolves keys at its public boundary. This adds neither a second publication
+registry nor a compatibility view with a separate write path. Existing foreign
+keys, lifecycle checks and shared retention fences remain authoritative.
+
+The migration rebuilds the three association tables atomically from existing SQL
+keys, without object-store access. Stop the old writer group for this maintenance
+upgrade: old application code writes the previous column layout. Allow temporary
+disk space for both layouts and indexes. Each migration statement permits ten
+minutes and retains the catalog's ten-second lock timeout; failure rolls back the
+upgrade. SQL025's bounded relation collector continues deleting by the new IDs
+while preserving public object-key progress, tombstones and publication metadata.
+
 The leaf/edge registration happens before immutable upload. A second fenced
 check commits the publication after upload; no provenance-node upload holds a
 SQL transaction across the network. Parents may acquire only committed children

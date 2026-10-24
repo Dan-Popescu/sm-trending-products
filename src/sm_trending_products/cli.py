@@ -133,6 +133,12 @@ def parser() -> argparse.ArgumentParser:
         "retention", "Inspect or apply source-policy retention and dependent invalidation"
     )
     retention.add_argument("--apply", action="store_true", help="Default is a non-mutating preview")
+    for maintenance_command in (compact, retention):
+        maintenance_command.add_argument("--drain", action="store_true")
+        maintenance_command.add_argument("--max-batches", type=int)
+        maintenance_command.add_argument("--max-seconds", type=float)
+    retention.add_argument("--max-objects", type=int)
+    retention.add_argument("--max-operations", type=int)
     for name, help_text in (
         ("backtest", "Replay policies with point-in-time eligibility"),
         ("freeze", "Freeze a prospective decision and its evaluation configuration"),
@@ -316,8 +322,38 @@ def dispatch(pipeline, args):
         case "verify":
             return pipeline.verify(args.dataset_id)
         case "compact":
+            if not args.drain and any(
+                value is not None for value in (args.max_batches, args.max_seconds)
+            ):
+                raise ValueError("Drain limits require --drain")
+            if args.drain:
+                return pipeline.compact_drain(
+                    synthetic=synthetic,
+                    max_datasets=args.max_datasets,
+                    max_batches=args.max_batches,
+                    max_seconds=args.max_seconds,
+                )
             return pipeline.compact(synthetic=synthetic, max_datasets=args.max_datasets)
         case "retention":
+            if not args.drain and any(
+                value is not None
+                for value in (
+                    args.max_batches,
+                    args.max_seconds,
+                    args.max_objects,
+                    args.max_operations,
+                )
+            ):
+                raise ValueError("Drain limits require --drain")
+            if args.drain:
+                if not args.apply:
+                    raise ValueError("Retention drain requires explicit --apply")
+                return pipeline.retention_drain(
+                    max_batches=args.max_batches,
+                    max_objects=args.max_objects,
+                    max_seconds=args.max_seconds,
+                    max_operations=args.max_operations,
+                )
             return pipeline.retention(apply=args.apply)
         case "backtest":
             return pipeline.backtest(

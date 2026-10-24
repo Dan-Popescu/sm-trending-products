@@ -23,6 +23,19 @@ def now() -> datetime:
     return datetime.now(UTC)
 
 
+def observation_period(row: Observation) -> tuple[datetime, datetime] | None:
+    """Return a valid explicit source period without inventing missing bounds."""
+    start = row.attributes.get("period_start", row.attributes.get("source_period_start"))
+    end = row.attributes.get("period_end", row.attributes.get("source_period_end"))
+    if start is None or end is None:
+        return None
+    try:
+        bounds = utc(start), utc(end)
+        return bounds if bounds[0] < bounds[1] else None
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 def canonical(value: Any) -> str:
     return json.dumps(
         value,

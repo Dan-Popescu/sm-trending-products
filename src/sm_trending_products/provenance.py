@@ -50,18 +50,21 @@ class Provenance:
         visit(value)
         return [found[key] for key in sorted(found)]
 
-    def guard(self, connection, roots: Sequence[dict[str, Any]]) -> None:
+    def guard(self, connection, roots: Sequence[dict[str, Any]]) -> dict[str, int]:
         self.catalog.guard_retention(connection)
         keys = sorted({root["key"] for root in roots})
+        identities: dict[str, int] = {}
         for start in range(0, len(keys), 1000):
             chunk = keys[start : start + 1000]
-            row = connection.execute(
-                "SELECT count(*) AS count FROM derived_publications "
+            rows = connection.execute(
+                "SELECT object_key,object_id FROM derived_publications "
                 "WHERE object_key=ANY(%s) AND state='committed'",
                 (chunk,),
-            ).fetchone()
-            if not row or row["count"] != len(chunk):
+            ).fetchall()
+            if len(rows) != len(chunk):
                 raise ValueError("Analytical provenance was invalidated")
+            identities.update((row["object_key"], row["object_id"]) for row in rows)
+        return identities
 
     def _node(
         self,
@@ -94,7 +97,7 @@ class Provenance:
         # Register dependencies before any upload so retention can fence crashes.
         with self.catalog.transaction() as connection:
             self.catalog.guard_inputs(connection, dependencies)
-            self.guard(connection, children)
+            child_ids = self.guard(connection, children)
             connection.execute(
                 "INSERT INTO derived_publications(object_key,evidence_datasets,state,"
                 "object_sha256,object_bytes) VALUES(%s,'[]','staged',%s,%s) "
@@ -102,7 +105,7 @@ class Provenance:
                 (key, checksum, len(encoded)),
             )
             prior = connection.execute(
-                "SELECT state,object_sha256,object_bytes FROM derived_publications "
+                "SELECT object_id,state,object_sha256,object_bytes FROM derived_publications "
                 "WHERE object_key=%s FOR UPDATE",
                 (key,),
             ).fetchone()
@@ -116,15 +119,15 @@ class Provenance:
             with connection.pipeline():
                 for dataset in dependencies:
                     connection.execute(
-                        "INSERT INTO derived_artifact_inputs(object_key,dataset_id) "
+                        "INSERT INTO derived_artifact_inputs(object_id,dataset_id) "
                         "VALUES(%s,%s) ON CONFLICT DO NOTHING",
-                        (key, dataset),
+                        (prior["object_id"], dataset),
                     )
                 for child in children:
                     connection.execute(
-                        "INSERT INTO derived_artifact_edges(parent_key,child_key) "
+                        "INSERT INTO derived_artifact_edges(parent_id,child_id) "
                         "VALUES(%s,%s) ON CONFLICT DO NOTHING",
-                        (key, child["key"]),
+                        (prior["object_id"], child_ids[child["key"]]),
                     )
         # No SQL transaction spans the network upload. A tombstone rejects a race.
         self.history.put(key, encoded, content_type="application/json")
@@ -133,8 +136,8 @@ class Provenance:
             self.guard(connection, children)
             committed = connection.execute(
                 "UPDATE derived_publications SET state='committed' "
-                "WHERE object_key=%s AND state IN ('staged','committed') RETURNING object_key",
-                (key,),
+                "WHERE object_id=%s AND state IN ('staged','committed') RETURNING object_id",
+                (prior["object_id"],),
             ).fetchone()
             if not committed:
                 raise ValueError("Provenance was invalidated during publication")
@@ -335,9 +338,10 @@ class Provenance:
 
     def attach(self, connection, parent_key: str, roots: Sequence[dict[str, Any]]) -> None:
         """Fence a staged publication through the roots it actually embeds."""
-        self.guard(connection, roots)
+        root_ids = self.guard(connection, roots)
         prior = connection.execute(
-            "SELECT state FROM derived_publications WHERE object_key=%s FOR UPDATE", (parent_key,)
+            "SELECT object_id,state FROM derived_publications WHERE object_key=%s FOR UPDATE",
+            (parent_key,),
         ).fetchone()
         if not prior or prior["state"] in {"invalidated", "deleted"}:
             raise ValueError("Analytical publication was invalidated")
@@ -345,9 +349,9 @@ class Provenance:
             return
         for root in roots:
             connection.execute(
-                "INSERT INTO derived_artifact_edges(parent_key,child_key) "
+                "INSERT INTO derived_artifact_edges(parent_id,child_id) "
                 "VALUES(%s,%s) ON CONFLICT DO NOTHING",
-                (parent_key, root["key"]),
+                (prior["object_id"], root_ids[root["key"]]),
             )
 
     def combine(self, values: Sequence[Any], synthetic: bool) -> dict[str, Any] | list:

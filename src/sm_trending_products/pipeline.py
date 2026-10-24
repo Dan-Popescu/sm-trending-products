@@ -836,3 +836,45 @@ class Pipeline:
         from .maintenance import Maintenance
 
         return Maintenance(self).retention(apply=apply)
+
+    def retention_drain(
+        self,
+        *,
+        max_batches: int | None = None,
+        max_objects: int | None = None,
+        max_seconds: float | None = None,
+        max_operations: int | None = None,
+    ) -> dict:
+        from .maintenance import Maintenance
+
+        return Maintenance(self).retention_drain(
+            max_batches=self.settings.retention_max_batches if max_batches is None else max_batches,
+            max_objects=self.settings.retention_max_objects if max_objects is None else max_objects,
+            max_seconds=self.settings.maintenance_max_seconds
+            if max_seconds is None
+            else max_seconds,
+            max_operations=self.settings.retention_max_operations
+            if max_operations is None
+            else max_operations,
+        )
+
+    def compact_drain(
+        self,
+        synthetic: bool = False,
+        max_datasets: int = 100,
+        *,
+        max_batches: int | None = None,
+        max_seconds: float | None = None,
+    ) -> dict:
+        from .maintenance import Maintenance
+
+        return Maintenance(self).compact_drain(
+            synthetic,
+            max_datasets,
+            max_batches=self.settings.compaction_max_batches
+            if max_batches is None
+            else max_batches,
+            max_seconds=self.settings.maintenance_max_seconds
+            if max_seconds is None
+            else max_seconds,
+        )

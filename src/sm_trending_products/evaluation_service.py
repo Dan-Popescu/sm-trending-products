@@ -234,7 +234,7 @@ class EvaluationService:
         with self.catalog.transaction() as connection:
             self.catalog.guard_inputs(connection, dataset_ids)
             artifacts = self.provenance.roots(payload)
-            self.provenance.guard(connection, artifacts)
+            artifact_ids = self.provenance.guard(connection, artifacts)
             if parent_id:
                 parent = connection.execute(
                     "SELECT invalidated FROM evaluation_runs WHERE evaluation_id=%s",
@@ -263,9 +263,9 @@ class EvaluationService:
                 )
             for artifact in artifacts:
                 connection.execute(
-                    "INSERT INTO evaluation_artifacts(evaluation_id,object_key) "
+                    "INSERT INTO evaluation_artifacts(evaluation_id,object_id) "
                     "VALUES(%s,%s) ON CONFLICT DO NOTHING",
-                    (evaluation_id, artifact["key"]),
+                    (evaluation_id, artifact_ids[artifact["key"]]),
                 )
             if kind == "forward":
                 connection.execute(
