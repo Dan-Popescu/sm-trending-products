@@ -46,6 +46,8 @@ cannot resume. A cleanly stopped identity can be registered immediately when it
 has no unexpired leases. An unclean fixed blue/green identity requires both a
 heartbeat older than 30 seconds and zero unexpired leases before a replacement
 obtains a new generation. Earlier restart attempts fail safely and can be retried.
+Idle and backpressure waits refresh the heartbeat at least every ten seconds,
+including when the configured polling interval is sixty seconds.
 Expired tasks remain in the existing queue for fenced reclamation; they are not
 deleted or reported as complete. Old generations cannot claim, renew an expired
 lease, or overwrite a superseding task publication.
