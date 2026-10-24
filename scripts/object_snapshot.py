@@ -162,6 +162,30 @@ def _checkpoint_guard(enabled: bool):
         connection.execute("SELECT pg_advisory_unlock_shared(%s)", (RETENTION_GUARD_KEY,))
 
 
+@contextmanager
+def _online_checkpoint(_enabled: bool):
+    """A shared database snapshot allows writers to continue during a dump.
+
+    Do not acquire the retention advisory lock: an exclusive waiter behind a
+    long backup would otherwise queue subsequent acquisition publications.
+    Concurrent physical deletion makes this recovery set fail incomplete.
+    """
+    import psycopg
+
+    with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as connection:
+        connection.execute("SET statement_timeout='30s'")
+        # Catalog.initialize takes this key exclusively before any schema work.
+        # Acquire it before starting the snapshot so a preceding migration is
+        # visible, and a waiting migration cannot take relation locks mid-dump.
+        connection.execute("SELECT pg_advisory_lock_shared(492371204)")
+        try:
+            with connection.transaction():
+                connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                yield connection
+        finally:
+            connection.execute("SELECT pg_advisory_unlock_shared(492371204)")
+
+
 def _expected_objects(connection, db: sqlite3.Connection) -> None:
     """Read authoritative checksums, including committed derived dependencies."""
     from sm_trending_products.contracts import canonical
@@ -301,6 +325,8 @@ def capture(
     checkpoint_signal: Path | None = None,
     continue_signal: Path | None = None,
     deadline_seconds: int = 3600,
+    online: bool = False,
+    catalog_state: Path | None = None,
 ) -> dict[str, Any]:
     if not 1 <= deadline_seconds <= 86400:
         raise ValueError("Backup deadline must be between one second and one day")
@@ -308,6 +334,8 @@ def capture(
         raise ValueError("Incremental snapshots require object copies")
     if (checkpoint_signal is None) != (continue_signal is None):
         raise ValueError("Checkpoint and continuation signals are required together")
+    if online and (checkpoint_signal is None or catalog_state is None):
+        raise ValueError("Online capture requires a dump handshake and catalog state destination")
     deadline = time.monotonic() + deadline_seconds
     checkpoint_started = time.monotonic()
     bucket = os.environ["S3_BUCKET"]
@@ -325,6 +353,7 @@ def capture(
         "namespace": os.environ.get("PIPELINE_NAMESPACE", "development"),
         "copied_objects": copy_objects,
         "complete": False,
+        "inventory_scope": "catalog_snapshot" if online else "dedicated_bucket",
     }
     metadata_path = output / "snapshot.json"
     _write_json(metadata_path, metadata)
@@ -335,7 +364,19 @@ def capture(
         db = sqlite3.connect(Path(temporary) / "checkpoint.sqlite")
         stack.callback(db.close)
         count = total_size = list_requests = 0
-        with _checkpoint_guard(checkpoint_signal is not None) as connection:
+        checkpoint = _online_checkpoint if online else _checkpoint_guard
+        with checkpoint(checkpoint_signal is not None) as connection:
+            snapshot_id = None
+            if online:
+                from sm_trending_products.catalog import Catalog
+
+                snapshot_id = connection.execute("SELECT pg_export_snapshot()").fetchone()[0]
+                catalog = Catalog(os.environ["DATABASE_URL"])
+                try:
+                    assert catalog_state is not None
+                    _write_json(catalog_state, catalog.export_state(snapshot_id))
+                finally:
+                    catalog.close()
             if connection is not None:
                 _expected_objects(connection, db)
             with (output / "checkpoint.jsonl").open("x") as inventory:
@@ -357,6 +398,10 @@ def capture(
                             if connection is not None
                             else None
                         )
+                        if online and expected is None:
+                            # A page published after the SQL snapshot belongs to
+                            # a later recovery set, not this checkpoint.
+                            continue
                         record = _checkpoint_record(item, expected)
                         inventory.write(json.dumps(record, sort_keys=True) + "\n")
                         count += 1
@@ -371,7 +416,10 @@ def capture(
                 ):
                     raise ValueError("Committed catalog object is absent from checkpoint")
             if checkpoint_signal is not None:
-                _write_json(checkpoint_signal, {"ready": True, "object_count": count})
+                _write_json(
+                    checkpoint_signal,
+                    {"ready": True, "object_count": count, "snapshot_id": snapshot_id},
+                )
                 assert continue_signal is not None
                 _wait_signal(continue_signal, deadline, connection)
         checkpoint_seconds = time.monotonic() - checkpoint_started
@@ -547,6 +595,8 @@ def main() -> None:
     capture_parser.add_argument("--checkpoint-signal", type=Path)
     capture_parser.add_argument("--continue-signal", type=Path)
     capture_parser.add_argument("--deadline-seconds", type=int, default=3600)
+    capture_parser.add_argument("--online", action="store_true")
+    capture_parser.add_argument("--catalog-state", type=Path)
     commands.add_parser("verify").add_argument("snapshot", type=Path)
     restore_parser = commands.add_parser("restore")
     restore_parser.add_argument("snapshot", type=Path)
@@ -562,6 +612,8 @@ def main() -> None:
                 checkpoint_signal=args.checkpoint_signal,
                 continue_signal=args.continue_signal,
                 deadline_seconds=args.deadline_seconds,
+                online=args.online,
+                catalog_state=args.catalog_state,
             )
         elif args.command == "verify":
             result = verify(args.snapshot)

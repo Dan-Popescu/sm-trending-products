@@ -6,13 +6,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from sm_trending_products.contracts import now
 
 ROOT = Path(__file__).parents[1]
 
 
+@pytest.mark.parametrize("online", [False, True])
 def test_actual_shell_orders_checkpoint_restart_and_real_conditional_copy(
-    pipeline, tmp_path, monkeypatch
+    pipeline, tmp_path, monkeypatch, online
 ):
     stamp = now().isoformat()
     pipeline.import_records(
@@ -54,7 +57,16 @@ if args[0]=='compose':
         state.write_text('stopped' if command=='stop' else 'running')
         note(command)
     elif command=='exec':
-        assert state.read_text()=='stopped'
+        assert state.read_text()==('running' if os.environ['PROBE_ONLINE']=='true' else 'stopped')
+        if any(item.startswith('BACKUP_SNAPSHOT_ID=') for item in args):
+            assert '--snapshot="$BACKUP_SNAPSHOT_ID"' in args[-1]
+            from sm_trending_products.catalog import Catalog
+            with_snapshot=next(
+                item.split('=',1)[1] for item in args if item.startswith('BACKUP_SNAPSHOT_ID=')
+            )
+            catalog=Catalog(os.environ['DATABASE_URL'])
+            try: catalog.export_state(with_snapshot)
+            finally: catalog.close()
         note('dump')
         sys.stdout.buffer.write(b'controlled-native-checkpoint-dump')
     elif command=='run' and 'scripts/object_snapshot.py' in args:
@@ -106,10 +118,17 @@ else: raise RuntimeError('Unexpected docker invocation')
         "SPOOL_DIR": str(tmp_path / "spool"),
         "PYTHONPATH": str(ROOT / "src"),
         "BACKUP_DEADLINE_SECONDS": "20",
+        "PROBE_ONLINE": "true" if online else "false",
     }.items():
         monkeypatch.setenv(key, value)
     full = subprocess.run(
-        ["bash", "scripts/backup.sh", str(family / "base"), "--copy-objects"],
+        [
+            "bash",
+            "scripts/backup.sh",
+            str(family / "base"),
+            "--copy-objects",
+            "--online" if online else "--offline",
+        ],
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -117,14 +136,18 @@ else: raise RuntimeError('Unexpected docker invocation')
     )
     assert full.returncode == 0, full.stdout + full.stderr
     lines = [json.loads(line)["operation"] for line in trace.read_text().splitlines()]
-    assert lines[0] == "stop"
-    assert (
-        lines.index("catalog")
-        < lines.index("dump")
-        < lines.index("start")
-        < lines.index("head_object")
-        < lines.index("get_object")
-    )
+    if online:
+        assert not {"stop", "start", "catalog"} & set(lines)
+        assert lines.index("dump") < lines.index("head_object") < lines.index("get_object")
+    else:
+        assert lines[0] == "stop"
+        assert (
+            lines.index("catalog")
+            < lines.index("dump")
+            < lines.index("start")
+            < lines.index("head_object")
+            < lines.index("get_object")
+        )
     assert lines.count("get_object") == 3
     assert json.loads((family / "base/backup.json").read_text())["complete"]
     trace.write_text("")
@@ -136,6 +159,7 @@ else: raise RuntimeError('Unexpected docker invocation')
             "--copy-objects",
             "--base",
             str(family / "base"),
+            "--online" if online else "--offline",
         ],
         cwd=ROOT,
         text=True,
@@ -145,7 +169,12 @@ else: raise RuntimeError('Unexpected docker invocation')
     assert delta.returncode == 0, delta.stdout + delta.stderr
     lines = [json.loads(line)["operation"] for line in trace.read_text().splitlines()]
     assert "get_object" not in lines and "head_object" not in lines
-    assert lines[-1] == "start"
+    assert lines[-1] == ("dump" if online else "start")
+    metadata = json.loads((family / "delta/backup.json").read_text())
+    assert metadata["application_checkpoint"] == (
+        "exported_snapshot" if online else "paused_writers"
+    )
+    assert metadata["dagster_checkpoint"] == "independent_database_snapshot"
     result = json.loads((family / "delta/object-summary.json").read_text())
     assert (
         result["downloaded_bytes"] == result["copied_object_count"] == result["head_requests"] == 0

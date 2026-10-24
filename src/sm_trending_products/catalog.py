@@ -12,6 +12,7 @@ from importlib.resources import files
 from typing import Any, cast
 
 import psycopg
+from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
@@ -898,7 +899,7 @@ class Catalog:
                 "AND compacted_into IN (SELECT dataset_id FROM invalidated_datasets)"
             )
 
-    def export_state(self) -> dict[str, Any]:
+    def export_state(self, snapshot_id: str | None = None) -> dict[str, Any]:
         """Logical evidence verification summary; operational backup uses pg_dump."""
         tables: tuple[str, ...] = (
             "datasets",
@@ -913,6 +914,10 @@ class Catalog:
         result = {}
         with self.transaction() as connection:
             connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            if snapshot_id is not None:
+                connection.execute(
+                    sql.SQL("SET TRANSACTION SNAPSHOT {}").format(sql.Literal(snapshot_id))
+                )
             journal = connection.execute(
                 "SELECT EXISTS(SELECT 1 FROM source_invalidations) OR "
                 "EXISTS(SELECT 1 FROM source_invalidation_work) AS present"
