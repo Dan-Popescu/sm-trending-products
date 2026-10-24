@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -297,11 +298,26 @@ def test_committed_cleanup_failure_retries_without_failing_or_refetching_task(
         result = acquisition.capture_batch(1, True)
         assert len(requests) == 1 and result["processed"] == 1
         assert result["errors"] == [] and result["cleanup_pending"] == 1
-    directory = pipeline.settings.spool_dir / "captures"
-    assert len(list(directory.glob("*.json"))) == 1
-    monkeypatch.setattr(acquisition, "_remove_committed_spool", original)
-    assert acquisition.capture_batch(1, True)["processed"] == 0
-    assert not list(directory.glob("*.json"))
+        directory = pipeline.settings.spool_dir / "captures"
+        assert len(list(directory.glob("*.json"))) == 1
+        with os.scandir(directory) as scan:
+            entries = sorted(scan, key=lambda entry: entry.name.endswith(".json"))
+        # Model filesystems that return lock/metadata entries before receipts.
+        # A one-entry maintenance budget must make progress across later batches.
+        assert not entries[0].name.endswith(".json")
+        acquisition.spool._entries = (entry for entry in entries)
+        monkeypatch.setattr(acquisition, "_remove_committed_spool", original)
+        for index in range(len(entries) + 2):
+            idle = acquisition.capture_batch(1, True)
+            assert idle["processed"] == 0 and idle["errors"] == []
+            assert len(requests) == 1
+            remaining = list(directory.glob("*.json"))
+            if index == 0:
+                assert remaining  # The first bounded scan only visits metadata.
+            if not remaining:
+                break
+        else:
+            pytest.fail("Committed spool cleanup did not finish within its bounded directory scan")
 
 
 @pytest.mark.parametrize("source", ["tiktok_ads", "tiktok_commercial"])
