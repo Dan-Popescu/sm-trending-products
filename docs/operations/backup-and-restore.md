@@ -4,25 +4,86 @@ A complete recovery set contains the PostgreSQL control state, immutable object 
 
 ## Capture
 
-For a complete copy:
+Keep a dedicated backup family directory. Create the first complete recovery set:
 
 ```sh
-scripts/backup.sh /absolute/new/backup-directory --copy-objects
+mkdir -p /srv/sm-trends-backups
+scripts/backup.sh /srv/sm-trends-backups/base-001 --copy-objects
 ```
 
-The directory must not exist. The script uses restrictive permissions, validates the deployment, pauses running writers in this Compose deployment, checks current committed evidence, and captures application and Dagster custom-format dumps. It records hashes of the logical catalog state, including products, identity decisions, alerts, and frozen evaluations. It then streams the dedicated S3 bucket into content-checked local files, retaining object keys, source versions, content type, and metadata. A completed marker is written last. The original running services are restarted on exit.
+Subsequent recovery sets retain their own full PostgreSQL/Dagster dumps and object
+inventory, but copy only added or changed object bytes:
 
-The script pauses the worker, Dagster daemon, Dagster webserver, and dashboard to obtain a coherent recovery set. Stop any additional deployment or external importer sharing these stores before capture. Do not run retention/deletion from another process during capture. Never use a bucket containing unrelated applications: full-copy mode reads every current object in the dedicated bucket and consumes bandwidth and local disk.
+```sh
+scripts/backup.sh /srv/sm-trends-backups/delta-002 --copy-objects \
+  --base /srv/sm-trends-backups/base-001
+scripts/backup.sh /srv/sm-trends-backups/delta-003 --copy-objects \
+  --base /srv/sm-trends-backups/delta-002
+```
 
-Without `--copy-objects`, the backup contains an object inventory only. Such a backup depends on the retained source objects/versions and cannot pass the independent object-store restore exercise. Bucket versioning and lifecycle rules are useful protection, but an inventory is not a separate durable copy.
+The output directory must not exist; every chain member must be a sibling in the
+same dedicated backup family. Version 2 snapshots bind each base by relative path
+and metadata checksum. Each latest inventory is complete: a source deletion is
+represented by absence, so restore does not resurrect keys omitted by a later
+checkpoint. Unchanged bytes remain in their original verified base. The chain
+resolver uses a temporary disk-backed index instead of loading the full inventory
+into Python memory. Capture places this scratch index on the backup volume rather
+than the application's small `/tmp` tmpfs. Provision disk for inventories, hashes,
+SQL dumps, new bytes and temporary indexes, then copy the complete required family
+off the VPS. Restrict access and encrypt copies.
 
-Copy completed backups off the VPS, encrypt them, restrict access, and expire them according to the relevant source retention/deletion requirements. The project does not purchase or provision a backup destination.
+The script pauses the running worker, Dagster daemon, webserver and dashboard only
+while it captures the object inventory, logical catalog fingerprints and database
+dumps. A session-level shared PostgreSQL retention fence protects this checkpoint
+without keeping an MVCC transaction open. Other deployments and external importers
+sharing these stores must be stopped during the checkpoint. The inventory excludes
+keys already tombstoned by retention, including pending object deletions, and
+requires every committed dataset, valid assessment and committed derived
+publication to be present, including transitive provenance nodes. Known catalog
+checksums and byte sizes remain authoritative; legacy derived rows without those
+fields still require existence and receive content hashes during copying.
+
+After the SQL checkpoint, the original services resume **before copying or
+verifying inherited base bytes**. The retention fence is released before the copy,
+so an exclusive maintenance waiter cannot hold later collection behind the backup.
+New object GETs pin the checkpoint's version ID where available and use `If-Match`.
+Copies are hashed against catalog checksums or source checksum metadata. Base files
+are locally hash-verified before reuse. An unchanged incremental backup downloads
+zero object payloads; inventories still require source LIST/HEAD requests and local
+chain hashing. The previous full remote verification pass is folded into the copy.
+
+This does not reserve source versions against a provider lifecycle rule or later
+retention. If required new bytes disappear or change before copying finishes, the
+backup fails and remains incomplete; retry from a new coherent checkpoint. Never
+use an incomplete recovery set as a base. Provider conditional/version behavior
+requires provider acceptance. The default whole operation deadline is one hour;
+set `BACKUP_DEADLINE_SECONDS` from 1 to 86400 if the measured workload requires it.
+The shell requires GNU `timeout` to bound inventory, catalog reads and SQL dumps
+as well as copying, with an additional 30-second cleanup grace. Failure,
+interruption and timeout restart the originally running services.
+
+Without `--copy-objects`, capture produces a metadata inventory only and does not
+verify object content. It cannot be used as an incremental base or independently
+restored. The source-verification summary labels this boundary explicitly.
+
+Keep every referenced base with its descendants. Do not rename, edit or remove
+individual chain members; checksum and path checks reject broken chains. The
+maximum chain is 32 members; create a new full base before reaching it. Retention
+and source deletion obligations apply to **all** backups, including inherited
+bytes: expire affected chains together or create a new permitted full base before
+retiring older families. A new inventory omitting a key does not erase its bytes
+from older recovery sets. The project does not provision a backup destination.
 
 ## Verify and rehearse
 
 ```sh
 scripts/restore-check.sh /absolute/complete/backup-directory
 ```
+
+Version 1 full recovery sets remain supported. For a version 2 incremental set,
+pass the latest directory; the object restore resolves the full family automatically
+and verifies every base, inventory and content hash before writing any object. The
+whole family is mounted read-only in the isolated restore container.
 
 The command checks dump and inventory hashes, creates a private internal Docker network, and starts fresh temporary PostgreSQL and HTTP S3 emulator containers. It restores the application and Dagster databases and copied objects under the original environment namespace, runs the application's read-only manifest/object verification and status report, and compares the restored logical catalog with the captured hashes when present. It then destroys the temporary containers and network. It does not start workers against restored queues and does not write the production bucket or database.
 
@@ -55,4 +116,4 @@ The scripted isolated check is intentionally safer than automating an in-place p
 
 ## Validation status
 
-The snapshot CLI has been exercised against a live HTTP Moto service for capture, verification, restore, metadata preservation, corruption rejection, and refusal to restore over its source. Shell syntax and the Dagster instance configuration have been checked locally. The later [native CI run](../verification/native-ci.md) built the image and successfully executed the complete isolated native PostgreSQL/HTTP object-store restore, including catalog fingerprint equality. Actual provider behavior and VPS rollout remain separate acceptance gates.
+Native PostgreSQL/HTTP Moto scenarios cover a full base plus two increments, unchanged zero-GET capture, changed versions, deleted keys, corruption or missing bases, path escape rejection, legacy full restore, conditional source races and checkpoint-fence release before copying. A complete marker is published only after all required new content is verified. Shell syntax and the Dagster instance configuration have been checked locally. The later [native CI run](../verification/native-ci.md) built the image and successfully executed the complete isolated native PostgreSQL/HTTP object-store restore, including catalog fingerprint equality. Actual provider behavior and VPS rollout remain separate acceptance gates.
