@@ -143,7 +143,7 @@ support and other real charges are supplied. Neither is silently zeroed.
 These numbers use the committed coefficient assumptions, **not** a massive
 production measurement. Several byte coefficients use old controlled fixture
 scales; marker/dump/compaction coefficients are explicit planning assumptions.
-Use the load harness's new physical totals before making a purchasing decision.
+Use the load harness's new physical totals before making a purchasing decision. The retained-import ratios cover only `view_count` and `creator_id`; descriptions, prices, sales, transcripts and media payloads require new coefficients.
 
 For the DigitalOcean 8 GiB offer, with extra priced block disk, identical source
 and backup store and no account free allowance:

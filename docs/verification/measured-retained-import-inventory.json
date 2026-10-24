@@ -57,6 +57,7 @@
     "Supplemental source blob sizes were read after seed while cold publication began. Its later total SQL and partial derived objects are not used for the seed SQL coefficient.",
     "Measured layout is one retained import per product, not one physical20-ID collection request file.",
     "WAL LSN is a global location, not attributed bytes. SQL dump bytes were not measured.",
-    "Do not infer a full retained-history workload pass or a VPS capacity from successful seeding."
+    "Do not infer a full retained-history workload pass or a VPS capacity from successful seeding.",
+    "The fixture contains only a view_count counter and creator_id. Price, sales, descriptions, transcripts and media bytes are not represented."
   ]
 }

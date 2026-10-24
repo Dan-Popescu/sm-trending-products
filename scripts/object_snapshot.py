@@ -265,12 +265,18 @@ def _reuse_catalog_record(record: dict[str, Any], old: dict[str, Any] | None) ->
 def _inspect_checkpoint_record(s3, bucket: str, record: dict[str, Any]) -> None:
     """Inspect after writers resume; a changed LIST identity fails closed."""
     head = s3.head_object(Bucket=bucket, Key=record["key"], IfMatch=record["etag"])
+    # HEAD's HTTP date has whole-second precision; LIST can retain fractions.
+    # Keep LIST's original precision in the persisted/reuse fingerprint.
+    head_modified = head["LastModified"].astimezone(UTC).replace(microsecond=0)
+    checkpoint_modified = (
+        datetime.fromisoformat(record["last_modified"]).astimezone(UTC).replace(microsecond=0)
+    )
     if any(
         left != right
         for left, right in (
             (head["ContentLength"], record["size"]),
             (head["ETag"], record["etag"]),
-            (head["LastModified"].isoformat(), record["last_modified"]),
+            (head_modified, checkpoint_modified),
         )
     ):
         raise ValueError("Checkpoint object changed before metadata inspection")
