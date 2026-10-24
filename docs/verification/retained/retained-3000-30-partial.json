@@ -1,0 +1,400 @@
+{
+  "checks": {
+    "cold_warm_exact_publication": true,
+    "sampled_complete_oracle": true
+  },
+  "cleanup": {
+    "schema_removed": true,
+    "working_directory_removed": true
+  },
+  "commit": "045dc658f83b3860f6cbc806e2845125a3dad8de",
+  "current_phase": "refresh_2",
+  "cutoff": "2026-10-24T13:13:15.075049+00:00",
+  "evidence": {
+    "acceptance": "NOT ACCEPTED: original declared 2 GiB RSS guard stopped the common application+HTTP Moto process during refresh_2 assessment. Four waves and final eviction were not completed.",
+    "completed_oracle_refresh_waves": 1,
+    "format": "retained-history-condensed-v1",
+    "independent_cleanup_checks": {
+      "cgroup_memory_max_bytes": 17179869184,
+      "owned_configurations_remaining": 0,
+      "post_cleanup_cgroup_memory_current_bytes": 5068017664,
+      "post_cleanup_free_disk_bytes": 14742061056,
+      "remaining_retained_probe_schemas": 0,
+      "worker_pid_268031_exists": false
+    },
+    "limits": [
+      "RSS is the discovered common application+HTTP Moto child, not application-only memory. PostgreSQL CPU/RSS are not attributed.",
+      "Cold, same-cutoff warm and refresh_1 completed; refresh_1 full-row/reference oracle completed. Refresh_2 source ingestion completed, but its assessment and oracle did not finish. No refresh_3, refresh_4 or final evicted publication result exists.",
+      "Native COUNT(*) found 7,320,000 observation deliveries while source facts were stable during the second assessment. No subsequent source import began before the guard; derived/projection rows in that snapshot were still changing.",
+      "The baseline cache policy precedes the shipped window-priority change. No end-to-end timing claim is transferred to the newer source revision.",
+      "WAL positions are server-global. No attributable WAL, dump size, provider latency or complete production-stack capacity is inferred. Owned-directory bytes are rolling observations, not atomic totals."
+    ],
+    "original_report_name": "retained-3000-30-daily.json",
+    "original_report_sha256": "eb0b7abbeb309998bad7bbce48baf5b8d93770edcf0945f2e03c06212d57548d",
+    "payload_scope": {
+      "attributes": [
+        "creator_id"
+      ],
+      "cumulative_counters": [
+        "view_count"
+      ],
+      "excluded": [
+        "price",
+        "sales",
+        "cost",
+        "transcript",
+        "media"
+      ]
+    },
+    "physical_count_after_seed": 7200000,
+    "physical_count_after_two_ingestions": 7320000,
+    "reproduction": {
+      "equivalence": "Both complete Git trees were independently verified identical; archived harness bytes match recorded SHA256. The active checkout remained clean through termination.",
+      "full_git_tree": "711e50778b027c7e47eefde3439c35cd3f9f78f3",
+      "local_launch_commit": "045dc658f83b3860f6cbc806e2845125a3dad8de",
+      "public_commit": "0c1fbe842cd333a061ea1dde809ee36f17f244d8",
+      "src_git_tree": "bc5ab3a3b4fb2d4d7813447d5d81b39043a0b401"
+    }
+  },
+  "hardware": {
+    "affinity_cpus": 5,
+    "architecture": "x86_64",
+    "cgroup": {
+      "cpu.max": "400000 100000",
+      "cpu.stat": "usage_usec 7665264076\nuser_usec 6332883958\nsystem_usec 1332380117\nnice_usec 0\nnr_periods 56036\nnr_throttled 479\nthrottled_usec 14426492\nnr_bursts 0\nburst_usec 0",
+      "memory.current": "5394784256",
+      "memory.max": "17179869184",
+      "pids.max": "max"
+    },
+    "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "disk_free_bytes": 14898675712,
+    "disk_total_bytes": 33770192896,
+    "filesystem": "overlayfs",
+    "kernel": "6.18.55",
+    "logical_cpus": 5,
+    "memory_headroom_bytes": 11785084928,
+    "os": "Linux",
+    "python": "3.12.14"
+  },
+  "harness_sha256": "bef1fc190a07d27107cd7ff7d4d22262e84145273e5d18ca4427fea59a1d6a0c",
+  "ok": false,
+  "oracle": {
+    "products": [
+      "p0",
+      "p1500",
+      "p2999"
+    ],
+    "scope": "complete rows and reference IDs; equal trajectory fixture makes sampled cohort rank identical"
+  },
+  "phases": {
+    "cold": {
+      "analysis_work": {
+        "delta_windows": 0,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 3000,
+        "projection_hits": 0,
+        "projection_misses": 3000
+      },
+      "assessment_bytes": 11995524,
+      "cache_bytes": 624314478,
+      "cpu_process_seconds": 1613.5604956099999,
+      "inventory": {
+        "datasets": {
+          "count": 3000,
+          "observations": 7200000
+        },
+        "derivations": {
+          "bytes": 536415184,
+          "objects": 120366
+        },
+        "manifests": {
+          "canonical_bytes": 5740800,
+          "objects": 3000
+        },
+        "normalized": {
+          "bytes": 304307895,
+          "objects": 3000
+        },
+        "raw": {
+          "bytes": 342344420,
+          "objects": 3000
+        },
+        "sql": {
+          "total_bytes": 5959499776
+        },
+        "wal_lsn": "F/5E0D9420"
+      },
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 304307895,
+        "get_requests": 3000,
+        "head_requests": 0,
+        "http_attempts": 123366,
+        "put_requests": 120366,
+        "upload_bytes": 536415184
+      },
+      "rows": 3000,
+      "seconds": 2217.2627561110003,
+      "selected_observations": 7200000
+    },
+    "refresh_1": {
+      "analysis_work": {
+        "delta_windows": 3000,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 0,
+        "projection_hits": 0,
+        "projection_misses": 3000
+      },
+      "assessment_bytes": 11995524,
+      "cache_bytes": 975327681,
+      "cpu_process_seconds": 1453.3817052090003,
+      "inventory": {
+        "datasets": {
+          "count": 6000,
+          "observations": 7260000
+        },
+        "derivations": {
+          "bytes": 575355941,
+          "objects": 129768
+        },
+        "manifests": {
+          "canonical_bytes": 11463600,
+          "objects": 6000
+        },
+        "normalized": {
+          "bytes": 332399760,
+          "objects": 6000
+        },
+        "raw": {
+          "bytes": 346463219,
+          "objects": 6000
+        },
+        "sql": {
+          "total_bytes": 6067757056
+        },
+        "wal_lsn": "F/AA286CA0"
+      },
+      "metrics": {
+        "cache_hits": 3000,
+        "download_bytes": 28091865,
+        "get_requests": 3000,
+        "head_requests": 0,
+        "http_attempts": 12402,
+        "put_requests": 9402,
+        "upload_bytes": 38940757
+      },
+      "rows": 3000,
+      "seconds": 1528.001368493,
+      "selected_observations": 7260000
+    },
+    "warm_same_cutoff": {
+      "analysis_work": {
+        "delta_windows": 0,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 0,
+        "projection_hits": 3000,
+        "projection_misses": 0
+      },
+      "assessment_bytes": 11995524,
+      "cache_bytes": 624314478,
+      "cpu_process_seconds": 5.845735112000057,
+      "inventory": {
+        "datasets": {
+          "count": 3000,
+          "observations": 7200000
+        },
+        "derivations": {
+          "bytes": 536415184,
+          "objects": 120366
+        },
+        "manifests": {
+          "canonical_bytes": 5740800,
+          "objects": 3000
+        },
+        "normalized": {
+          "bytes": 304307895,
+          "objects": 3000
+        },
+        "raw": {
+          "bytes": 342344420,
+          "objects": 3000
+        },
+        "sql": {
+          "total_bytes": 5969313792
+        },
+        "wal_lsn": "F/5EB2A580"
+      },
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 1,
+        "http_attempts": 2,
+        "put_requests": 1,
+        "upload_bytes": 0
+      },
+      "rows": 3000,
+      "seconds": 9.041483506998702,
+      "selected_observations": 7200000
+    }
+  },
+  "postgresql": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+  "refresh_imports": {
+    "refresh_1": {
+      "completed_products": 3000,
+      "cpu_process_seconds": 75.3433835449996,
+      "imported_observations": 60000,
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 9000,
+        "put_requests": 9000,
+        "upload_bytes": 37933464
+      },
+      "requested_observations": 60000,
+      "requested_products": 3000,
+      "seconds": 111.09195450600055
+    },
+    "refresh_2": {
+      "completed_products": 3000,
+      "cpu_process_seconds": 84.38477358899945,
+      "imported_observations": 60000,
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 9000,
+        "put_requests": 9000,
+        "upload_bytes": 37932856
+      },
+      "requested_observations": 60000,
+      "requested_products": 3000,
+      "seconds": 128.8562168389999
+    }
+  },
+  "refresh_waves_completed": 1,
+  "requested": {
+    "analysis_product_batch_size": 10,
+    "cache_bytes": 2000000000,
+    "deadline_seconds": 14400.0,
+    "history_days": 30,
+    "hot_product_batch_rows": 100,
+    "hot_products": 0,
+    "max_owned_disk_bytes": 12884901888,
+    "max_rss_bytes": 2147483648,
+    "min_disk_free_bytes": 2147483648,
+    "products": 3000,
+    "profile": false,
+    "refresh_waves": 4,
+    "refreshes_per_day": 4,
+    "seed_batch_rows": 5000,
+    "shared_products_per_import": 1,
+    "videos_per_product": 20
+  },
+  "scope": {
+    "analytical_lookback_days": 30,
+    "layout": "bounded product-major retained timelines; configured groups share imports; not one object per upstream request",
+    "object_store": "HTTP Moto, 32 KiB RAM/spool threshold; no provider latency claim",
+    "observed_history_span_hours": 714,
+    "postgresql_resources": "schema relation bytes measured; database server CPU/RSS and per-schema WAL attribution unavailable",
+    "source": "synthetic explicit imports, not live HTTP collection",
+    "stack": "application and Moto same child; PostgreSQL resources separately reported; Dagster/dashboard not running",
+    "wal_lsn_scope": "server-global position; concurrent schemas may contribute"
+  },
+  "seed_inventory": {
+    "datasets": {
+      "count": 3000,
+      "observations": 7200000
+    },
+    "derivations": {
+      "bytes": 0,
+      "objects": 0
+    },
+    "manifests": {
+      "canonical_bytes": 5740800,
+      "objects": 3000
+    },
+    "normalized": {
+      "bytes": 304307895,
+      "objects": 3000
+    },
+    "raw": {
+      "bytes": 342344420,
+      "objects": 3000
+    },
+    "sql": {
+      "total_bytes": 5829795840
+    },
+    "wal_lsn": "F/24C00000"
+  },
+  "seed_metrics": {
+    "cache_hits": 0,
+    "download_bytes": 0,
+    "get_requests": 0,
+    "head_requests": 0,
+    "http_attempts": 9002,
+    "put_requests": 9000,
+    "upload_bytes": 652393115
+  },
+  "seed_seconds": 2241.004631511001,
+  "seeded_observations": 7200000,
+  "seeded_products": 3000,
+  "status": "process_rss_limit",
+  "supervisor": {
+    "elapsed_seconds": 8289.200055139001,
+    "exit_code": -15,
+    "peak_discovered_rss_bytes": 2148474880,
+    "peak_owned_disk_bytes": 1354674176,
+    "sample_summary": {
+      "descendant_discovery_complete": false,
+      "last": {
+        "database": {
+          "queue": [],
+          "schema_bytes": 6170107904
+        },
+        "elapsed_seconds": 8288.827051772998,
+        "free_disk_bytes": 6505476096,
+        "open_file_descriptors": 6013,
+        "owned_disk_bytes": 1354674176,
+        "owned_disk_observer": {
+          "bytes": 1354674176,
+          "complete_pass_age_seconds": 33.92043074399771,
+          "scan_in_progress": true,
+          "scope": "rolling allocated blocks; not an atomic current snapshot"
+        },
+        "process": {
+          "descendant_discovery_complete": false,
+          "discovered_rss_bytes": 2148474880,
+          "live_discovered_cpu_seconds": 7029.89,
+          "process_count": 1,
+          "session_rss_bytes": null
+        },
+        "unlinked_object_spool_bytes": 675258368
+      },
+      "minimum_free_disk_bytes": 6494019584,
+      "peak_open_file_descriptors": 6016,
+      "peak_unlinked_object_spool_bytes": 675258368,
+      "samples": 7685
+    }
+  },
+  "synthetic": true,
+  "test_adapter_budget": {
+    "estimated_source_datasets": 3000,
+    "estimated_spill_fd_upper_bound": 10024,
+    "hard_fd_limit": 16384,
+    "key_buffer_bytes": 32768,
+    "soft_fd_limit": 16384
+  },
+  "updated_at": "2026-10-24T10:57:30.286539+00:00",
+  "versions": {
+    "boto3": "1.43.117",
+    "moto": "5.2.4",
+    "polars": "2.0.0",
+    "psycopg": "3.3.6",
+    "pyarrow": "26.0.0",
+    "pydantic": "2.14.1"
+  }
+}

@@ -545,6 +545,7 @@ def worker(config_path):
                 changed = phase(wave_name, at)
                 last_publication_sha256 = report["phases"][wave_name]["publication_sha256"]
                 sampled_oracle(changed, at)
+                del changed
                 report["refresh_waves_completed"] = wave + 1
                 publish()
             evict_files(settings.cache_dir)
