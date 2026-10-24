@@ -605,6 +605,30 @@ class Catalog:
                 (object_key, Jsonb(sorted(set(dataset_ids)))),
             )
 
+    @staticmethod
+    def _entity_updates(observations: Sequence[Observation]) -> list[Observation]:
+        """Fold frontier updates while preserving the original ordered SQL effects.
+
+        The first observation establishes identity and handles an existing NULL
+        frontier. The last maximum timestamp supplies the final mutable fields.
+        Keeping both also preserves the legacy title comparison against NULL;
+        all observations still enter the independent immutable delivery index.
+        """
+        selected: dict[tuple[str, bool], tuple[Observation, Observation, bool]] = {}
+        for observation in observations:
+            key = (observation.entity_key, observation.synthetic)
+            previous = selected.get(key)
+            if previous is None:
+                selected[key] = (observation, observation, False)
+            elif observation.observed_at >= previous[1].observed_at:
+                selected[key] = (previous[0], observation, True)
+        result = []
+        for first, latest, has_later_maximum in selected.values():
+            result.append(first)
+            if has_later_maximum:
+                result.append(latest)
+        return result
+
     def commit_dataset(
         self,
         dataset_id: str,
@@ -640,10 +664,13 @@ class Catalog:
                         dataset_id,
                     ),
                 )
+                # The catalog frontier needs at most two ordered writes per
+                # entity, even when this delivery contains months of history.
+                entity_updates = self._entity_updates(observations)
                 # Bound each ordered pipeline; the outer transaction stays atomic.
-                for start in range(0, len(observations), ENTITY_WRITE_BATCH_SIZE):
+                for start in range(0, len(entity_updates), ENTITY_WRITE_BATCH_SIZE):
                     with connection.pipeline():
-                        for obs in observations[start : start + ENTITY_WRITE_BATCH_SIZE]:
+                        for obs in entity_updates[start : start + ENTITY_WRITE_BATCH_SIZE]:
                             attributes = obs.attributes
                             title = str(attributes.get("title", attributes.get("description", "")))[
                                 :1000
