@@ -1,0 +1,244 @@
+{
+  "source": "Illustrative planning coefficients, NOT measured production usage; selected byte scales reference docs/verification/compact-results-100.json and compact-history-footprint.json on their stated old revisions. Replace from retained-history measurements.; checkpoint inventory coefficients verified for 1001 managed immutable objects at a95e2fc; complete workload byte coefficients remain illustrative",
+  "raw_bytes_per_observation": "150",
+  "normalized_bytes_per_observation": "60",
+  "manifest_bytes_per_dataset": "2000",
+  "observations_per_dataset": "20",
+  "retained_compacted_copy_fraction": "1",
+  "provenance_bytes_per_product_refresh": "8252.55",
+  "provenance_nodes_per_product_refresh": "3.17",
+  "assessment_bytes_per_product_run": "3997.46",
+  "sql_bytes_per_observation": "847.0528",
+  "sql_bytes_per_provenance_node": "2000",
+  "sql_bytes_per_assessment_run": "2000",
+  "source_gets_per_product_refresh": "1",
+  "source_download_bytes_per_product_refresh": "9401",
+  "wal_bytes_per_new_observation": "1000",
+  "wal_retention_days": 1,
+  "cache_bytes": "2000000000",
+  "operating_system_spool_bytes": "10000000000",
+  "sql_dump_bytes": null,
+  "backup_retention_days": 30,
+  "backup_every_days": 1,
+  "backup_full_every_days": 30,
+  "backup_inventory_bytes_per_object": "200",
+  "backup_heads_per_object_per_capture": "0",
+  "offsite_backup_egress_fraction": "1",
+  "source_api_monthly_cost": null,
+  "other_monthly_cost": null,
+  "sql_dump_bytes_per_retained_observation": "128",
+  "compacted_output_datasets_per_input": "0.01",
+  "compacted_manifest_bytes_per_dataset": "200000",
+  "compaction_remote_read_fraction": "1",
+  "local_backup_family_fraction": "1",
+  "restore_rehearsals_per_month": "1",
+  "restore_local_copy_fraction": "1",
+  "sql_bytes_per_retired_artifact": "750",
+  "sql_bytes_per_retired_dataset": "400",
+  "sql_dump_bytes_per_retired_marker": "96",
+  "evidence": {
+    "raw_bytes_per_observation": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "normalized_bytes_per_observation": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "manifest_bytes_per_dataset": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "observations_per_dataset": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "retained_compacted_copy_fraction": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "provenance_bytes_per_product_refresh": {
+      "classification": "measured_ratio",
+      "reference": "docs/verification/compact-results-100.json",
+      "scope": "Ratio from old revision839d2ca,100products20videos120samples; linear use at larger shape is an assumption, not a measurement. Old fixture node/SQL amplification was later optimized."
+    },
+    "provenance_nodes_per_product_refresh": {
+      "classification": "measured_ratio",
+      "reference": "docs/verification/compact-results-100.json",
+      "scope": "Ratio from old revision839d2ca,100products20videos120samples; linear use at larger shape is an assumption, not a measurement. Old fixture node/SQL amplification was later optimized."
+    },
+    "assessment_bytes_per_product_run": {
+      "classification": "measured_ratio",
+      "reference": "docs/verification/compact-results-100.json",
+      "scope": "Ratio from old revision839d2ca,100products20videos120samples; linear use at larger shape is an assumption, not a measurement. Old fixture node/SQL amplification was later optimized."
+    },
+    "sql_bytes_per_observation": {
+      "classification": "measured_ratio",
+      "reference": "docs/verification/compact-history-footprint.json",
+      "scope": "SQL020 inclusive relation/index total8470528bytes/10000rows; not a measured large retained-history density."
+    },
+    "sql_bytes_per_provenance_node": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "sql_bytes_per_assessment_run": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "source_gets_per_product_refresh": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "source_download_bytes_per_product_refresh": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "wal_bytes_per_new_observation": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "wal_retention_days": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "cache_bytes": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "operating_system_spool_bytes": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "sql_dump_bytes": {
+      "classification": "unknown",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "backup_retention_days": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "backup_every_days": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "backup_full_every_days": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "backup_inventory_bytes_per_object": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "backup_heads_per_object_per_capture": {
+      "classification": "measured_ratio",
+      "reference": "docs/verification/cost-checkpoint-native-1001.json",
+      "scope": "Native PostgreSQL+HTTP Moto;1001managedimmutableobjects. Full1001HEAD/1001objects; unchanged0HEAD/1001. SQL/LISTfingerprint+verifiedbase, freshmanagedmetadata; unknown/legacyobjects require positive retained-object inspection rate."
+    },
+    "offsite_backup_egress_fraction": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "source_api_monthly_cost": {
+      "classification": "unknown",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "other_monthly_cost": {
+      "classification": "unknown",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "sql_dump_bytes_per_retained_observation": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "compacted_output_datasets_per_input": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "compacted_manifest_bytes_per_dataset": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "compaction_remote_read_fraction": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "local_backup_family_fraction": {
+      "classification": "contract",
+      "reference": "docs/operations/backup-and-restore.md",
+      "scope": "Current POSIX full/base/delta family must remain accessible; adjust allocation only with an explicitly priced external POSIX destination. Metadata-object count is an explicit modeled file allocation."
+    },
+    "restore_rehearsals_per_month": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "restore_local_copy_fraction": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "sql_bytes_per_retired_artifact": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "sql_bytes_per_retired_dataset": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "sql_dump_bytes_per_retired_marker": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "Illustrative planning parameter; no production measurement or capacity guarantee."
+    },
+    "backup_metadata_objects_per_capture": {
+      "classification": "contract",
+      "reference": "docs/operations/backup-and-restore.md",
+      "scope": "Current POSIX full/base/delta family must remain accessible; adjust allocation only with an explicitly priced external POSIX destination. Metadata-object count is an explicit modeled file allocation."
+    },
+    "backup_full_base_heads_per_object": {
+      "classification": "measured_ratio",
+      "reference": "docs/verification/cost-checkpoint-native-1001.json",
+      "scope": "Native PostgreSQL+HTTP Moto;1001managedimmutableobjects. Full1001HEAD/1001objects; unchanged0HEAD/1001. SQL/LISTfingerprint+verifiedbase, freshmanagedmetadata; unknown/legacyobjects require positive retained-object inspection rate."
+    },
+    "backup_new_object_heads_per_object": {
+      "classification": "contract",
+      "reference": "scripts/object_snapshot.py at a95e2fc2453b7e623fc1f9f1ae67bee13412f158",
+      "scope": "New/changed and legacy objects bypass managed base reuse and require one deferred HEAD, then conditional/version-pinned GET when bytes differ. Not a zero-metadata assumption."
+    },
+    "upstream_response_bytes_per_observation": {
+      "classification": "unknown",
+      "reference": "docs/operations/costs.md",
+      "scope": "Wire bytes of upstream HTTP response are not compressed raw object bytes. Supply a measured response-body/transport allocation; API monetary fees remain separate."
+    }
+  },
+  "backup_full_base_heads_per_object": "1",
+  "backup_new_object_heads_per_object": "1",
+  "upstream_response_bytes_per_observation": null
+}

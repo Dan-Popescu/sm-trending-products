@@ -1,0 +1,35 @@
+{
+  "source": "Verified complete seed inventory only, not whole-case acceptance; d7597b6; 1000 products \u00d720videos \u00d7120samples, one retained import/product. See measured-retained-import-inventory.json. Does not represent collection20-ID HTTP request files.",
+  "raw_bytes_per_observation": "47.51037125",
+  "normalized_bytes_per_observation": "42.25614458333333333333333333",
+  "manifest_bytes_per_dataset": "1898.8",
+  "observations_per_dataset": "2400",
+  "sql_bytes_per_observation": "797.0884266666666666666666667",
+  "evidence": {
+    "raw_bytes_per_observation": {
+      "classification": "measured_ratio",
+      "reference": "docs/verification/measured-retained-import-inventory.json",
+      "scope": "Complete physical seed phase;1000products/2400000observations/no derived objects at SQL measurement. Full case later stopped; no latency or capacity acceptance. Changing file layout invalidates this coefficient."
+    },
+    "normalized_bytes_per_observation": {
+      "classification": "measured_ratio",
+      "reference": "docs/verification/measured-retained-import-inventory.json",
+      "scope": "Complete physical seed phase;1000products/2400000observations/no derived objects at SQL measurement. Full case later stopped; no latency or capacity acceptance. Changing file layout invalidates this coefficient."
+    },
+    "manifest_bytes_per_dataset": {
+      "classification": "measured_ratio",
+      "reference": "docs/verification/measured-retained-import-inventory.json",
+      "scope": "Complete physical seed phase;1000products/2400000observations/no derived objects at SQL measurement. Full case later stopped; no latency or capacity acceptance. Changing file layout invalidates this coefficient."
+    },
+    "observations_per_dataset": {
+      "classification": "measured_ratio",
+      "reference": "docs/verification/measured-retained-import-inventory.json",
+      "scope": "Complete physical seed phase;1000products/2400000observations/no derived objects at SQL measurement. Full case later stopped; no latency or capacity acceptance. Changing file layout invalidates this coefficient."
+    },
+    "sql_bytes_per_observation": {
+      "classification": "measured_ratio",
+      "reference": "docs/verification/measured-retained-import-inventory.json",
+      "scope": "Complete physical seed phase;1000products/2400000observations/no derived objects at SQL measurement. Full case later stopped; no latency or capacity acceptance. Changing file layout invalidates this coefficient."
+    }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "scope": "Complete seeding phase inventory only; full-case acceptance is not established by this artifact",
+  "commit": "d7597b655c490b2ec97f16b2d043ad3df0c7c121",
+  "products": 1000,
+  "observations": 2400000,
+  "seed_seconds": 693.3763386,
+  "seed_inventory": {
+    "datasets": {
+      "count": 1000,
+      "observations": 2400000
+    },
+    "derivations": {
+      "bytes": 0,
+      "objects": 0
+    },
+    "normalized": {
+      "bytes": 101414747,
+      "objects": 1000
+    },
+    "sql": {
+      "total_bytes": 1913012224
+    },
+    "wal_lsn": "6/C8400000"
+  },
+  "supplemental_source_inventory": {
+    "scope": "read-only native supplemental source inventory after complete seeding while cold phase runs",
+    "measured_at": "2026-10-24T08:11:00.280317+00:00",
+    "case": "retained-1000-30",
+    "inventory": {
+      "datasets": {
+        "count": 1000,
+        "observations": 2400000
+      },
+      "normalized": {
+        "objects": 1000,
+        "bytes": 101414747
+      },
+      "raw": {
+        "objects": 1000,
+        "bytes": 114024891
+      },
+      "derivations": {
+        "objects": 9247,
+        "bytes": 40361952
+      },
+      "sql": {
+        "total_bytes": 1923006464
+      },
+      "wal_lsn": "6/D153B260",
+      "manifests": {
+        "objects": 1000,
+        "canonical_bytes": 1898800
+      }
+    }
+  },
+  "limits": [
+    "Supplemental source blob sizes were read after seed while cold publication began. Its later total SQL and partial derived objects are not used for the seed SQL coefficient.",
+    "Measured layout is one retained import per product, not one physical20-ID collection request file.",
+    "WAL LSN is a global location, not attributed bytes. SQL dump bytes were not measured.",
+    "Do not infer a full retained-history workload pass or a VPS capacity from successful seeding."
+  ]
+}
