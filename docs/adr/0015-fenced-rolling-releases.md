@@ -58,6 +58,20 @@ Proof also includes older never-captured backlog and validates each receipt
 overlapping the handover. A fresh receipt in one scope cannot hide a retired
 handover receipt in that scope. Historical receipts intentionally retired before
 this handover do not impose a lifetime retention guarantee on deployment.
+An immutable, independently checked retirement certificate can withdraw an
+exact captured receipt, or the current cancelled page/attempt with no receipt.
+An older retired diagnostic attempt cannot hide its active retry. Neither a
+generic cancellation nor unexplained invalidation withdraws an obligation.
+
+Every latest registered capture policy also requires its own post-handover,
+current-generation witness, even when its next daily sample is not due yet.
+Wildcard policies match actual scoped requests under that exact contract
+version. Qualification waits for natural work rather than issuing extra live
+requests. Witness age follows the greater of configured freshness and the
+declared cadence plus lateness, allowing differently phased sparse sources to
+qualify without ignoring fast-source deadlines. Registered policies currently
+have no inactive lifecycle; an old-input removal cutoff does not deactivate a
+future collection path.
 
 The old worker stops claiming only through its acknowledged operation barrier;
 it must own no lease before retirement. A deadline blocks the release and never
