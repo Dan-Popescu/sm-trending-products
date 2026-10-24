@@ -50,7 +50,11 @@ def test_daily_observations_requests_history_and_each_physical_copy_are_counted(
     assert u["normalized_retained_bytes"] == 4320000000
     assert u["compacted_copy_bytes"] == 15120000000
     assert u["assessment_retained_bytes"] == Decimal("345380544000")
-    assert u["sql_dump_bytes"] == 9216000000 + 96 * u["retired_marker_rows"]
+    assert u["sql_dump_bytes"] == (
+        9216000000
+        + 96 * u["retired_marker_rows"]
+        + u["sql_dump_compaction_delivery_component_bytes"]
+    )
     assert u["source_store_bytes"] == sum(
         u[key]
         for key in (
