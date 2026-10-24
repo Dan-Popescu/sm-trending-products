@@ -1,0 +1,51 @@
+{
+  "rows": 10000,
+  "normalized_parquet_bytes": 538348,
+  "before": [
+    {
+      "relname": "normalized_object_entities",
+      "heap_bytes": 2932736,
+      "index_bytes": 4038656,
+      "total_bytes": 7004160
+    },
+    {
+      "relname": "normalized_objects",
+      "heap_bytes": 8192,
+      "index_bytes": 32768,
+      "total_bytes": 139264
+    },
+    {
+      "relname": "observation_deliveries",
+      "heap_bytes": 4554752,
+      "index_bytes": 9388032,
+      "total_bytes": 13975552
+    }
+  ],
+  "after": [
+    {
+      "relname": "normalized_object_entities",
+      "heap_bytes": 770048,
+      "index_bytes": 999424,
+      "total_bytes": 1802240
+    },
+    {
+      "relname": "normalized_objects",
+      "heap_bytes": 8192,
+      "index_bytes": 49152,
+      "total_bytes": 131072
+    },
+    {
+      "relname": "observation_deliveries",
+      "heap_bytes": 1998848,
+      "index_bytes": 4505600,
+      "total_bytes": 6537216
+    }
+  ],
+  "before_total_bytes": 21118976,
+  "after_total_bytes": 8470528,
+  "includes_all_object_mapping_heap_indexes_toast": true,
+  "excludes_wal_backups_temporary_peak": true,
+  "no_s3_migration": true,
+  "ratio": 2.493230174081238,
+  "reduction_fraction": 0.5989138867339022
+}

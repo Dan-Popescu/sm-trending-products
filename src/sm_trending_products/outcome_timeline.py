@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal, DecimalException, InvalidOperation
 from typing import Any
 
-from .contracts import Measurement, Observation, utc
+from .contracts import Measurement, Observation, observation_period
 
 
 def _metric(row: Observation, target: str) -> Measurement | None:
@@ -17,15 +17,7 @@ def _metric(row: Observation, target: str) -> Measurement | None:
 
 
 def _period(row: Observation) -> tuple[datetime, datetime] | None:
-    start = row.attributes.get("period_start", row.attributes.get("source_period_start"))
-    end = row.attributes.get("period_end", row.attributes.get("source_period_end"))
-    if start is None or end is None:
-        return None
-    try:
-        bounds = utc(start), utc(end)
-        return bounds if bounds[0] < bounds[1] else None
-    except (ValueError, TypeError, AttributeError):
-        return None
+    return observation_period(row)
 
 
 def _counter_period(row: Observation, target: str) -> str | None:

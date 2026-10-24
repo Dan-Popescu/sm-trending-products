@@ -23,7 +23,7 @@ from psycopg.types.json import Jsonb
 from .analysis_batches import RowBudgetExceeded
 from .cache import cached_path, evict_cache, file_digest, pin_cached
 from .catalog import Catalog
-from .contracts import Observation, canonical, digest, utc
+from .contracts import Observation, canonical, digest, observation_period, utc
 from .settings import Settings
 
 
@@ -187,6 +187,20 @@ class History:
             buckets[bucket % physical_buckets].append(obs)
         objects = []
         for bucket, part in sorted(buckets.items()):
+            periods = [observation_period(row) for row in part]
+            valid_periods = [period for period in periods if period is not None]
+            period_fields = {
+                "period_start",
+                "period_end",
+                "source_period_start",
+                "source_period_end",
+            }
+            # Malformed/ambiguous legacy period aliases remain conservative. The
+            # Parquet row predicate retains its established permissive decoding.
+            periods_indexed = all(
+                period is not None or not period_fields.intersection(row.attributes)
+                for row, period in zip(part, periods, strict=True)
+            )
             body = self.encode(part)
             checksum = hashlib.sha256(body).hexdigest()
             key = f"normalized/{prefix}/bucket={bucket:04d}/{checksum}.parquet"
@@ -202,6 +216,13 @@ class History:
                         "max_observed_at": max(row.observed_at for row in part).isoformat(),
                         "min_available_at": min(row.available_at for row in part).isoformat(),
                         "max_available_at": max(row.available_at for row in part).isoformat(),
+                        "periods_indexed": periods_indexed,
+                        "max_period_start": max(period[0] for period in valid_periods).isoformat()
+                        if valid_periods
+                        else None,
+                        "min_period_end": min(period[1] for period in valid_periods).isoformat()
+                        if valid_periods
+                        else None,
                     },
                     body,
                 )
@@ -410,8 +431,9 @@ class History:
             for manifest in self.catalog.iter_manifests(
                 synthetic=synthetic,
                 as_of=as_of,
-                since=since if period_window is None else None,
-                until=until if period_window is None else None,
+                since=since,
+                until=until,
+                period_window=period_window,
                 entity_keys=entity_keys,
             ):
                 manifests.append(manifest)

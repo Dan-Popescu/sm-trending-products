@@ -14,12 +14,17 @@ class PlanningSettings(BaseSettings):
     scheduler_request_budget: int = Field(default=500, ge=0, le=10_000)
     collection_schedule_minutes: int = Field(default=5, ge=1, le=60)
     assessment_schedule_minutes: int = Field(default=15, ge=1, le=60)
+    maintenance_schedule_minutes: int = Field(default=15, ge=1, le=60)
 
     @model_validator(mode="after")
     def validate_schedule_intervals(self) -> "PlanningSettings":
         if any(
             60 % interval
-            for interval in (self.collection_schedule_minutes, self.assessment_schedule_minutes)
+            for interval in (
+                self.collection_schedule_minutes,
+                self.assessment_schedule_minutes,
+                self.maintenance_schedule_minutes,
+            )
         ):
             raise ValueError("Schedule intervals must divide an hour")
         return self
@@ -43,6 +48,11 @@ class Settings(PlanningSettings):
     batch_size: int = Field(default=20, ge=1, le=1000)
     lease_seconds: int = Field(default=180, ge=30)
     max_attempts: int = Field(default=8, ge=1, le=100)
+    maintenance_max_seconds: float = Field(default=120, gt=0, le=3600)
+    retention_max_batches: int = Field(default=100, ge=1, le=1000)
+    retention_max_objects: int = Field(default=10_000, ge=1, le=100_000)
+    retention_max_operations: int = Field(default=20_000, ge=1, le=1_000_000)
+    compaction_max_batches: int = Field(default=24, ge=1, le=1000)
     collection_max_pages: int = Field(default=1000, ge=1, le=100000)
     analysis_product_batch_size: int = Field(default=100, ge=1, le=1000)
     analysis_max_rows_per_batch: int = Field(default=1_000_000, ge=100)
@@ -64,4 +74,11 @@ class Settings(PlanningSettings):
             raise ValueError("S3_BUCKET must be a bucket name")
         if self.collector_timeout_seconds + 30 >= self.lease_seconds:
             raise ValueError("Lease must exceed collector timeout plus publication headroom")
+        # The deployed coordinator serializes retention, compaction and the other
+        # jobs. Their two cooperative budgets must leave time in each interval.
+        if 2 * self.maintenance_max_seconds >= self.maintenance_schedule_minutes * 60:
+            raise ValueError(
+                "Combined retention and compaction budgets must be shorter than "
+                "the maintenance schedule interval"
+            )
         return self

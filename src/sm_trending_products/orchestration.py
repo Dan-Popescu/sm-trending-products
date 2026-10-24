@@ -101,26 +101,52 @@ def outcome_maturation(context: AssetExecutionContext, config: BatchConfig) -> d
 @asset
 def source_retention(context: AssetExecutionContext) -> dict:
     with Pipeline.from_env() as pipeline:
-        result = pipeline.retention(apply=True)
+        result = pipeline.retention_drain()
     context.add_output_metadata(
         {
             name: result.get(name, 0)
-            for name in ("dataset_count", "deleted_objects", "failed_objects", "pending_objects")
+            for name in (
+                "dataset_count",
+                "deleted_objects",
+                "failed_objects",
+                "pending_objects",
+                "oldest_pending_object_age_seconds",
+                "expired_root_count",
+                "oldest_expired_root_age_seconds",
+                "pending_finalization_count",
+                "pending_artifact_gc_count",
+                "artifact_relations_deleted",
+                "artifact_gc_completed_parents",
+                "operations",
+            )
         }
     )
-    if result.get("failed_objects", 0) or result.get("pending_objects", 0):
+    context.add_output_metadata(
+        {
+            "status": result.get("status", "unknown"),
+            "stop_reason": result.get("stop_reason", "unknown"),
+        }
+    )
+    if result.get("failed_objects", 0) or result.get("status") == "blocked":
         raise Failure(
-            description="Retention has pending deletions; resolve storage failures and retry."
+            description="Retention is blocked or has failed deletions; inspect its backlog."
         )
     return result
 
 
 @asset
 def history_compaction(context: AssetExecutionContext, config: BatchConfig) -> dict:
-    """One bounded compaction group per scheduled invocation."""
+    """Drain bounded compaction groups within the configured invocation budget."""
     with Pipeline.from_env() as pipeline:
-        result = pipeline.compact(synthetic=config.synthetic, max_datasets=100)
+        result = pipeline.compact_drain(synthetic=config.synthetic, max_datasets=100)
     context.add_output_metadata({"status": result["status"], "rows": result.get("rows", 0)})
+    context.add_output_metadata(
+        {
+            "stop_reason": result.get("stop_reason", "unknown"),
+            "pass_backlog": result.get("pass_backlog", {}),
+            "active_backlog": result.get("active_backlog", {}),
+        }
+    )
     return result
 
 
@@ -159,7 +185,7 @@ defs = Definitions(
     schedules=[
         ScheduleDefinition(
             job=compaction_job,
-            cron_schedule="45 * * * *",
+            cron_schedule=PlanningSettings.cron(PlanningSettings().maintenance_schedule_minutes),
             default_status=DefaultScheduleStatus.RUNNING,
         ),
         ScheduleDefinition(
@@ -184,7 +210,7 @@ defs = Definitions(
         ),
         ScheduleDefinition(
             job=retention_job,
-            cron_schedule="15 3 * * *",
+            cron_schedule=PlanningSettings.cron(PlanningSettings().maintenance_schedule_minutes),
             default_status=DefaultScheduleStatus.RUNNING,
         ),
     ],

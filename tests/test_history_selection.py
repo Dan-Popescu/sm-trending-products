@@ -257,7 +257,8 @@ def test_current_page_reads_only_selected_objects_and_retirement_removes_lookup(
     assert pipeline.history.metrics["get_requests"] - before == 1
     pipeline.catalog.invalidate_dataset(datasets[0], "controlled_retirement")
     indexed = pipeline.catalog.one(
-        "SELECT count(*) AS count FROM observation_deliveries WHERE dataset_id=%s",
+        "SELECT count(*) AS count FROM observation_deliveries o "
+        "JOIN normalized_objects n ON n.object_id=o.object_id WHERE n.dataset_id=%s",
         (datasets[0],),
     )
     assert indexed["count"] == 0

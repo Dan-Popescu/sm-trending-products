@@ -323,6 +323,7 @@ class Catalog:
         as_of: datetime | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        period_window: tuple[datetime, datetime] | None = None,
         source: str | None = None,
         entity_keys: set[str] | None = None,
         dataset_ids: set[str] | None = None,
@@ -344,7 +345,7 @@ class Catalog:
         if as_of:
             clauses.append("(d.min_available_at<=%s OR d.row_count=0)")
             params.append(as_of)
-        if since:
+        if since and period_window is None:
             clauses.append("(d.max_available_at>=%s OR d.row_count=0)")
             params.append(since)
         if source:
@@ -362,23 +363,37 @@ class Catalog:
                 "JOIN LATERAL (SELECT jsonb_agg(o.descriptor ORDER BY o.object_key) AS objects "
                 "FROM normalized_objects o WHERE o.dataset_id=d.dataset_id "
                 "AND EXISTS (SELECT 1 FROM normalized_object_entities e "
-                "WHERE e.dataset_id=o.dataset_id AND e.object_key=o.object_key "
+                "WHERE e.object_id=o.object_id "
                 "AND e.entity_key=ANY(%s)) "
             )
             object_params: list[Any] = [sorted(entity_keys)]
             if as_of:
                 joins += "AND (o.min_available_at IS NULL OR o.min_available_at<=%s) "
                 object_params.append(as_of)
+            observed_clauses = []
             if since:
-                joins += "AND (o.max_observed_at IS NULL OR o.max_observed_at>=%s) "
+                observed_clauses.append("(o.max_observed_at IS NULL OR o.max_observed_at>=%s)")
                 object_params.append(since)
             if until:
-                joins += "AND (o.min_observed_at IS NULL OR o.min_observed_at<=%s) "
+                observed_clauses.append("(o.min_observed_at IS NULL OR o.min_observed_at<=%s)")
                 object_params.append(until)
+            if observed_clauses:
+                observed_scope = " AND ".join(observed_clauses)
+                if period_window is not None:
+                    # Unknown legacy metadata must remain a conservative match.
+                    # Extrema are necessary conditions for any contained report,
+                    # with exact row-level period validation retained in History.
+                    observed_scope = (
+                        "(" + observed_scope + ") OR NOT o.periods_indexed OR "
+                        "(o.max_period_start>=%s AND o.min_period_end<=%s)"
+                    )
+                    object_params.extend(period_window)
+                joins += "AND (" + observed_scope + ") "
             joins += ") selected ON selected.objects IS NOT NULL "
             clauses.append(
                 "EXISTS (SELECT 1 FROM normalized_object_entities matching "
-                "WHERE matching.dataset_id=d.dataset_id AND matching.entity_key=ANY(%s))"
+                "JOIN normalized_objects matched ON matched.object_id=matching.object_id "
+                "WHERE matched.dataset_id=d.dataset_id AND matching.entity_key=ANY(%s))"
             )
             params.append(sorted(entity_keys))
             projection = (
@@ -435,20 +450,26 @@ class Catalog:
     def index_object_rows(
         self, connection, dataset_id: str, observations: Sequence[tuple[str, Observation]]
     ) -> None:
+        objects = {
+            row["object_key"]: row["object_id"]
+            for row in connection.execute(
+                "SELECT object_key,object_id FROM normalized_objects WHERE dataset_id=%s",
+                (dataset_id,),
+            ).fetchall()
+        }
         with connection.cursor() as cursor:
             cursor.executemany(
-                "INSERT INTO observation_deliveries(dataset_id,object_key,observation_id,"
+                "INSERT INTO observation_deliveries(object_id,observation_id,"
                 "entity_key,observed_at,available_at,payload_sha256) "
-                "VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                "VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                 [
                     (
-                        dataset_id,
-                        key,
+                        objects[key],
                         row.observation_id,
                         row.entity_key,
                         row.observed_at,
                         row.available_at,
-                        self.observation_fingerprint(row),
+                        bytes.fromhex(self.observation_fingerprint(row)),
                     )
                     for key, row in observations
                 ],
@@ -464,7 +485,7 @@ class Catalog:
             "AND NOT o.observations_indexed "
             "AND (o.min_available_at IS NULL OR o.min_available_at<=%s) "
             "AND EXISTS (SELECT 1 FROM normalized_object_entities e "
-            "WHERE e.dataset_id=o.dataset_id AND e.object_key=o.object_key "
+            "WHERE e.object_id=o.object_id "
             "AND e.entity_key=ANY(%s)) ORDER BY d.created_at,d.dataset_id,o.object_key LIMIT %s",
             (synthetic, as_of, sorted(entity_keys), limit),
         )
@@ -495,12 +516,12 @@ class Catalog:
         rows = list(
             connection.execute(
                 "WITH eligible AS NOT MATERIALIZED ("
-                'SELECT o.observation_id COLLATE "C" AS observation_id,o.dataset_id,'
-                "o.object_key,o.entity_key,o.observed_at,o.available_at,o.payload_sha256,"
+                'SELECT o.observation_id COLLATE "C" AS observation_id,n.dataset_id,'
+                "n.object_key,o.entity_key,o.observed_at,o.available_at,"
+                "encode(o.payload_sha256,'hex') AS payload_sha256,"
                 "d.created_at,n.descriptor FROM observation_deliveries o "
-                "JOIN datasets d ON d.dataset_id=o.dataset_id "
-                "JOIN normalized_objects n ON n.dataset_id=o.dataset_id "
-                "AND n.object_key=o.object_key "
+                "JOIN normalized_objects n ON n.object_id=o.object_id "
+                "JOIN datasets d ON d.dataset_id=n.dataset_id "
                 "WHERE d.state='committed' AND d.compacted_into IS NULL AND d.synthetic=%s "
                 "AND o.available_at<=%s AND o.entity_key=ANY(%s)), "
                 "candidates AS (SELECT DISTINCT observed_at,observation_id FROM eligible "
@@ -697,8 +718,9 @@ class Catalog:
                 raise ValueError("Source invalidation exceeds its atomic dataset budget")
             connection.execute(
                 "CREATE TEMP TABLE invalidated_artifacts ON COMMIT DROP AS "
-                "SELECT object_key FROM analytical_artifact_ancestors("
-                "ARRAY(SELECT dataset_id FROM invalidated_datasets)) LIMIT 10001",
+                "SELECT p.object_id,p.object_key FROM analytical_artifact_ancestor_ids("
+                "ARRAY(SELECT dataset_id FROM invalidated_datasets)) affected "
+                "JOIN derived_publications p USING(object_id) LIMIT 10001",
             )
             affected = connection.execute(
                 "SELECT count(*) AS count FROM invalidated_artifacts"
@@ -718,7 +740,7 @@ class Catalog:
             )
             connection.execute(
                 "UPDATE derived_publications SET state='invalidated' WHERE state<>'deleted' "
-                "AND object_key IN (SELECT object_key FROM invalidated_artifacts)"
+                "AND object_id IN (SELECT object_id FROM invalidated_artifacts)"
             )
             connection.execute(
                 "UPDATE alerts SET invalidated=true WHERE run_id IN "
@@ -729,7 +751,7 @@ class Catalog:
                 "SELECT evaluation_id FROM evaluation_dependencies "
                 "WHERE dataset_id IN (SELECT dataset_id FROM invalidated_datasets) "
                 "UNION SELECT evaluation_id FROM evaluation_artifacts "
-                "WHERE object_key IN (SELECT object_key FROM invalidated_artifacts) "
+                "WHERE object_id IN (SELECT object_id FROM invalidated_artifacts) "
                 "UNION SELECT child.evaluation_id FROM evaluation_runs child "
                 "JOIN affected parent ON child.parent_id=parent.evaluation_id) "
                 "UPDATE evaluation_runs SET invalidated=true WHERE evaluation_id IN "

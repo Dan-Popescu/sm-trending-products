@@ -84,8 +84,13 @@ def test_retention_records_actual_counts_and_fails_pending_deletion(monkeypatch,
         def __exit__(self, *args):
             pass
 
-        def retention(self, **kwargs):
-            return {"dataset_count": 2, "deleted_objects": 5, "pending_objects": pending}
+        def retention_drain(self, **kwargs):
+            return {
+                "dataset_count": 2,
+                "deleted_objects": 5,
+                "pending_objects": pending,
+                "failed_objects": pending,
+            }
 
     monkeypatch.setattr(orchestration, "Pipeline", ControlledPipeline)
     result = materialize([orchestration.source_retention], raise_on_error=False)
