@@ -168,6 +168,9 @@ class HostAuthorization:
             self.directory / "accepted-request.json",
             {"request": request.model_dump(mode="json"), "release_id": row["release_id"]},
         )
+        rollback = self._read(self.directory / "rollback-intent.json", missing=True)
+        if rollback and request.sequence > rollback["sequence"]:
+            self._write(self.directory / "rollback-intent.json", {**rollback, "superseded": True})
 
     @staticmethod
     def _bound_request(row: dict, request: DeploymentRequest) -> None:
@@ -224,10 +227,13 @@ class HostAuthorization:
             if not original or row["rollback_of"] != original["release_id"]:
                 raise ReleaseBlocked("deployment_rollback_authorization_invalid")
             self.verify(original, parent=True, depth=depth + 1)
+            highest = self._read(self.directory / "accepted-request.json", missing=True)
+            if not parent and highest and highest["request"]["sequence"] > authority["sequence"]:
+                raise ReleaseBlocked("deployment_rollback_superseded")
         else:
             raise ReleaseBlocked("deployment_authority_invalid")
         action = value.get("action")
-        if action not in {"apply", "abort"}:
+        if action not in {"apply", "abort", "rollback"}:
             raise ReleaseBlocked("deployment_authority_invalid")
         return action
 
@@ -239,6 +245,56 @@ class HostAuthorization:
             value["action"] = "abort"
             self._write(self._path(row["release_id"]), value)
 
+    def begin_rollback(self, row: dict) -> None:
+        self.verify(row)
+        with self._exclusive():
+            highest = self._read(self.directory / "accepted-request.json")
+            assert highest is not None
+            existing = self._read(self.directory / "rollback-intent.json", missing=True)
+            if (
+                existing
+                and not existing.get("superseded")
+                and existing["origin"] == row["release_id"]
+            ):
+                return
+            value = self._read(self._path(row["release_id"]))
+            assert value is not None
+            value["action"] = "rollback"
+            self._write(self._path(row["release_id"]), value)
+            self._write(
+                self.directory / "rollback-intent.json",
+                {
+                    "origin": row["release_id"],
+                    "release_id": row["release_id"],
+                    "sequence": highest["request"]["sequence"],
+                    "completed": False,
+                    "superseded": False,
+                },
+            )
+
+    def rollback_state(self) -> dict | None:
+        state = self._read(self.directory / "rollback-intent.json", missing=True)
+        if not state or state.get("superseded"):
+            return None
+        row = self.catalog.one(
+            "SELECT * FROM deployment_runs WHERE release_id=%s", (state["release_id"],)
+        )
+        if not row:
+            raise ReleaseBlocked("deployment_rollback_authorization_invalid")
+        self.verify(row)
+        return state
+
+    def complete_rollback(self, release_id: str) -> None:
+        with self._exclusive():
+            state = self._read(self.directory / "rollback-intent.json", missing=True)
+            if (
+                state
+                and not state.get("superseded")
+                and state["release_id"] == release_id
+                and state["release_id"] != state["origin"]
+            ):
+                self._write(self.directory / "rollback-intent.json", {**state, "completed": True})
+
     def rollback(self, row: dict, original: dict) -> None:
         self.verify(original)
         self._bound_identity(row)
@@ -248,21 +304,40 @@ class HostAuthorization:
             or row["prior_manifest"] != original["candidate_manifest"]
         ):
             raise ReleaseBlocked("deployment_rollback_authorization_invalid")
-        existing = self._read(self._path(row["release_id"]), missing=True)
-        if existing:
-            if existing["intent"] != self.intent(row):
+        with self._exclusive():
+            highest = self._read(self.directory / "accepted-request.json")
+            assert highest is not None
+            sequence = highest["request"]["sequence"]
+            existing = self._read(self._path(row["release_id"]), missing=True)
+            if existing and existing["intent"] != self.intent(row):
                 raise ReleaseBlocked("deployment_intent_changed")
-            return  # An idempotent retry cannot promote mutable SQL progress.
-        self._write(
-            self._path(row["release_id"]),
-            {
-                "intent": self.intent(row),
-                "action": "apply",
-                "progress": AuthorizedExecution.initial_progress(),
-                "authorized_at": now().isoformat(),
-                "authority": {"kind": "host_rollback", "parent_release_id": original["release_id"]},
-            },
-        )
+            if not existing:
+                self._write(
+                    self._path(row["release_id"]),
+                    {
+                        "intent": self.intent(row),
+                        "action": "apply",
+                        "progress": AuthorizedExecution.initial_progress(),
+                        "authorized_at": now().isoformat(),
+                        "authority": {
+                            "kind": "host_rollback",
+                            "parent_release_id": original["release_id"],
+                            "sequence": sequence,
+                        },
+                    },
+                )
+            # Preserve private progress on retries, including a crash between
+            # writing reverse authority and advancing this durable override.
+            self._write(
+                self.directory / "rollback-intent.json",
+                {
+                    "origin": original["release_id"],
+                    "release_id": row["release_id"],
+                    "sequence": sequence,
+                    "completed": False,
+                    "superseded": False,
+                },
+            )
 
 
 class AuthorizedExecution:

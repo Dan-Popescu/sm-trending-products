@@ -285,3 +285,101 @@ def test_explicit_rollback_uses_private_phase_before_persisting_cancellation(pip
     evidence.ready = True
     assert runtime.apply(row["release_id"])["reason"] == "candidate_busy"
     assert authority.verify(row) == "abort" and "blue" in controller.host.running
+
+
+def test_rollback_after_sql_commit_gap_survives_another_crash_and_preempts_processing(
+    pipeline, tmp_path
+):
+    from test_release_control import ProcessDeath
+
+    authority, controller, row, evidence, request = authorized(pipeline, tmp_path)
+    execution = authority.execution(row)
+    controller.execution = execution
+    evidence.ready = True
+    checkpoint = execution.checkpoint
+
+    def interrupted_checkpoint(current):
+        if current["phase"] == "committed":
+            raise ProcessDeath()
+        checkpoint(current)
+
+    execution.checkpoint = interrupted_checkpoint
+    with pytest.raises(ProcessDeath):
+        controller.apply(row["release_id"])
+    runtime = object.__new__(HostRuntime)
+    runtime.catalog = pipeline.catalog
+    runtime.config = SimpleNamespace(target="fixture")
+    runtime.authorization = authority
+    runtime.trust = authority.trust
+    runtime.controller = lambda current: controller
+    runtime.pending_processing = lambda: pytest.fail("Rollback must preempt blocked processing")
+    refreshed = []
+
+    def processing(release=None, **kwargs):
+        refreshed.append(release)
+        return {"status": "completed", "target": "fixture"}
+
+    runtime.refresh_processing_release = processing
+    apply = controller.apply
+    interrupted = []
+
+    def crash_after_private_rollback_intent(release_id):
+        if not interrupted:
+            interrupted.append(True)
+            raise ProcessDeath()
+        return apply(release_id)
+
+    controller.apply = crash_after_private_rollback_intent
+    with pytest.raises(ProcessDeath):
+        runtime.rollback(row["release_id"])
+    assert authority.verify(row) == "rollback"
+    assert authority.rollback_state()["release_id"] == row["release_id"]
+    assert "green" in controller.host.running  # B keeps acquiring throughout recovery.
+    reverse = runtime.pull()
+    assert reverse["release_id"] != row["release_id"]
+    assert set(controller.host.running) == {"green"}
+    result = runtime.pull()
+    assert result["status"] == "completed" and set(controller.host.running) == {"blue"}
+    assert refreshed[-1].manifest == release("a").manifest
+    assert authority.rollback_state()["completed"] is True
+    # The unchanged old signed B request must not undo the completed rollback.
+    runtime.pending_processing = lambda: False
+    runtime.reader = SimpleNamespace(request=lambda trust: (request, {}))
+    result = runtime.pull()
+    assert result["status"] == "completed" and refreshed[-1].manifest == release("a").manifest
+    # A genuinely newer signed request can supersede the private rollback.
+    active = runtime.active()
+    plan = controller.plan(
+        release("c"),
+        target="fixture",
+        current=release("a"),
+        current_slot=active["active_slot"],
+        current_worker_id=active["active_worker_id"],
+        schema_version=35,
+        synthetic=True,
+        request_id="signed-2",
+    )
+    next_row = pipeline.catalog.one(
+        "SELECT * FROM deployment_runs WHERE release_id=%s", (plan["release_id"],)
+    )
+    newer = DeploymentRequest(
+        target="fixture",
+        sequence=2,
+        revision="c" * 40,
+        manifest_sha256=hashlib.sha256(release_manifest_bytes(release("c").manifest)).hexdigest(),
+    )
+    proof = {"method": "cosign_bundle", "bundle": {"controlled_fixture": True}}
+    pipeline.catalog.execute(
+        "INSERT INTO deployment_requests(target,sequence,request,proof,release_id) "
+        "VALUES(%s,%s,%s,%s,%s)",
+        ("fixture", 2, Jsonb(newer.model_dump(mode="json")), Jsonb(proof), plan["release_id"]),
+    )
+    authority.record_request(next_row, newer, proof)
+    assert authority.rollback_state() is None
+    old_reverse = pipeline.catalog.one(
+        "SELECT * FROM deployment_runs WHERE release_id=%s", (reverse["release_id"],)
+    )
+    with pytest.raises(ReleaseBlocked, match="deployment_rollback_superseded"):
+        authority.verify(old_reverse)
+    result = runtime.pull()
+    assert result["status"] == "completed" and refreshed[-1].manifest == release("c").manifest

@@ -98,6 +98,13 @@ Rollback after commit creates a reverse handover to the verified compatible prio
 image. Its explicit journal reference allows recovery from an unhealthy current
 image. SQL data, quotas, cursors and captured inputs are not rewound. An aborted
 intent stays aborted; a new explicit request identity admits a deliberate retry.
+A private rollback intent also covers SQL commit preceding its private checkpoint.
+The controller requalifies and completes that already-approved transfer while its
+replacement keeps collecting, then authorizes the reverse handover. The timer
+resumes this intent before blocked processing or network requests. A completed
+rollback remains effective against the unchanged old forward request; a newer
+signed sequence can supersede it. Old reverse authorities cannot be replayed
+after such supersession.
 
 Schema expansion must already be compatible with both versions; arbitrary SQL or
 scripts are not accepted in manifests. Destructive contraction belongs to a later

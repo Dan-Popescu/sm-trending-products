@@ -336,7 +336,7 @@ class HostRuntime:
     def apply(self, release_id: str) -> dict:
         row = self.run(release_id)
         action = self.authorization.verify(row)
-        if action == "abort":
+        if action in {"abort", "rollback"}:
             return self.rollback(release_id)
         controller = self.controller(row)
         controller.execution = self.authorization.execution(row)
@@ -355,6 +355,8 @@ class HostRuntime:
                 ),
                 supersede=row["rollback_of"] is not None,
             )
+            if row["rollback_of"] is not None and refreshed["status"] == "completed":
+                self.authorization.complete_rollback(release_id)
             return {**refreshed, "release_id": release_id, "capture_phase": "retired"}
         return result
 
@@ -363,10 +365,30 @@ class HostRuntime:
         self.authorization.verify(row)
         execution = self.authorization.execution(row)
         row = execution.bind(row)
-        if row["phase"] not in {"committed", "retired"}:
-            self.authorization.cancel(row)
+        override = self.authorization.rollback_state()
+        if override and override["origin"] == release_id and override["release_id"] != release_id:
+            return self.apply(override["release_id"])
         controller = self.controller(row)
         controller.execution = execution
+        active = self.active()
+        commit_gap = (
+            row["phase"] in {"ready", "draining", "verified"}
+            and active["active_manifest"] == row["candidate_manifest"]
+            and active["active_worker_id"] == row["candidate_worker_id"]
+        )
+        if commit_gap:
+            self.authorization.begin_rollback(row)
+            # The approved transfer committed in SQL before its private
+            # checkpoint. Requalify/finish it while B keeps collecting, then
+            # reverse from its actual completed state; never strand cancellation.
+            completed = controller.apply(release_id)
+            if completed["status"] != "completed":
+                return completed
+            row = execution.bind(self.run(release_id))
+        if row["phase"] not in {"committed", "retired"}:
+            self.authorization.cancel(row)
+        else:
+            self.authorization.begin_rollback(row)
         result = controller.rollback(release_id)
         if result["release_id"] != release_id:
             self.authorization.rollback(self.run(result["release_id"]), row)
@@ -415,16 +437,9 @@ class HostRuntime:
         return self.processing_refresh().apply(release, previous=previous, supersede=supersede)
 
     def pull(self) -> dict:
-        reverse = self.catalog.one(
-            "SELECT * FROM deployment_runs WHERE target=%s AND rollback_of IS NOT NULL "
-            "AND status NOT IN ('completed','aborted') ORDER BY created_at,release_id LIMIT 1",
-            (self.config.target,),
-        )
-        if reverse:
-            # SQL cannot confer priority or rollback authority. Verify the
-            # private parent-linked seal before preempting failed processing.
-            self.authorization.verify(reverse)
-            return self.apply(reverse["release_id"])
+        override = self.authorization.rollback_state()
+        if override and not override["completed"]:
+            return self.apply(override["release_id"])
         if self.pending_processing():
             return self.refresh_processing_release()
         active = self.active()
@@ -440,6 +455,10 @@ class HostRuntime:
             return self.apply(pending["release_id"])
         request, proof = self.reader.request(self.trust)
         self.authorization.sequence(request)
+        if override and request.sequence <= override["sequence"]:
+            # An unchanged old forward request cannot undo a completed private
+            # rollback. Only a newer signed request supersedes this override.
+            return self.apply(override["release_id"])
         previous = self.catalog.one(
             "SELECT * FROM deployment_requests WHERE target=%s ORDER BY sequence DESC LIMIT 1",
             (self.config.target,),

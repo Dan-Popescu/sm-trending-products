@@ -523,7 +523,7 @@ class DeploymentController:
                     else row["prior_worker_id"]
                 )
                 committed_recovery = (
-                    row["phase"] == "verified"
+                    row["phase"] in {"ready", "draining", "verified"}
                     and active is not None
                     and active["active_manifest"] == row["candidate_manifest"]
                     and active["active_worker_id"] == row["candidate_worker_id"]

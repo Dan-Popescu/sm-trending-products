@@ -149,6 +149,11 @@ reason in the journal. `status --release-id ID` shows detailed handover progress
 `rollback --release-id ID` cancels an unfinished candidate or plans a reverse
 handover after commit; apply the returned reverse release ID to run it. The
 reverse handover also requires fresh generation-bound capture evidence.
+If SQL committed a transfer before its private checkpoint, rollback first
+requalifies and completes that approved transfer, then reverses it while keeping
+the replacement collecting. This private intent survives another controller
+crash and takes priority over blocked processing. The unchanged earlier GitHub
+request cannot undo a completed rollback; a newer signed request can supersede it.
 
 Do not run blanket `docker compose down`, rebuild all services, delete volumes,
 restore a database snapshot, or use an ordinary `compose up` that forgets current
