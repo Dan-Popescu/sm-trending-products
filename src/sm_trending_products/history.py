@@ -285,9 +285,9 @@ class History:
         dataset_id = dataset_id or digest(
             {"raw": raw, "version": transform_version, "synthetic": synthetic}
         )
-        if kind == "raw_capture" or capture is not None:
+        if kind in {"raw_capture", "raw_capture_error"} or capture is not None:
             if (
-                kind != "raw_capture"
+                kind not in {"raw_capture", "raw_capture_error"}
                 or observations
                 or capture is None
                 or raw.get("capture_version") != "1"

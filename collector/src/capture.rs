@@ -79,6 +79,8 @@ struct Input {
     page_index: u64,
     worker_id: String,
     worker_generation: Option<u64>,
+    #[serde(default)]
+    capture_attempt: u64,
     lease_version: u64,
     request_fingerprint: String,
 }
@@ -188,6 +190,16 @@ fn reserve(directory: &Path, id: &str, maximum: u64) -> Result<PathBuf> {
     Ok(own)
 }
 
+fn release_reservation(directory: &Path, id: &str) -> Result<()> {
+    let lock = open_private(&directory.join(".budget.lock"))?;
+    lock.lock().map_err(io_error)?;
+    match fs::remove_file(directory.join(format!("{id}.reserve"))) {
+        Ok(()) => sync_directory(directory),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(io_error(error)),
+    }
+}
+
 pub async fn capture(bytes: &[u8], directory: &Path, maximum: u64) -> Result<Value> {
     let input: Input = serde_json::from_slice(bytes)
         .map_err(|_| CollectorError::new("configuration", "invalid_capture_request"))?;
@@ -220,6 +232,7 @@ pub async fn capture(bytes: &[u8], directory: &Path, maximum: u64) -> Result<Val
     lock.lock().map_err(io_error)?;
     let final_path = directory.join(format!("{}.json", input.capture_id));
     if let Some(receipt) = read_receipt(&final_path, &input)? {
+        release_reservation(directory, &input.capture_id)?;
         return Ok(receipt);
     }
     let partial_path = directory.join(format!("{}.part", input.capture_id));
@@ -230,11 +243,7 @@ pub async fn capture(bytes: &[u8], directory: &Path, maximum: u64) -> Result<Val
             .map_err(io_error)?;
         fs::rename(&partial_path, &final_path).map_err(io_error)?;
         sync_directory(directory)?;
-        let reservation = directory.join(format!("{}.reserve", input.capture_id));
-        if reservation.exists() {
-            fs::remove_file(reservation).map_err(io_error)?;
-            sync_directory(directory)?;
-        }
+        release_reservation(directory, &input.capture_id)?;
         return Ok(receipt);
     }
     let reservation = reserve(directory, &input.capture_id, maximum)?;
@@ -269,12 +278,10 @@ pub async fn capture(bytes: &[u8], directory: &Path, maximum: u64) -> Result<Val
             }
         };
         sanitize(&mut raw, &secrets);
-        let source_error = raw
-            .get("error")
-            .and_then(|error| error.get("code"))
-            .is_some_and(|code| code != "ok" && code != 0);
-        let continuation = if invalid_json || source_error {
+        let continuation = if invalid_json {
             Err(CollectorError::new("schema", "captured_source_error"))
+        } else if let Some(error) = request::source_error(&raw) {
+            Err(error)
         } else if let Some(data) = raw.get("data").and_then(Value::as_object) {
             normalize::continuation(&input.request, data)
         } else {
@@ -284,7 +291,8 @@ pub async fn capture(bytes: &[u8], directory: &Path, maximum: u64) -> Result<Val
             Ok(next) => (next, Value::Null),
             Err(error) => (
                 Value::Null,
-                json!({"category":error.category,"code":error.code}),
+                json!({"category":error.category,"code":error.code,
+                       "retry_after_seconds":error.retry_after_seconds}),
             ),
         };
         let raw_bytes = serde_json::to_vec(&raw)
@@ -296,6 +304,7 @@ pub async fn capture(bytes: &[u8], directory: &Path, maximum: u64) -> Result<Val
             "capture_id":input.capture_id,"task_id":input.task_id,
             "page_index":input.page_index,"worker_id":input.worker_id,
             "lease_version":input.lease_version,"request_fingerprint":input.request_fingerprint,
+            "capture_attempt":input.capture_attempt,
             "captured_at":captured_at,
         });
         if let Some(generation) = input.worker_generation {
@@ -323,18 +332,17 @@ pub async fn capture(bytes: &[u8], directory: &Path, maximum: u64) -> Result<Val
         file.sync_all().map_err(io_error)?;
         fs::rename(&partial_path, &final_path).map_err(io_error)?;
         sync_directory(directory)?;
-        fs::remove_file(&reservation).map_err(io_error)?;
-        sync_directory(directory)?;
+        release_reservation(directory, &input.capture_id)?;
         Ok(())
     })
     .await;
     if let Some(receipt) = read_receipt(&final_path, &input)? {
+        release_reservation(directory, &input.capture_id)?;
         return Ok(receipt);
     }
     // If no bytes were received, release capacity. A partial receipt stays reserved.
     if !partial_path.exists() && reservation.exists() {
-        fs::remove_file(reservation).map_err(io_error)?;
-        sync_directory(directory)?;
+        release_reservation(directory, &input.capture_id)?;
     }
     fetched.map(|_| Value::Null)
 }

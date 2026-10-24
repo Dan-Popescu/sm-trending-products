@@ -18,6 +18,18 @@ SOURCES = {"tiktok_display", "tiktok_ads", "tiktok_commercial"}
 DISPLAY_QUERY_LIMIT = 20
 
 
+def raw_capture_identity(task: dict) -> str:
+    """Keep first-attempt identity stable; retry only an archived business error."""
+    return digest(
+        {
+            "capture_of": task["task_id"],
+            "page_index": task["page_index"],
+            "protocol": "1",
+            **({"capture_attempt": task["capture_attempt"]} if task.get("capture_attempt") else {}),
+        }
+    )
+
+
 def credential_keys(synthetic: bool) -> dict[str, str]:
     """Hint only current source credentials; Rust still reserves immediately before HTTP.
 

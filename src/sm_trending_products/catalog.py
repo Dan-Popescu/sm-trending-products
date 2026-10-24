@@ -810,7 +810,7 @@ class Catalog:
                     "UPDATE collection_tasks SET "
                     "state=%s,payload=%s,lease_owner=NULL,lease_until=NULL,"
                     "completed_at=CASE WHEN %s THEN clock_timestamp() ELSE NULL END,attempts=0,"
-                    "page_index=page_index+%s,last_error=%s "
+                    "page_index=page_index+%s,capture_attempt=0,last_error=%s "
                     "WHERE task_id=%s",
                     (
                         "quarantined"

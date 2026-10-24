@@ -21,8 +21,17 @@ excerpt limit. Partial or oversized bodies are not complete receipts.
 Receipt acquisition only interprets the source envelope and continuation. It
 never invokes the record normalizer. Valid continuation can therefore advance
 past an unknown record schema, while malformed continuation archives the response
-and quarantines the task instead of guessing a cursor. Source-reported errors
-also remain archived and explicit. Existing source/account capability and
+and quarantines the task instead of guessing a cursor. Routine source business
+errors are archived as `raw_capture_error` and never settle a capture obligation
+or enter normalization. A fenced task `capture_attempt` advances only after the
+error dataset commits; a crash adopts the same error and advances it once.
+Attempt zero retains its established ID; later attempts add `capture_attempt` to
+the identity hash, without changing the original page/request or obligation due
+time. Successful pagination resets the attempt counter for the next page.
+Rate limits preserve shared quota cooldown and do not consume failure attempts.
+Access denial blocks collection until access is recovered, with a fresh attempt
+available rather than an immutable error masquerading as the successful page.
+Existing source/account capability and
 retention-policy gates apply before live acquisition. Synthetic endpoint/time
 overrides remain forbidden in live requests, and account scope and request
 filters are retained through pagination and later replay.
@@ -50,7 +59,7 @@ staged/committed dataset manifest lifecycle. A raw-only dataset has zero
 observations, `kind="raw_capture"`, and `acquisition_protocol="1"`. Its identity
 is the hash of `{capture_of: task_id, page_index, protocol: "1"}`. The manifest's
 `capture` object contains `capture_id`, `task_id`, `page_index`, `worker_id`,
-`lease_version`, `request_fingerprint`, and `captured_at`. Registered acquisition
+`lease_version`, `capture_attempt`, `request_fingerprint`, and `captured_at`. Registered acquisition
 also includes the actual acquiring `worker_generation`; unregistered legacy
 callers omit it. Worker identity/generation and
 physical acquisition time always describe the process that obtained the body;
@@ -79,6 +88,9 @@ Raw-parent replay reserves a processing availability clock independently from
 the original observation time. It never backdates derived knowledge to a delayed
 source response. Record schema failures produce a derived quarantine while
 leaving raw data available for a later supported transformation. Existing legacy
+Display query requested/missing-member diagnostics are computed in the derived
+publication after normalization, while the raw acquisition receipt stays pristine.
+Existing legacy
 datasets, v1 identifiers/hashes and v2 replay aliases retain their prior contracts.
 Raw parents participate in existing source invalidation, retention, backup and
 object verification; zero-row parents are already excluded from compaction.

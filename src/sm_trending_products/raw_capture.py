@@ -8,11 +8,14 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from psycopg.types.json import Jsonb
+
 from .catalog import InvalidationPending, LeaseLost
 from .collection import SourceCollection
 from .collector import CollectionError
 from .contracts import digest, now, utc
 from .replay import ReplayService
+from .source_contracts import raw_capture_identity
 
 
 class RawCaptureService:
@@ -25,9 +28,7 @@ class RawCaptureService:
 
     @staticmethod
     def identity(task: dict) -> str:
-        return digest(
-            {"capture_of": task["task_id"], "page_index": task["page_index"], "protocol": "1"}
-        )
+        return raw_capture_identity(task)
 
     def capture_batch(
         self,
@@ -81,7 +82,7 @@ class RawCaptureService:
                 )
                 if prior and prior["state"] == "committed":
                     if (
-                        prior["manifest"].get("kind") != "raw_capture"
+                        prior["manifest"].get("kind") not in {"raw_capture", "raw_capture_error"}
                         or prior["manifest"].get("acquisition_protocol") != "1"
                     ):
                         raise CollectionError("capture_identity_mismatch", 300)
@@ -103,6 +104,9 @@ class RawCaptureService:
                     )
                     self._validate_receipt(receipt, request, task)
                 error = receipt.get("continuation_error")
+                business_error = bool(
+                    error and error.get("category") in {"source", "authorization", "rate_limit"}
+                )
                 next_payload = receipt.get("next_payload")
                 if next_payload is not None and synthetic:
                     next_payload = dict(next_payload)
@@ -125,15 +129,26 @@ class RawCaptureService:
                     task=task,
                     next_payload=next_payload,
                     advance_task=not error,
-                    kind="raw_capture",
+                    kind="raw_capture_error" if business_error else "raw_capture",
                     capture=receipt["capture"],
                     quarantine=[{"reason": "captured_envelope_invalid"}] if error else (),
                 )
                 if error:
-                    self.catalog.reschedule(task, "captured_envelope_invalid", 300, quarantine=True)
-                    result["errors"].append(
-                        {"task_id": task["task_id"], "category": "captured_envelope_invalid"}
-                    )
+                    if business_error:
+                        category = {
+                            "authorization": "access_denied",
+                            "rate_limit": "rate_limited",
+                        }.get(error["category"], "source")
+                        self._reschedule_failure(
+                            task,
+                            category,
+                            error.get("retry_after_seconds") or 60,
+                            error_dataset_id=capture_id,
+                        )
+                    else:
+                        category = "captured_envelope_invalid"
+                        self.catalog.reschedule(task, category, 300, quarantine=True)
+                    result["errors"].append({"task_id": task["task_id"], "category": category})
                 else:
                     result["processed"] += 1
                 result["datasets"].append(capture_id)
@@ -161,11 +176,73 @@ class RawCaptureService:
                     else min(300, 2 ** task["attempts"])
                 )
                 try:
-                    self.catalog.reschedule(task, category, delay)
+                    self._reschedule_failure(task, category, delay)
                 except LeaseLost:
                     category = "lease_lost"
                 result["errors"].append({"task_id": task["task_id"], "category": category})
         return result
+
+    def _reschedule_failure(
+        self, task: dict, category: str, delay: float, *, error_dataset_id: str | None = None
+    ) -> None:
+        denied = category in {
+            "source_access_unverified",
+            "credentials_missing",
+            "missing_token",
+            "unauthorized",
+            "access_denied",
+            "invalid_request",
+            "schema",
+            "invalid_retry_hint",
+        }
+        no_attempt = category in {"rate_limited", "quota_exhausted"}
+        with self.catalog.transaction() as connection:
+            self.catalog.guard_namespace(connection, task["synthetic"])
+            self.catalog.assert_lease(connection, task)
+            if error_dataset_id:
+                archived = connection.execute(
+                    "SELECT 1 FROM datasets WHERE dataset_id=%s AND state='committed' "
+                    "AND task_id=%s AND manifest->>'kind'='raw_capture_error' "
+                    "AND (manifest->'capture'->>'page_index')::bigint=%s "
+                    "AND COALESCE((manifest->'capture'->>'capture_attempt')::bigint,0)=%s",
+                    (
+                        error_dataset_id,
+                        task["task_id"],
+                        task["page_index"],
+                        task.get("capture_attempt", 0),
+                    ),
+                ).fetchone()
+                if not archived:
+                    raise ValueError("Capture attempt can advance only after its error is archived")
+            if not task["synthetic"] and category == "access_denied":
+                connection.execute(
+                    "INSERT INTO source_capabilities(source,account_id,capability,state,details) "
+                    "VALUES(%s,%s,'collect','denied',%s)",
+                    (task["source"], task["account_id"], Jsonb({"category": category})),
+                )
+            if no_attempt:
+                connection.execute(
+                    "SELECT block_request_budget(%s,%s,%s)",
+                    (task["source"], task["account_id"], delay),
+                )
+            updated = connection.execute(
+                "UPDATE collection_tasks SET state=%s,"
+                "due_at=clock_timestamp()+%s*interval '1 second',"
+                "last_error=%s,lease_owner=NULL,lease_until=NULL,attempts=GREATEST(0,attempts-%s),"
+                "capture_attempt=capture_attempt+%s WHERE task_id=%s "
+                "AND capture_attempt=%s RETURNING 1",
+                (
+                    "quarantined" if denied else "pending",
+                    max(1, delay),
+                    category,
+                    int(no_attempt),
+                    int(error_dataset_id is not None),
+                    task["task_id"],
+                    task.get("capture_attempt", 0),
+                ),
+            ).fetchone()
+            if not updated:
+                raise LeaseLost("Capture attempt was superseded")
 
     def _validate_receipt(self, receipt: dict, request: dict, task: dict) -> None:
         capture = receipt.get("capture", {})
@@ -175,6 +252,7 @@ class RawCaptureService:
             or capture.get("capture_id") != self.identity(task)
             or capture.get("task_id") != task["task_id"]
             or capture.get("page_index") != task["page_index"]
+            or capture.get("capture_attempt", 0) != task.get("capture_attempt", 0)
             or capture.get("request_fingerprint") != digest(request)
             or recorded_request.get("source") != task["source"]
             or recorded_request.get("account_id") != task["account_id"]
@@ -224,7 +302,8 @@ class RawCaptureService:
             processed += 1
             dataset = self.catalog.one(
                 "SELECT * FROM datasets WHERE dataset_id=%s AND state='committed' "
-                "AND manifest->>'kind'='raw_capture' AND manifest->>'acquisition_protocol'='1'",
+                "AND manifest->>'kind' IN ('raw_capture','raw_capture_error') "
+                "AND manifest->>'acquisition_protocol'='1'",
                 (path.stem,),
             )
             if dataset:

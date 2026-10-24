@@ -92,10 +92,9 @@ class Collector:
         worker_generation: int | None = None,
     ) -> dict:
         from .contracts import digest
+        from .source_contracts import raw_capture_identity
 
-        capture_id = digest(
-            {"capture_of": task["task_id"], "page_index": task["page_index"], "protocol": "1"}
-        )
+        capture_id = raw_capture_identity(task)
         payload = {
             "request": request,
             "capture_id": capture_id,
@@ -104,6 +103,7 @@ class Collector:
             "worker_id": task["lease_owner"],
             "lease_version": task["lease_version"],
             "request_fingerprint": digest(request),
+            "capture_attempt": task.get("capture_attempt", 0),
         }
         if worker_generation is not None:
             payload["worker_generation"] = worker_generation

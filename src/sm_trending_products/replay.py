@@ -35,6 +35,8 @@ class ReplayService:
         )
         if not dataset:
             raise ValueError("No completed dataset found")
+        if dataset["manifest"].get("kind") == "raw_capture_error":
+            raise ValueError("A source business error cannot be normalized as source evidence")
         if (
             dataset["manifest"].get("kind") == "raw_capture"
             and dataset["manifest"].get("acquisition_protocol") != "1"
@@ -109,6 +111,19 @@ class ReplayService:
                 observations = [
                     row.model_copy(update={"available_at": available_at}) for row in observations
                 ]
+            if (
+                dataset["manifest"].get("kind") == "raw_capture"
+                and raw["request"]["source"] == "tiktok_display"
+                and raw["request"]["operation"] == "query"
+            ):
+                requested = set(raw["request"]["payload"].get("filters", {}).get("video_ids", []))
+                raw = {
+                    **raw,
+                    "requested_entity_ids": sorted(requested),
+                    "missing_entity_ids": sorted(
+                        requested - {row.entity_id for row in observations}
+                    ),
+                }
         identity = {"replay_of": parent["dataset_id"], "version": transform_version}
         if quarantine and not (source_replay and transform_version == "2"):
             # Keep the established v1 replay keys, including its rejection fix.

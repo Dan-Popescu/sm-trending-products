@@ -403,34 +403,8 @@ where
                         )));
                 }
             };
-        if let Some(code) = raw.get("error").and_then(|v| v.get("code")) {
-            let okay = code == "ok" || code == 0;
-            if !okay {
-                let text = code.as_str().unwrap_or("");
-                let source_status = raw
-                    .get("error")
-                    .and_then(|v| v.get("http_status_code"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0);
-                let category = if source_status == 401
-                    || source_status == 403
-                    || text.contains("token")
-                    || text.contains("scope")
-                    || text.contains("auth")
-                    || text.contains("permission")
-                {
-                    "authorization"
-                } else if source_status == 429 || text.contains("rate_limit") {
-                    "rate_limit"
-                } else {
-                    "source"
-                };
-                return Err(if category == "rate_limit" {
-                    CollectorError::retry(category, "source_error_response", 60.0)
-                } else {
-                    CollectorError::new(category, "source_error_response")
-                });
-            }
+        if let Some(error) = source_error(&raw) {
+            return Err(error);
         }
         redact(&mut raw, &token);
         return Ok(FetchedPage {
@@ -440,6 +414,36 @@ where
         });
     }
     Err(CollectorError::new("transport", "retry_limit_reached"))
+}
+
+pub fn source_error(raw: &Value) -> Option<CollectorError> {
+    let code = raw.get("error")?.get("code")?;
+    if code == "ok" || code == 0 {
+        return None;
+    }
+    let text = code.as_str().unwrap_or("");
+    let status = raw
+        .get("error")
+        .and_then(|error| error.get("http_status_code"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let category = if status == 401
+        || status == 403
+        || ["token", "scope", "auth", "permission"]
+            .iter()
+            .any(|part| text.contains(part))
+    {
+        "authorization"
+    } else if status == 429 || text.contains("rate_limit") {
+        "rate_limit"
+    } else {
+        "source"
+    };
+    Some(if category == "rate_limit" {
+        CollectorError::retry(category, "source_error_response", 60.0)
+    } else {
+        CollectorError::new(category, "source_error_response")
+    })
 }
 
 pub fn schema_artifact(
