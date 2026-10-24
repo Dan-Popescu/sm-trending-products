@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from .release_control import ReleaseBlocked, ReleaseManifest
+from .release_control import IMAGE_DIGEST_PATTERN, ReleaseBlocked, ReleaseManifest
 
 SLOT_SERVICES = {"blue": "worker", "green": "worker-green"}
 
@@ -47,7 +47,7 @@ class ComposeReleaseHost:
         ):
             raise ValueError("Both capture slots must be explicitly configured")
         for image in self.slot_images.values():
-            if not re.fullmatch(r"[a-z0-9][a-z0-9./_-]+@sha256:[0-9a-f]{64}", image):
+            if not re.fullmatch(IMAGE_DIGEST_PATTERN, image):
                 raise ValueError("Capture slots require immutable image digests")
         if any(
             not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", value)

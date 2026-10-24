@@ -18,6 +18,11 @@ from pydantic import Field, model_validator
 from .catalog import Catalog
 from .contracts import Contract, canonical, digest
 
+IMAGE_DIGEST_PATTERN = (
+    r"^[a-z0-9][a-z0-9._-]*(?::[0-9]{1,5})?"
+    r"(?:/[a-z0-9][a-z0-9._-]*)+@sha256:[0-9a-f]{64}$"
+)
+
 
 class ReleaseBlocked(RuntimeError):
     """A safe precondition or external action failed; acquisition must remain available."""
@@ -29,7 +34,7 @@ class ReleaseBlocked(RuntimeError):
 
 
 class ReleaseManifest(Contract):
-    image: str = Field(pattern=r"^[a-z0-9][a-z0-9./_-]+@sha256:[0-9a-f]{64}$", max_length=320)
+    image: str = Field(pattern=IMAGE_DIGEST_PATTERN, max_length=320)
     revision: str = Field(pattern=r"^[0-9a-f]{40}$")
     schema_min: int = Field(ge=1)
     schema_max: int = Field(ge=1)
