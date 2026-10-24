@@ -123,3 +123,22 @@ def test_delayed_discovery_keeps_prior_due_instead_of_a_new_sampling_window(pipe
     obligation = pipeline.capture_contracts.declare(result["result"]["task_ids"][0])
     assert obligation["original_due_at"] == expected
     assert obligation["deadline_at"] is None  # No invented retrospective contract.
+
+
+def test_candidate_readiness_distinguishes_predecessor_tick_from_its_own_tick(pipeline):
+    old, candidate = CaptureCoordinator(pipeline), CaptureCoordinator(pipeline)
+    old.planner_id = "old-container"
+    candidate.planner_id = "candidate-container"
+    old_tick = old.tick(synthetic=True, budget=0)
+    assert old_tick["status"] == "planned"
+    waiting = candidate.tick(synthetic=True, budget=0)
+    assert waiting["status"] == "not_due" and waiting["last_planner_id"] == "old-container"
+    pipeline.catalog.execute(
+        "UPDATE capture_planner_state SET next_due_at=clock_timestamp() WHERE synthetic"
+    )
+    planned = candidate.tick(synthetic=True, budget=0)
+    assert planned["status"] == "planned" and planned["last_planner_id"] == "candidate-container"
+    later_probe = candidate.tick(synthetic=True, budget=0)
+    assert later_probe["status"] == "not_due"
+    assert later_probe["last_planner_id"] == "candidate-container"
+    assert later_probe["last_completed_at"] == planned["last_completed_at"]

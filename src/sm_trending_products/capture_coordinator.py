@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import signal
+import socket
 import threading
 from datetime import datetime, timedelta
 
@@ -17,6 +18,7 @@ class CaptureCoordinator:
     def __init__(self, pipeline: Pipeline):
         self.pipeline = pipeline
         self.catalog = pipeline.catalog
+        self.planner_id = socket.gethostname()
 
     def status(self, synthetic: bool = False) -> dict | None:
         return self.catalog.one(
@@ -62,7 +64,12 @@ class CaptureCoordinator:
             (synthetic,),
         ).fetchone()
         if not due:
-            return {"status": "not_due", "synthetic": synthetic}
+            state = connection.execute(
+                "SELECT last_planner_id,last_completed_at FROM capture_planner_state "
+                "WHERE synthetic=%s",
+                (synthetic,),
+            ).fetchone()
+            return {"status": "not_due", "synthetic": synthetic, **state}
         result = Scheduler(self.catalog).schedule(
             self.pipeline.settings.scheduler_request_budget if budget is None else budget,
             synthetic=synthetic,
@@ -71,12 +78,13 @@ class CaptureCoordinator:
         started: datetime = due["last_started_at"]
         period = self.pipeline.settings.collection_schedule_minutes * 60
         next_due = started + timedelta(seconds=period - started.timestamp() % period)
-        connection.execute(
+        completed = connection.execute(
             "UPDATE capture_planner_state SET next_due_at=%s,last_completed_at=clock_timestamp(),"
-            "last_error=NULL,last_scheduled_count=%s WHERE synthetic=%s",
-            (next_due, result["scheduled"], synthetic),
-        )
-        return {"status": "planned", "synthetic": synthetic, "result": result}
+            "last_planner_id=%s,last_error=NULL,last_scheduled_count=%s WHERE synthetic=%s "
+            "RETURNING last_planner_id,last_completed_at",
+            (next_due, self.planner_id, result["scheduled"], synthetic),
+        ).fetchone()
+        return {"status": "planned", "synthetic": synthetic, "result": result, **completed}
 
 
 def main(argv: list[str] | None = None) -> int:
