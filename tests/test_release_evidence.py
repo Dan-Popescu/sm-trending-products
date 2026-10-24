@@ -352,3 +352,15 @@ def test_exact_captured_receipt_withdrawal_does_not_hide_unexplained_invalidatio
         "sm_trending_products.release_evidence.now", return_value=now() + timedelta(seconds=11)
     ):
         assert verifier.verify(worker_id="candidate", generation=1, since=start, synthetic=True)
+
+
+def test_new_acquisition_of_older_due_task_can_qualify_within_its_original_deadline(pipeline):
+    CaptureContracts(pipeline.catalog).register(historical(), synthetic=True)
+    enqueue(pipeline, "existing-due-task", now())
+    start = now()
+    task = pipeline.catalog.claim("candidate", 180, True, 8)
+    assert task
+    publish(pipeline, task, "new-physical-acquisition")
+    assert CatalogCaptureVerifier(pipeline.catalog).verify(
+        worker_id="candidate", generation=1, since=start, synthetic=True
+    )

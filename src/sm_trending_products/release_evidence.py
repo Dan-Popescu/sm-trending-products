@@ -87,7 +87,7 @@ class CatalogCaptureVerifier:
                 "ON d.dataset_id=o.capture_dataset_id AND d.synthetic=o.synthetic "
                 "AND d.source=o.source "
                 "JOIN capture_policies p ON p.contract_id=o.contract_id "
-                "WHERE o.synthetic=%s AND o.original_due_at>=%s AND o.captured_at>=%s "
+                "WHERE o.synthetic=%s AND o.captured_at>=%s "
                 "-GREATEST(%s,(p.payload->>'cadence_seconds')::double precision+"
                 "(p.payload->>'lateness_seconds')::double precision)*interval '1 second' "
                 "AND o.captured_at>=%s "
@@ -107,7 +107,6 @@ class CatalogCaptureVerifier:
                 "o.captured_at DESC,o.obligation_id LIMIT %s",
                 (
                     synthetic,
-                    start,
                     cutoff,
                     self.freshness_seconds,
                     start,
