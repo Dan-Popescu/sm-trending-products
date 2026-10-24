@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from .catalog import InvalidationPending
 from .contracts import canonical
 from .pipeline import Pipeline
+from .scheduler import Scheduler
 
 
 class CaptureCoordinator:
@@ -25,41 +26,22 @@ class CaptureCoordinator:
     def tick(self, synthetic: bool = False, *, budget: int | None = None) -> dict:
         scope = "true" if synthetic else "false"
         lock = "hashtextextended(current_schema()||':capture-planner:'||%s,0)"
-        with self.catalog.pool.connection() as owner:
-            acquired = owner.execute(
-                f"SELECT pg_try_advisory_lock({lock}) AS acquired", (scope,)
-            ).fetchone()
-            owner.commit()
-            if not acquired or not acquired["acquired"]:
-                return {"status": "coordinator_busy", "synthetic": synthetic}
-            try:
-                return self._plan(synthetic, budget)
-            finally:
-                owner.execute(f"SELECT pg_advisory_unlock({lock})", (scope,))
-                owner.commit()
-
-    def _plan(self, synthetic: bool, budget: int | None) -> dict:
-        self.catalog.execute(
-            "INSERT INTO capture_planner_state(synthetic) VALUES(%s) ON CONFLICT DO NOTHING",
-            (synthetic,),
-        )
-        due = self.catalog.one(
-            "UPDATE capture_planner_state SET last_started_at=clock_timestamp(),last_error=NULL "
-            "WHERE synthetic=%s AND next_due_at<=clock_timestamp() RETURNING last_started_at",
-            (synthetic,),
-        )
-        if not due:
-            return {"status": "not_due", "synthetic": synthetic}
         try:
-            result = self.pipeline.schedule(
-                self.pipeline.settings.scheduler_request_budget if budget is None else budget,
-                synthetic=synthetic,
-            )
+            with self.catalog.transaction() as owner:
+                acquired = owner.execute(
+                    f"SELECT pg_try_advisory_xact_lock({lock}) AS acquired", (scope,)
+                ).fetchone()
+                if not acquired or not acquired["acquired"]:
+                    return {"status": "coordinator_busy", "synthetic": synthetic}
+                return self._plan(owner, synthetic, budget)
         except Exception as error:
-            # Keep the original due boundary; a restarted planner retries it.
+            # Roll back both admitted tasks and cadence. A replacement's completed
+            # tick must never be overwritten by a disconnected former owner.
             self.catalog.execute(
-                "UPDATE capture_planner_state SET last_error=%s WHERE synthetic=%s",
-                (type(error).__name__, synthetic),
+                "INSERT INTO capture_planner_state(synthetic,last_error) VALUES(%s,%s) "
+                "ON CONFLICT(synthetic) DO UPDATE SET last_error=EXCLUDED.last_error "
+                "WHERE capture_planner_state.next_due_at<=clock_timestamp()",
+                (synthetic, type(error).__name__),
             )
             return {
                 "status": "invalidation_pending"
@@ -68,10 +50,28 @@ class CaptureCoordinator:
                 "synthetic": synthetic,
                 "error": type(error).__name__,
             }
+
+    def _plan(self, connection, synthetic: bool, budget: int | None) -> dict:
+        connection.execute(
+            "INSERT INTO capture_planner_state(synthetic) VALUES(%s) ON CONFLICT DO NOTHING",
+            (synthetic,),
+        )
+        due = connection.execute(
+            "UPDATE capture_planner_state SET last_started_at=clock_timestamp(),last_error=NULL "
+            "WHERE synthetic=%s AND next_due_at<=clock_timestamp() RETURNING last_started_at",
+            (synthetic,),
+        ).fetchone()
+        if not due:
+            return {"status": "not_due", "synthetic": synthetic}
+        result = Scheduler(self.catalog).schedule(
+            self.pipeline.settings.scheduler_request_budget if budget is None else budget,
+            synthetic=synthetic,
+            connection=connection,
+        )
         started: datetime = due["last_started_at"]
         period = self.pipeline.settings.collection_schedule_minutes * 60
         next_due = started + timedelta(seconds=period - started.timestamp() % period)
-        self.catalog.execute(
+        connection.execute(
             "UPDATE capture_planner_state SET next_due_at=%s,last_completed_at=clock_timestamp(),"
             "last_error=NULL,last_scheduled_count=%s WHERE synthetic=%s",
             (next_due, result["scheduled"], synthetic),
