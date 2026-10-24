@@ -13,6 +13,8 @@ template_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 test -x "$controller_python"
 test -f "$controller_config"
 install -d -m 0700 /var/lib/sm-trends/release
+install -d -m 0700 /var/lib/sm-trends/release/sigstore-tuf
+TUF_ROOT=/var/lib/sm-trends/release/sigstore-tuf /usr/local/bin/cosign initialize
 install -m 0644 "$template_directory/sm-trends-release.service" /etc/systemd/system/
 install -m 0644 "$template_directory/sm-trends-release.timer" /etc/systemd/system/
 systemctl daemon-reload

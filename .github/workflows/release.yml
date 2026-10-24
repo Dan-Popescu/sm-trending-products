@@ -115,6 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           cosign sign-blob --yes --bundle output/release/bundle.json output/release/manifest.json
+          cosign verify-blob --offline --bundle output/release/bundle.json --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/main" --certificate-oidc-issuer https://token.actions.githubusercontent.com output/release/manifest.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-${{ env.RELEASE_REVISION }}
@@ -132,6 +133,7 @@ jobs:
           set -euo pipefail
           uv run --locked python -m sm_trending_products.release_artifacts request --manifest output/release/manifest.json --target pilot --sequence "$GITHUB_RUN_NUMBER" --output output/request.json
           cosign sign-blob --yes --bundle output/request-bundle.json output/request.json
+          cosign verify-blob --offline --bundle output/request-bundle.json --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/main" --certificate-oidc-issuer https://token.actions.githubusercontent.com output/request.json
           if gh release view pilot-deploy-request --json id > /dev/null 2>&1; then
             gh release upload pilot-deploy-request output/request.json output/request-bundle.json --clobber
           else

@@ -102,6 +102,13 @@ Bootstrap verifies the signed image descriptor, actual container image/identity,
 SQL compatibility and registered worker. It records an active baseline; it does
 not assert capture coverage. The installer arms polling only after adoption.
 
+The service places cosign's TUF trust cache under its private writable state
+directory and initializes it during installation. This is required because
+`ProtectHome=true` hides cosign's default home-directory cache. The cache path
+uses cosign's supported `TUF_ROOT` setting; it does not change the trusted
+workflow identity or disable signature verification. See
+[cosign's TUF configuration](https://github.com/sigstore/cosign/blob/v3.1.4/pkg/cosign/tuf.go).
+
 ## Request and monitor an update
 
 Run the main release workflow with the desired full main revision and `deploy`
@@ -122,8 +129,9 @@ its current worker generation, drains the predecessor at its acknowledged task
 boundary, commits the active pointer, then retires the old slot. No naturally due
 work means it waits. An existing or newly found coverage problem blocks rather
 than being treated as a healthy heartbeat. A blocked handover resumes from the
-same journal; even an outbound network failure cannot prevent resuming an already
-accepted request. A newer request waits for the accepted handover to finish.
+same journal. Accepted work resumes without downloading its GitHub assets again;
+signature validation still requires available trusted Sigstore material, including
+the initialized TUF cache. A newer request waits for the accepted handover to finish.
 
 Inspect status or trigger an immediate poll from the Hostinger console:
 
