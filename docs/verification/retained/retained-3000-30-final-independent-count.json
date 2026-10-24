@@ -1,0 +1,12 @@
+{
+  "check": "independent_native_physical_count_after_four_imports",
+  "started_at_utc": "2026-10-24T14:25:08.410549+00:00",
+  "finished_at_utc": "2026-10-24T14:25:10.324607+00:00",
+  "query": "SELECT count(*) FROM retained_probe_1f9668d12dea4b0d906aec7663447248.observation_deliveries",
+  "expected_rows": 7440000,
+  "observed_rows": 7440000,
+  "query_wall_seconds": 1.9140447509998921,
+  "passed": true,
+  "source_public_commit": "80696b48dc817eff6aa4c715b4a567ef6a8e8a21",
+  "scope": "Root reviewer read-only count; application fourth assessment running; sources stable after all four imports; does not certify the unfinished assessment or evicted phase."
+}
