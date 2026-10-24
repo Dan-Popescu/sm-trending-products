@@ -47,6 +47,17 @@ def release_manifest_bytes(manifest: ReleaseManifest) -> bytes:
     return (canonical(manifest.model_dump(mode="json")) + "\n").encode()
 
 
+class DeploymentRequest(Contract):
+    target: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
+    sequence: int = Field(gt=0, strict=True)
+    revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+def deployment_request_bytes(request: DeploymentRequest) -> bytes:
+    return (canonical(request.model_dump(mode="json")) + "\n").encode()
+
+
 @dataclass(frozen=True)
 class VerifiedRelease:
     manifest: ReleaseManifest
@@ -70,6 +81,15 @@ class ReleaseTrust:
             raise ReleaseBlocked("release_trust_unconfigured")
         if manifest.image.split("@", 1)[0] not in self.allowed_repositories:
             raise ReleaseBlocked("image_repository_not_allowed")
+        self._verify_payload(release_manifest_bytes(manifest), proof)
+        return VerifiedRelease(manifest, proof)
+
+    def verify_request(self, request: DeploymentRequest, proof: dict) -> None:
+        if not self.certificate_identity or not self.allowed_repositories:
+            raise ReleaseBlocked("release_trust_unconfigured")
+        self._verify_payload(deployment_request_bytes(request), proof)
+
+    def _verify_payload(self, payload_bytes: bytes, proof: dict) -> None:
         if proof.get("method") != "cosign_bundle" or not isinstance(proof.get("bundle"), dict):
             raise ReleaseBlocked("release_signature_missing")
         if len(canonical(proof["bundle"]).encode()) > 2 * 1024 * 1024:
@@ -77,7 +97,7 @@ class ReleaseTrust:
         with tempfile.TemporaryDirectory(prefix="sm-release-verification-") as directory:
             root = Path(directory)
             payload, bundle = root / "manifest.json", root / "bundle.json"
-            payload.write_bytes(release_manifest_bytes(manifest))
+            payload.write_bytes(payload_bytes)
             bundle.write_text(canonical(proof["bundle"]) + "\n")
             try:
                 result = subprocess.run(
@@ -101,7 +121,6 @@ class ReleaseTrust:
                 raise ReleaseBlocked("release_verifier_unavailable") from None
             if result.returncode:
                 raise ReleaseBlocked("release_signature_invalid")
-        return VerifiedRelease(manifest, proof)
 
 
 class ReleaseHost(Protocol):
