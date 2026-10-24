@@ -172,6 +172,33 @@ raise SystemExit(0 if bundle.get('controlled_valid') else 1)
     try:
         process, result = run("bootstrap", "--revision", "a" * 40, "--worker-id", "old")
         assert process.returncode == 0 and result["status"] == "bootstrapped"
+        pins_file = tmp_path / "private-state/slots.env"
+        original = pins_file.read_bytes() + b"# retain existing paired slot configuration\n"
+        pins_file.write_bytes(original)
+        process, result = run("bootstrap", "--revision", "a" * 40, "--worker-id", "old")
+        assert process.returncode == 0 and pins_file.read_bytes() == original
+        WorkerControl(pipeline.catalog).register("different-current", synthetic=True)
+        docker_state.write_text(
+            json.dumps(
+                {
+                    "worker": {
+                        "image": release("b").manifest.image,
+                        "running": True,
+                        "worker": "different-current",
+                    }
+                }
+            )
+        )
+        process, result = run(
+            "bootstrap", "--revision", "b" * 40, "--worker-id", "different-current"
+        )
+        assert process.returncode == 2 and result["reason"] == "bootstrap_target_already_exists"
+        assert pins_file.read_bytes() == original
+        docker_state.write_text(
+            json.dumps(
+                {"worker": {"image": release("a").manifest.image, "running": True, "worker": "old"}}
+            )
+        )
         (request_path / "request-bundle.json").write_text('{"controlled_valid":false}')
         process, result = run("pull")
         assert process.returncode == 2 and result["reason"] == "release_signature_invalid"

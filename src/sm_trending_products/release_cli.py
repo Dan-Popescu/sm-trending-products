@@ -290,12 +290,11 @@ class HostRuntime:
         with host.exclusive(self.config.target):
             if not host.healthy(self.config.target, signed.manifest, slot, worker_id):
                 raise ReleaseBlocked("bootstrap_container_unavailable")
-            host.persist_slots()
             with self.catalog.transaction() as connection:
-                connection.execute(
+                created = connection.execute(
                     "INSERT INTO deployment_targets(target,active_manifest,active_proof,"
                     "active_slot,active_worker_id,synthetic) "
-                    "VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                    "VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING target",
                     (
                         self.config.target,
                         Jsonb(active["active_manifest"]),
@@ -304,7 +303,7 @@ class HostRuntime:
                         worker_id,
                         worker["synthetic"],
                     ),
-                )
+                ).fetchone()
                 stored = connection.execute(
                     "SELECT * FROM deployment_targets WHERE target=%s", (self.config.target,)
                 ).fetchone()
@@ -313,6 +312,10 @@ class HostRuntime:
                     for key in ("active_manifest", "active_slot", "active_worker_id", "synthetic")
                 ):
                     raise ReleaseBlocked("bootstrap_target_already_exists")
+            # Conflict rejection must be read-only. Preserve paired-slot pins on
+            # repeated adoption; repair a missing file after a post-commit crash.
+            if created or (host.slot_state_file is not None and not host.slot_state_file.exists()):
+                host.persist_slots()
         return {
             "target": self.config.target,
             "status": "bootstrapped",
