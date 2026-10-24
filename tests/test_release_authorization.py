@@ -2,12 +2,14 @@
 
 import hashlib
 import sys
+from types import SimpleNamespace
 
 import pytest
 from psycopg.types.json import Jsonb
 from test_release_control import Evidence, Host, Workers, release
 
 from sm_trending_products.release_authorization import HostAuthorization
+from sm_trending_products.release_cli import HostRuntime
 from sm_trending_products.release_control import (
     DeploymentController,
     DeploymentRequest,
@@ -95,3 +97,32 @@ def test_private_sequence_survives_lost_sql_acceptance_and_refuses_changed_inten
     changed = {**row, "prior_generation": 2}
     with pytest.raises(ReleaseBlocked, match="deployment_intent_changed"):
         authority.record_request(changed, request, {"method": "cosign_bundle", "bundle": {}})
+
+
+def test_authorized_source_handover_refreshes_all_roles_and_reverse_too(pipeline, tmp_path):
+    authority, controller, row, evidence, _ = authorized(pipeline, tmp_path)
+    runtime = object.__new__(HostRuntime)
+    runtime.catalog = pipeline.catalog
+    runtime.config = SimpleNamespace(target="fixture")
+    runtime.authorization = authority
+    runtime.controller = lambda current: controller
+    refreshed = []
+
+    def processing(release=None):
+        refreshed.append(release)
+        return {"status": "completed", "target": "fixture"}
+
+    runtime.refresh_processing_release = processing
+    evidence.ready = True
+    result = runtime.apply(row["release_id"])
+    assert result["status"] == "completed" and result["capture_phase"] == "retired"
+    assert refreshed[-1].manifest == release("b").manifest
+    # Repeating an accepted request repairs the source-to-processing crash gap.
+    runtime.apply(row["release_id"])
+    assert len(refreshed) == 2
+    reverse = runtime.rollback(row["release_id"])
+    runtime.apply(reverse["release_id"])
+    assert refreshed[-1].manifest == release("a").manifest
+    runtime.pending_processing = lambda: True
+    result = runtime.pull()
+    assert result["status"] == "completed" and refreshed[-1] is None

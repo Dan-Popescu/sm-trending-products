@@ -336,10 +336,22 @@ class HostRuntime:
     def apply(self, release_id: str) -> dict:
         row = self.run(release_id)
         action = self.authorization.verify(row)
+        if action == "abort":
+            return self.rollback(release_id)
         controller = self.controller(row)
-        return (
-            controller.rollback(release_id) if action == "abort" else controller.apply(release_id)
-        )
+        result = controller.apply(release_id)
+        if result["status"] == "completed" and result["phase"] == "retired":
+            # Deployment requests authorize the whole application. Persist the
+            # private processing intent immediately after qualified acquisition;
+            # repeating this hook closes the crash gap between those journals.
+            refreshed = self.refresh_processing_release(
+                VerifiedRelease(
+                    ReleaseManifest.model_validate(row["candidate_manifest"]),
+                    row["candidate_proof"],
+                )
+            )
+            return {**refreshed, "release_id": release_id, "capture_phase": "retired"}
+        return result
 
     def rollback(self, release_id: str) -> dict:
         row = self.run(release_id)
@@ -388,6 +400,8 @@ class HostRuntime:
         return self.processing_refresh().apply(release)
 
     def pull(self) -> dict:
+        if self.pending_processing():
+            return self.refresh_processing_release()
         active = self.active()
         # Resume accepted unfinished work even when outbound network is down.
         pending = self.catalog.one(
