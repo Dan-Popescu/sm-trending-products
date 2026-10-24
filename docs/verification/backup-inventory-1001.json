@@ -1,0 +1,55 @@
+{
+  "ok": true,
+  "requested_objects": 1001,
+  "seeded_objects": 1001,
+  "scope": "native PostgreSQL + HTTP Moto; derived objects, not product history",
+  "deadline_seconds": 600,
+  "measurements": {
+    "baseline_full": {
+      "heads": 1001,
+      "gets": 1001,
+      "lists": 2,
+      "held_heads": 1001,
+      "checkpoint_seconds": 4.168878196999685,
+      "elapsed_seconds": 8.68366464600058,
+      "downloaded_bytes": 41933,
+      "script_sha256": "36f683fd0c72ccbd7bef06bbfd7df4312503af4362bc68db460d9a94aa849b33"
+    },
+    "baseline_unchanged": {
+      "heads": 1001,
+      "gets": 0,
+      "lists": 2,
+      "held_heads": 1001,
+      "checkpoint_seconds": 3.842057541000031,
+      "elapsed_seconds": 3.923922715000117,
+      "downloaded_bytes": 0,
+      "script_sha256": "36f683fd0c72ccbd7bef06bbfd7df4312503af4362bc68db460d9a94aa849b33"
+    },
+    "treatment_full": {
+      "heads": 1001,
+      "gets": 1001,
+      "lists": 2,
+      "held_heads": 0,
+      "checkpoint_seconds": 0.23417510299987043,
+      "elapsed_seconds": 7.0545945199992275,
+      "downloaded_bytes": 41933,
+      "script_sha256": "4a3876378f1f2b90d18e3eeb33e2c67d9b5ffbfcb35eacffbb8e24a0ac27a71c"
+    },
+    "treatment_unchanged": {
+      "heads": 0,
+      "gets": 0,
+      "lists": 2,
+      "held_heads": 0,
+      "checkpoint_seconds": 0.21105225700011943,
+      "elapsed_seconds": 0.26957247399968765,
+      "downloaded_bytes": 0,
+      "script_sha256": "4a3876378f1f2b90d18e3eeb33e2c67d9b5ffbfcb35eacffbb8e24a0ac27a71c"
+    }
+  },
+  "seed_seconds": 11.056226604000585,
+  "peak_process_rss_bytes": 189026304,
+  "cleanup": {
+    "schema_removed": true,
+    "owned_files_removed": true
+  }
+}

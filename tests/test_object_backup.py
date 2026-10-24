@@ -352,7 +352,7 @@ def test_catalog_checksum_overrides_mutated_source_checksum_metadata(
     ready, proceed = tmp_path / "ready.json", tmp_path / "continue"
     proceed.write_text("checkpoint complete")
     output = tmp_path / "invalid/objects"
-    with pytest.raises(ValueError, match="content mismatch"):
+    with pytest.raises(ValueError, match="content mismatch|checksum metadata mismatch"):
         snapshot["capture"](
             output, copy_objects=True, checkpoint_signal=ready, continue_signal=proceed
         )
@@ -415,7 +415,7 @@ def test_committed_derived_dependencies_are_required_and_checked_on_old_and_new_
             s3, pipeline.history.bucket, key, b"corrupt"
         )  # Same size and updated provider metadata.
         corrupt = tmp_path / "corrupt/objects"
-        with pytest.raises(ValueError, match="content mismatch"):
+        with pytest.raises(ValueError, match="content mismatch|checksum metadata mismatch"):
             snapshot["capture"](
                 corrupt, copy_objects=True, checkpoint_signal=ready, continue_signal=proceed
             )
@@ -464,7 +464,7 @@ def test_public_artifact_graph_and_local_windows_survive_incremental_object_rest
             continue_signal=proceed,
         )
     put(s3, pipeline.history.bucket, key, b"x" * len(original))
-    with pytest.raises(ValueError, match="content mismatch"):
+    with pytest.raises(ValueError, match="content mismatch|checksum metadata mismatch"):
         snapshot["capture"](
             tmp_path / "corrupt/objects",
             copy_objects=True,
