@@ -30,6 +30,36 @@
       "classification": "measured_ratio",
       "reference": "docs/verification/measured-retained-import-inventory.json",
       "scope": "Complete physical seed phase;1000products/2400000observations/no derived objects at SQL measurement. Full case later stopped; no latency or capacity acceptance. Changing file layout invalidates this coefficient. Counter-only fixture: view_count and creator_id, without price, sales, description, transcript or media payloads; these ratios do not size richer video extraction."
+    },
+    "retained_compaction_delivery_copies_per_observation": {
+      "classification": "unknown",
+      "reference": "docs/operations/costs.md",
+      "scope": "Seed contains one delivery per fact; future retained compaction copies, write flow and marginal SQL/dump/WAL bytes were not measured. Do not treat seed density as an all-in compacted workload."
+    },
+    "compaction_delivery_writes_per_new_observation": {
+      "classification": "unknown",
+      "reference": "docs/operations/costs.md",
+      "scope": "Seed contains one delivery per fact; future retained compaction copies, write flow and marginal SQL/dump/WAL bytes were not measured. Do not treat seed density as an all-in compacted workload."
+    },
+    "sql_bytes_per_compaction_delivery": {
+      "classification": "unknown",
+      "reference": "docs/operations/costs.md",
+      "scope": "Seed contains one delivery per fact; future retained compaction copies, write flow and marginal SQL/dump/WAL bytes were not measured. Do not treat seed density as an all-in compacted workload."
+    },
+    "sql_dump_bytes_per_compaction_delivery": {
+      "classification": "unknown",
+      "reference": "docs/operations/costs.md",
+      "scope": "Seed contains one delivery per fact; future retained compaction copies, write flow and marginal SQL/dump/WAL bytes were not measured. Do not treat seed density as an all-in compacted workload."
+    },
+    "wal_bytes_per_compaction_delivery": {
+      "classification": "unknown",
+      "reference": "docs/operations/costs.md",
+      "scope": "Seed contains one delivery per fact; future retained compaction copies, write flow and marginal SQL/dump/WAL bytes were not measured. Do not treat seed density as an all-in compacted workload."
     }
-  }
+  },
+  "retained_compaction_delivery_copies_per_observation": null,
+  "compaction_delivery_writes_per_new_observation": null,
+  "sql_bytes_per_compaction_delivery": null,
+  "sql_dump_bytes_per_compaction_delivery": null,
+  "wal_bytes_per_compaction_delivery": null
 }

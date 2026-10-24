@@ -1,6 +1,7 @@
 # Massive-collection cost scenarios
 
 Issue: [#70](https://github.com/Dan-Popescu/sm-trending-products/issues/70).
+Compaction delivery accounting: [#81](https://github.com/Dan-Popescu/sm-trending-products/issues/81).
 Price observations: **2026-10-24**. This is an offline planning calculator; it
 does not buy resources, contact a source API, or certify any machine's capacity.
 
@@ -99,6 +100,12 @@ must be replaced by actual metered values for billing acceptance.
 - SQL delivery/index state and artifact state are separate coefficients. Retired
   key tombstones continue accumulating after payload expiry; marker rows, indexes
   and their contribution to subsequent full catalog dumps are included.
+- Compaction retains parent SQL deliveries and adds child deliveries of the same
+  logical facts. Its additional retained rows and daily row writes are explicit,
+  independent inputs. Marginal SQL/index bytes and fallback dump bytes depend on
+  retained copies; marginal WAL depends on daily writes and the WAL-retention
+  window. Shared source identity, logical facts and other base SQL remain counted
+  once. An explicit `sql_dump_bytes` is already a total and is never incremented.
 - WAL, cache, operating-system/spool space and complete logical dumps consume
   VPS disk. The default 20% headroom is a declared planning margin, not a measured
   safe bound or a source quota guarantee.
@@ -155,6 +162,28 @@ requests and retries can add work. `source_api_monthly_cost` remains unknown.
 `other_monthly_cost` also remains unknown until monitoring, DNS, notifications,
 support and other real charges are supplied. Neither is silently zeroed.
 
+Compaction row accounting uses two independent ratios:
+`retained_compaction_delivery_copies_per_observation` is the extra retained
+delivery stock per original fact; `compaction_delivery_writes_per_new_observation`
+is the daily extra write flow relative to new source observations. Their defaults
+are unknown. Declaring both zero preserves the original SQL/dump/WAL budgets
+even when marginal byte densities are unknown. A zero object-byte copy fraction
+alone does not establish either row quantity. Backlog processing or repeated
+compaction may produce different stock and flow ratios. Both can exceed one
+across multiple generations; the example value of one is not a guaranteed limit.
+
+The illustrative profiles assume both ratios are one, independently of Parquet
+bytes. They assume 800 marginal SQL bytes, 128 fallback dump bytes and 1,000 WAL
+bytes per additional delivery. These are planning assumptions, not calibrations
+or upper bounds. The SQL term includes delivery indexes and allocated child
+catalog overhead, without copying shared identity/fact state. The source SQL
+ratios came from single-delivery imports, not compacted workloads. A native
+six-fact probe establishes only physical counts: deliveries 6 to 12, objects and
+memberships 3 to 4, entities unchanged at one, and 12 exported COPY tuples with
+all parents retained. It supplies no byte density or attributable WAL measure.
+`sql_dump_compaction_delivery_component_bytes` exposes the estimated component;
+an explicit total dump always replaces the entire fallback rather than adding it.
+
 ## Illustrative results and decision
 
 These numbers use the committed coefficient assumptions, **not** a massive
@@ -167,12 +196,12 @@ and backup store and no account free allowance:
 
 | Products | Retained days | Modeled R2 infrastructure/month | Modeled B2 infrastructure/month | Planned peak disk |
 | ---: | ---: | ---: | ---: | ---: |
-| 5,000 | 30 | $221.92 | $116.72 | 861 GB |
-| 5,000 | 90 | $428.62 | $200.91 | 1,716 GB |
-| 10,000 | 30 | $405.48 | $199.94 | 1,708 GB |
-| 10,000 | 90 | $823.72 | $368.32 | 3,418 GB |
-| 50,000 | 30 | $1,880.50 | $866.30 | 8,484 GB |
-| 50,000 | 90 | $3,986.74 | $1,715.73 | 17,029 GB |
+| 5,000 | 30 | $235.78 | $129.85 | 995 GB |
+| 5,000 | 90 | $470.10 | $240.20 | 2,117 GB |
+| 10,000 | 30 | $433.21 | $226.20 | 1,977 GB |
+| 10,000 | 90 | $906.68 | $446.90 | 4,220 GB |
+| 50,000 | 30 | $2,018.99 | $997.50 | 9,825 GB |
+| 50,000 | 90 | $4,414.30 | $2,121.40 | 21,043 GB |
 
 Amounts exclude tax, unknown source API fees and other unknown services. The
 complete bill is therefore `null`; the separately named infrastructure estimate
@@ -208,7 +237,7 @@ other captures. It never replaces every HEAD with zero merely because unchanged
 payload GETs are zero. The [second matrix](../verification/massive-cost-scenarios-optimized-checkpoint.json)
 uses identical bytes and prices; only request work changes. At the illustrative
 10,000-product/90-day DO 8 GiB shape, modeled R2 infrastructure changes from
-$823.72 to $592.96/month. The corresponding B2 amount stays $368.32 because
+$906.68 to $675.92/month. The corresponding B2 amount stays $446.90 because
 its standard API calls are already priced at zero. These are scenario
 comparisons outside the measured inventory shape. The
 [native 1,001-object checkpoint measurement](../verification/cost-checkpoint-native-1001.json)
@@ -231,8 +260,10 @@ derived objects at that measurement. The [measurement artifact](../verification/
 pins its revision, shape and separate supplemental capture.
 
 This is not a full-case pass: later analytical phases were not accepted by that
-measurement. The profile deliberately leaves unmeasured dump, WAL and derived
-work unknown. Its 2,400 observations per physical dataset differ from a normal
+measurement. The profile deliberately leaves unmeasured dump, WAL, derived work
+and projected compaction delivery stock/flow/densities unknown. Its source SQL
+ratio includes one delivery per fact and cannot price later copies by itself.
+Its 2,400 observations per physical dataset differ from a normal
 20-ID refresh response; Arrow footers/dictionaries, manifests and metadata
 membership density make per-observation ratios layout-sensitive. Never copy
 the compact import's normalized-byte ratio into the small-file collection model
@@ -250,3 +281,7 @@ generation is pure offline arithmetic; no cloud resources are created.
 parent-owned payload and its inventory remain required even when absent from
 the final live inventory. The arithmetic regression prices that single chain
 without charging ancestor SQL dumps or unrelated retained families.
+`tests/test_compaction_costs.py` verifies independent retained/daily row effects,
+zero and unknown coefficients, one copy of shared SQL, and total dump precedence.
+Its native PostgreSQL/HTTP compaction and COPY probe validates the six-to-twelve
+delivery contract while preserving six logical facts and their original parents.

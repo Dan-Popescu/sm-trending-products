@@ -241,10 +241,40 @@
       "classification": "assumed",
       "reference": "docs/operations/costs.md",
       "scope": "4 KiB per required ancestor snapshot.json for a cold offsite chain fetch; inventories are separate. Planning allocation, not a measured size or upper bound. Only target SQL dumps are fetched."
+    },
+    "retained_compaction_delivery_copies_per_observation": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "One additional retained SQL delivery per retained source observation. Stock ratio assumed independently from object-byte copy fraction; no deployment measurement."
+    },
+    "compaction_delivery_writes_per_new_observation": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "One additional compaction delivery written per new source observation per day. Flow assumption independent of retained stock; no measured compaction throughput."
+    },
+    "sql_bytes_per_compaction_delivery": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "800 marginal SQL bytes per additional compaction delivery, including its indexes and allocated child-catalog overhead. Shared source facts/entities remain in base SQL once. Planning assumption, not inferred from six-row probe or a certified bound."
+    },
+    "sql_dump_bytes_per_compaction_delivery": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "128 marginal logical-dump bytes per retained additional delivery. Fallback only: an explicit total sql_dump_bytes is never incremented. Planning assumption, not a measured dump density."
+    },
+    "wal_bytes_per_compaction_delivery": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "1000 marginal WAL bytes per compaction delivery written. Planning assumption, not measured from global LSN or six-row probe; daily flow and retained WAL window are separate."
     }
   },
   "backup_full_base_heads_per_object": "1",
   "backup_new_object_heads_per_object": "1",
   "upstream_response_bytes_per_observation": null,
-  "restore_ancestor_snapshot_metadata_bytes": "4096"
+  "restore_ancestor_snapshot_metadata_bytes": "4096",
+  "retained_compaction_delivery_copies_per_observation": "1",
+  "compaction_delivery_writes_per_new_observation": "1",
+  "sql_bytes_per_compaction_delivery": "800",
+  "sql_dump_bytes_per_compaction_delivery": "128",
+  "wal_bytes_per_compaction_delivery": "1000"
 }

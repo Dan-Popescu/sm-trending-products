@@ -51,6 +51,8 @@ class Coefficients(Contract):
     manifest_bytes_per_dataset: Quantity = None
     observations_per_dataset: Positive = Decimal(20)
     retained_compacted_copy_fraction: Quantity = None
+    retained_compaction_delivery_copies_per_observation: Quantity = None
+    compaction_delivery_writes_per_new_observation: Quantity = None
     compacted_output_datasets_per_input: Quantity = None
     compacted_manifest_bytes_per_dataset: Quantity = None
     compaction_remote_read_fraction: Quantity = None
@@ -58,6 +60,9 @@ class Coefficients(Contract):
     provenance_nodes_per_product_refresh: Quantity = None
     assessment_bytes_per_product_run: Quantity = None
     sql_bytes_per_observation: Quantity = None
+    sql_bytes_per_compaction_delivery: Quantity = None
+    sql_dump_bytes_per_compaction_delivery: Quantity = None
+    wal_bytes_per_compaction_delivery: Quantity = None
     sql_bytes_per_provenance_node: Quantity = None
     sql_bytes_per_assessment_run: Quantity = None
     sql_bytes_per_retired_artifact: Quantity = None
@@ -186,6 +191,12 @@ def _ceiling(value: Decimal) -> Decimal:
     return value.to_integral_value(rounding=ROUND_CEILING)
 
 
+def _delivery_bytes(rows: Quantity, bytes_per_delivery: Quantity) -> Quantity:
+    # No additional delivery rows means no marginal bytes, even when their
+    # density is unmeasured. Unknown nonzero work never receives a free density.
+    return Decimal(0) if rows == 0 else _multiply(rows, bytes_per_delivery)
+
+
 def usage(workload: Workload, coefficients: Coefficients) -> dict[str, Quantity]:
     """Project a steady retained workload, retaining every original physical copy."""
     w, c = workload, coefficients
@@ -193,6 +204,12 @@ def usage(workload: Workload, coefficients: Coefficients) -> dict[str, Quantity]
     products, days = Decimal(w.products), Decimal(w.month_days)
     daily = products * w.videos_per_product * w.refreshes_per_day
     monthly, retained = daily * days, daily * w.history_days
+    compaction_rows = _multiply(retained, c.retained_compaction_delivery_copies_per_observation)
+    compaction_rows_day = _multiply(daily, c.compaction_delivery_writes_per_new_observation)
+    compaction_sql = _delivery_bytes(compaction_rows, c.sql_bytes_per_compaction_delivery)
+    compaction_dump = _delivery_bytes(compaction_rows, c.sql_dump_bytes_per_compaction_delivery)
+    compaction_wal_day = _delivery_bytes(compaction_rows_day, c.wal_bytes_per_compaction_delivery)
+    compaction_wal = _multiply(compaction_wal_day, Decimal(c.wal_retention_days))
     datasets_day = _ceiling(daily / c.observations_per_dataset)
     product_refreshes_day = products * w.refreshes_per_day
     normalized = _multiply(retained, c.normalized_bytes_per_observation)
@@ -250,6 +267,7 @@ def usage(workload: Workload, coefficients: Coefficients) -> dict[str, Quantity]
         dump = _sum(
             _multiply(retained, c.sql_dump_bytes_per_retained_observation),
             _multiply(markers, c.sql_dump_bytes_per_retired_marker),
+            compaction_dump,
         )
     # A retention cutoff can split an old family: reserve the preceding complete
     # family as well as the requested interval. This is disk reservation, not
@@ -319,7 +337,7 @@ def usage(workload: Workload, coefficients: Coefficients) -> dict[str, Quantity]
         w.assessment_runs_per_day * days,
         list_requests,
     )
-    sql = _sum(
+    base_sql = _sum(
         _multiply(retained, c.sql_bytes_per_observation),
         _multiply(nodes_day, Decimal(w.history_days), c.sql_bytes_per_provenance_node),
         _multiply(
@@ -329,7 +347,11 @@ def usage(workload: Workload, coefficients: Coefficients) -> dict[str, Quantity]
         ),
         marker_sql,
     )
-    wal = _multiply(daily, c.wal_bytes_per_new_observation, Decimal(c.wal_retention_days))
+    sql = _sum(base_sql, compaction_sql)
+    wal = _sum(
+        _multiply(daily, c.wal_bytes_per_new_observation, Decimal(c.wal_retention_days)),
+        compaction_wal,
+    )
     live_disk = _sum(sql, wal, c.cache_bytes, c.operating_system_spool_bytes, dump)
     local_backups = _multiply(backup_bytes, c.local_backup_family_fraction)
     restore_disk = _multiply(_sum(stored, sql), c.restore_local_copy_fraction)
@@ -369,6 +391,16 @@ def usage(workload: Workload, coefficients: Coefficients) -> dict[str, Quantity]
         "observations_per_day": daily,
         "observations_per_month": monthly,
         "retained_observations": retained,
+        "retained_original_delivery_rows": retained,
+        "retained_compaction_delivery_rows": compaction_rows,
+        "retained_total_delivery_rows": _sum(retained, compaction_rows),
+        "compaction_delivery_rows_written_per_day": compaction_rows_day,
+        "compaction_delivery_rows_written_per_month": _multiply(compaction_rows_day, days),
+        "sql_base_bytes": base_sql,
+        "sql_compaction_delivery_bytes": compaction_sql,
+        "sql_dump_compaction_delivery_component_bytes": compaction_dump,
+        "wal_compaction_bytes_per_day": compaction_wal_day,
+        "wal_compaction_retained_bytes": compaction_wal,
         "source_refresh_requests_per_month_lower_bound": _ceiling(
             products * w.videos_per_product / w.videos_per_request
         )
