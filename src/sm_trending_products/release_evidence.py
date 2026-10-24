@@ -67,13 +67,17 @@ class CatalogCaptureVerifier:
                 len(required), len(policies)
             ) > self.scope_limit:
                 return None
+            # A lost recorded receipt cannot borrow another window's witness.
+            # Uncaptured work retains its original deadline tolerance.
             breaches = connection.execute(
                 "SELECT count(*) AS count FROM capture_obligations o LEFT JOIN datasets d "
                 "ON d.dataset_id=o.capture_dataset_id AND d.synthetic=o.synthetic "
                 "AND d.source=o.source WHERE o.synthetic=%s "
                 "AND (o.original_due_at>=%s OR o.durable_at>=%s OR o.capture_dataset_id IS NULL) "
-                "AND o.deadline_at<%s AND (o.captured_at IS NULL OR o.captured_at>o.deadline_at "
-                "OR o.durable_at IS NULL OR d.state IS DISTINCT FROM 'committed') "
+                "AND ((o.capture_dataset_id IS NOT NULL AND (o.captured_at IS NULL "
+                "OR o.durable_at IS NULL OR d.state IS DISTINCT FROM 'committed')) "
+                "OR (o.deadline_at<%s AND (o.captured_at IS NULL OR o.captured_at>o.deadline_at "
+                "OR o.durable_at IS NULL OR d.state IS DISTINCT FROM 'committed'))) "
                 "AND " + ACTIVE_OBLIGATION,
                 (synthetic, start, start, cutoff, cutoff),
             ).fetchone()

@@ -89,32 +89,61 @@ def test_older_unknown_pending_scope_cannot_disappear_at_release_start(pipeline)
     )
 
 
-def test_invalidated_window_receipt_is_a_breach_despite_fresh_same_scope_capture(pipeline):
-    CaptureContracts(pipeline.catalog).register(historical(), synthetic=True)
+@pytest.mark.parametrize("state", ["invalidated", "deleted"])
+@pytest.mark.parametrize("after_deadline", [False, True])
+def test_invalidated_window_receipt_is_a_breach_despite_fresh_same_scope_capture(
+    pipeline, state, after_deadline
+):
+    from unittest.mock import patch
+
+    contracts = CaptureContracts(pipeline.catalog)
+    contracts.register(historical().model_copy(update={"lateness_seconds": 120}), synthetic=True)
     start = now()
-    enqueue(pipeline, "retired-window", now())
+    original_task = enqueue(pipeline, "retired-window", now())
     task = pipeline.catalog.claim("candidate", 180, True, 8)
     assert task
     publish(pipeline, task, "window-receipt")
     pipeline.catalog.execute(
-        "UPDATE datasets SET state='invalidated' WHERE dataset_id=%s", ("window-receipt",)
+        "UPDATE datasets SET state=%s WHERE dataset_id=%s", (state, "window-receipt")
     )
     enqueue(pipeline, "fresh-same-scope", now())
     task = pipeline.catalog.claim("candidate", 180, True, 8)
     assert task
     publish(pipeline, task, "fresh-receipt")
-    # Move only the verifier clock beyond the frozen ten-second deadline.
-    from unittest.mock import patch
-
-    with patch(
-        "sm_trending_products.release_evidence.now", return_value=now() + timedelta(seconds=11)
-    ):
+    deadline = contracts.declare(original_task)["deadline_at"]
+    assert now() < deadline
+    cutoff = deadline + timedelta(seconds=1) if after_deadline else now()
+    with patch("sm_trending_products.release_evidence.now", return_value=cutoff):
         assert (
             CatalogCaptureVerifier(pipeline.catalog).verify(
                 worker_id="candidate", generation=1, since=start, synthetic=True
             )
             is None
         )
+
+
+@pytest.mark.parametrize("future_due", [False, True])
+def test_unrecorded_window_with_future_deadline_does_not_block_same_scope_witness(
+    pipeline, future_due
+):
+    contracts = CaptureContracts(pipeline.catalog)
+    contracts.register(historical().model_copy(update={"lateness_seconds": 120}), synthetic=True)
+    start = now()
+    due = now() + timedelta(hours=1) if future_due else now()
+    pending_id = enqueue(pipeline, "uncaptured-within-tolerance", due)
+    if not future_due:
+        pending = pipeline.catalog.claim("predecessor", 180, True, 8)
+        assert pending["task_id"] == pending_id
+    enqueue(pipeline, "fresh-valid-window", now())
+    fresh = pipeline.catalog.claim("candidate", 180, True, 8)
+    assert fresh
+    publish(pipeline, fresh, "valid-receipt")
+    pending = contracts.declare(pending_id)
+    assert pending["capture_dataset_id"] is None and pending["deadline_at"] > now()
+    assert (pending["original_due_at"] > now()) is future_due
+    assert CatalogCaptureVerifier(pipeline.catalog).verify(
+        worker_id="candidate", generation=1, since=start, synthetic=True
+    )
 
 
 def test_durable_unusable_raw_envelope_is_not_replacement_readiness(pipeline):
@@ -298,10 +327,14 @@ def test_long_cadence_witness_age_follows_declared_sampling_window(pipeline):
         )
 
 
-def test_exact_captured_receipt_withdrawal_does_not_hide_unexplained_invalidations(pipeline):
+@pytest.mark.parametrize("after_deadline", [False, True])
+def test_exact_captured_receipt_withdrawal_does_not_hide_unexplained_invalidations(
+    pipeline, after_deadline
+):
     from unittest.mock import patch
 
-    CaptureContracts(pipeline.catalog).register(historical(), synthetic=True)
+    contracts = CaptureContracts(pipeline.catalog)
+    contracts.register(historical().model_copy(update={"lateness_seconds": 120}), synthetic=True)
     start = now()
     enqueue(pipeline, "removed-window", now())
     task = pipeline.catalog.claim("candidate", 180, True, 8)
@@ -320,9 +353,10 @@ def test_exact_captured_receipt_withdrawal_does_not_hide_unexplained_invalidatio
     assert fresh
     publish(pipeline, fresh, "healthy-window")
     verifier = CatalogCaptureVerifier(pipeline.catalog)
-    with patch(
-        "sm_trending_products.release_evidence.now", return_value=now() + timedelta(seconds=11)
-    ):
+    deadline = contracts.declare(task["task_id"])["deadline_at"]
+    assert now() < deadline
+    cutoff = deadline + timedelta(seconds=1) if after_deadline else now()
+    with patch("sm_trending_products.release_evidence.now", return_value=cutoff):
         assert (
             verifier.verify(worker_id="candidate", generation=1, since=start, synthetic=True)
             is None
@@ -348,9 +382,16 @@ def test_exact_captured_receipt_withdrawal_does_not_hide_unexplained_invalidatio
             ),
         ),
     )
-    with patch(
-        "sm_trending_products.release_evidence.now", return_value=now() + timedelta(seconds=11)
-    ):
+    if not after_deadline:
+        # A later withdrawal certificate cannot change the earlier decision.
+        with patch("sm_trending_products.release_evidence.now", return_value=cutoff):
+            assert (
+                verifier.verify(worker_id="candidate", generation=1, since=start, synthetic=True)
+                is None
+            )
+        cutoff = now()
+        assert cutoff < deadline
+    with patch("sm_trending_products.release_evidence.now", return_value=cutoff):
         assert verifier.verify(worker_id="candidate", generation=1, since=start, synthetic=True)
 
 
