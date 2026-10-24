@@ -333,15 +333,19 @@ class ProcessingRefresh:
         row["planner_qualification"] = qualified
         row["active_planner_slot"] = slot
         self._persist(row)
-        previous = row["planner_previous"]
-        if previous != slot and (old := self._container(PLANNERS[previous])):
+        retire = "green" if slot == "blue" else "blue"
+        if old := self._container(PLANNERS[retire]):
             self._acquisition(manifest, watch)
             self.host._command(["stop", "--time=-1", old])
             self._acquisition(manifest, watch)
         self._ensure_planner(row, manifest, watch)
 
     def apply(
-        self, release: VerifiedRelease | None = None, *, previous: VerifiedRelease | None = None
+        self,
+        release: VerifiedRelease | None = None,
+        *,
+        previous: VerifiedRelease | None = None,
+        supersede: bool = False,
     ) -> dict:
         self._previous_supplied = previous
         with self.host.exclusive(self.host.project):
@@ -359,6 +363,7 @@ class ProcessingRefresh:
                 row
                 and row["manifest"] != manifest.model_dump(mode="json")
                 and row["status"] != "completed"
+                and not supersede
             ):
                 raise ReleaseBlocked("processing_refresh_pending")
             if not row or row["manifest"] != manifest.model_dump(mode="json"):
@@ -370,8 +375,20 @@ class ProcessingRefresh:
                 if not running:
                     raise ReleaseBlocked("processing_planner_unavailable")
                 previous_release = self._previous_release(row, image, watch)
-                slot = "green" if previous_slot == "blue" else "blue"
+                slot = (
+                    previous_slot
+                    if image == manifest.image
+                    else ("green" if previous_slot == "blue" else "blue")
+                )
                 pins = {name: manifest.image for name in set(ROLE_VARIABLES.values())}
+                if row:
+                    pins.update(
+                        {
+                            key: value
+                            for key, value in row["pins"].items()
+                            if key.startswith("ACQUISITION_PLANNER_")
+                        }
+                    )
                 pins[f"ACQUISITION_PLANNER_{previous_slot.upper()}_IMAGE"] = image
                 pins[f"ACQUISITION_PLANNER_{slot.upper()}_IMAGE"] = manifest.image
                 row = {

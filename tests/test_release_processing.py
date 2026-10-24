@@ -330,3 +330,27 @@ def test_first_processing_after_capture_handover_requires_signed_compatible_old_
                 signed(), previous=VerifiedRelease(old, {} if prior == "unsigned" else PROOF)
             )
         assert not any(args[0] == "pull" or "up" in args or args[0] == "stop" for args in commands)
+
+
+def test_authorized_rollback_can_replace_a_blocked_forward_processing_intent(
+    pipeline, processing, monkeypatch
+):
+    refresh, state, _, _ = processing
+    original = ComposeReleaseHost._command
+
+    def broken_normalizer(self, args, **kwargs):
+        if args[0] == "compose" and "up" in args and args[-1] == "normalizer":
+            raise ReleaseBlocked("deployment_host_command_failed")
+        return original(self, args, **kwargs)
+
+    monkeypatch.setattr(ComposeReleaseHost, "_command", broken_normalizer)
+    assert refresh.apply(signed())["status"] == "blocked"
+    assert state["capture-planner-green"]["running"]
+    monkeypatch.setattr(ComposeReleaseHost, "_command", original)
+    pipeline.catalog.execute("UPDATE capture_planner_state SET next_due_at=clock_timestamp()")
+    result = refresh.apply(signed("a"), previous=signed(), supersede=True)
+    assert result["status"] == "completed" and result["active_planner_slot"] == "blue"
+    assert state["capture-planner"]["running"] and not state["capture-planner-green"]["running"]
+    assert all(
+        state[service]["image"] == release("a").manifest.image for service in PROCESSING_SERVICES
+    )

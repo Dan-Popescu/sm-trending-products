@@ -29,6 +29,22 @@ planner image and the current SQL/protocol contract. Later refreshes use the
 signed processing descriptor already retained privately. An unknown prior image
 blocks overlap; the new image's compatibility claims are never borrowed for it.
 
+A blocked forward refresh prevents another ordinary deployment from replacing
+its private intent. If that image is broken, use the existing host-local rollback
+command from the Hostinger console with the same private configuration:
+
+```sh
+python -m sm_trending_products.release_cli rollback \
+  --config /etc/sm-trends/controller.json --release-id FORWARD_RELEASE_ID
+```
+
+The controller's authorized reverse handover can supersede the blocked processing
+intent after acquisition returns to its compatible prior image. Only a verified
+rollback receives this override; normal forward requests do not. The planner
+remains qualified during the change, and newer captured data, cursors and quotas
+are retained. A blocked reverse resumes through the controller's normal retry
+path rather than requiring a pull-request approval.
+
 The refresh shares the collector release's exclusive host lock. Before and after
 each action it requires the same current acquisition identity/generation, a
 running container, a fresh registry heartbeat and compatible signed metadata.
