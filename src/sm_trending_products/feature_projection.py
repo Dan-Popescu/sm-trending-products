@@ -19,6 +19,7 @@ import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
 from psycopg.types.json import Jsonb
+from pydantic_core import to_json
 
 from .analysis_batches import RowBudgetExceeded
 from .cache import local_cache_descriptor, pin_local_cached, store_local_cached
@@ -177,6 +178,24 @@ class WindowRead:
     mode: str
     source_objects_read: int
     state_bytes: int = 0
+
+
+def _decode_window(row: dict[str, Any]) -> Observation:
+    """Validate one observation with one native JSON pass over existing columns.
+
+    Scalar values are escaped by the JSON encoder. The three independently
+    encoded JSON columns are inserted as JSON values, avoiding three Python
+    parsers and another model traversal. Legacy columnar states remain readable.
+    """
+    row.pop("entity_key", None)
+    nested = {
+        name: row.pop(name + "_json").encode()
+        for name in ("metrics", "attributes", "missing_fields")
+    }
+    body = to_json(row)[:-1]
+    for name, value in nested.items():
+        body += b',"' + name.encode() + b'":' + value
+    return Observation.model_validate_json(body + b"}")
 
 
 def _encode_window(observations: Sequence[Observation], max_bytes: int) -> bytes | None:
@@ -583,7 +602,7 @@ class FeatureProjection:
                                     if frame.height > limit:
                                         raise RowBudgetExceeded(limit)
                                     retained = [
-                                        history._decode(row) for row in frame.iter_rows(named=True)
+                                        _decode_window(row) for row in frame.iter_rows(named=True)
                                     ]
                                     state_bytes = record["descriptor"]["bytes"]
                         except RowBudgetExceeded:
