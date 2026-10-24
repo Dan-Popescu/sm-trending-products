@@ -134,7 +134,21 @@ See [backup and restore](backup-and-restore.md). Run an isolated restore exercis
 
 ## Updates and maintenance
 
-Before upgrading, record the current image/dependency revisions, pause writers, create a complete backup, and validate the new image against a restored copy. Apply database initialization/migrations through the initialization command before restarting workers. Do not assume an old application is compatible with a newer schema.
+For independent acquisition, take an [online checkpoint](backup-and-restore.md)
+without stopping capture. Validate the candidate against an isolated restored
+copy, then use the fenced release controller rather than a global Compose
+restart. It starts a compatible replacement, requires committed raw capture
+evidence from that worker generation, drains the predecessor and retires it
+only after acknowledgement. Missing evidence or unsafe compatibility blocks
+the update. Schema expansion must support both revisions; contraction belongs
+to a later separately qualified release. Keep the actual host configuration and
+credentials outside this public repository.
+
+The legacy offline checkpoint pauses every application writer and is suitable
+only for an inactive deployment or a source window whose recovery has been
+explicitly qualified. It is not the production update procedure for unknown or
+ephemeral source data. See [independent acquisition](independent-acquisition.md)
+and the controller operations guide for initial bring-up and rolling updates.
 
 Compaction publishes a completed replacement before changing the catalog's read frontier, preserves original observation/availability/provenance, and retains raw evidence subject to policy. Retention preview is read-only; applying retention invalidates dependent assessments/evaluations before deleting restricted objects. Versioned or suspended-versioning S3 buckets require listing and deleting every affected version and delete marker; a simple delete marker is insufficient. The service identity therefore needs bucket versioning inspection, version listing, and version deletion permissions in addition to ordinary object reads/writes/deletes. Object Lock or denied deletion leaves explicit pending work for retry. Review source policies and backup retention together: a backup can also contain data that must expire.
 

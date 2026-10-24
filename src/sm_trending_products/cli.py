@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import signal
 import sys
-import threading
 from pathlib import Path
 from typing import Any
 
@@ -66,12 +64,42 @@ def parser() -> argparse.ArgumentParser:
     ingest = command("import", "Import provenance-preserving observation JSONL", synthetic=True)
     ingest.add_argument("file", type=Path)
     ingest.add_argument("--batch-size", type=int, default=500)
-    worker = command(
-        "worker", "Process bounded collection batches; --loop keeps polling", synthetic=True
+    for name, description in (
+        ("worker", "Process legacy combined collection batches"),
+        ("capture", "Durably archive source pages independently of normalization"),
+        ("publish-captures", "Normalize committed captures without contacting the source"),
+    ):
+        worker = command(name, description, synthetic=True)
+        worker.add_argument("--batch-size", type=int, default=20)
+        worker.add_argument("--loop", action="store_true")
+        worker.add_argument("--poll-seconds", type=float, default=10)
+        worker.epilog = f"Example: sm-trends {name} --loop --batch-size 20 --poll-seconds 2"
+    policy = command(
+        "capture-policy", "Register an immutable source recovery contract", synthetic=True
     )
-    worker.add_argument("--batch-size", type=int, default=20)
-    worker.add_argument("--loop", action="store_true")
-    worker.add_argument("--poll-seconds", type=float, default=10)
+    policy.add_argument("--file", type=Path, required=True)
+    policy.epilog = "Example: sm-trends capture-policy --file /private/source-policy.json"
+    capture_status = command(
+        "capture-status", "Inspect original capture windows and receipts", synthetic=True
+    )
+    capture_status.add_argument("--as-of")
+    capture_status.add_argument("--limit", type=int, default=200)
+    capture_status.epilog = "Example: sm-trends capture-status --limit 100"
+    pause = command(
+        "capture-pause",
+        "Assess a bounded blackout against verified recovery windows",
+        synthetic=True,
+    )
+    pause.add_argument("--as-of")
+    pause.add_argument("--pause-seconds", required=True, type=float)
+    pause.add_argument("--rollback-seconds", required=True, type=float)
+    pause.add_argument("--safety-seconds", required=True, type=float)
+    pause.add_argument("--catchup-requests-per-second", required=True, type=float)
+    pause.add_argument("--request-budget", required=True, type=int)
+    pause.epilog = (
+        "Example: sm-trends capture-pause --pause-seconds 30 --rollback-seconds 30 "
+        "--safety-seconds 60 --catchup-requests-per-second 1 --request-budget 100"
+    )
     for name, description in (
         ("worker-status", "Inspect registered worker generation, drain state and owned leases"),
         ("worker-drain", "Block new claims; the owning worker acknowledges settled work"),
@@ -282,71 +310,43 @@ def dispatch(pipeline, args):
             }
         case "import":
             return pipeline.import_file(args.file, synthetic=synthetic, batch_size=args.batch_size)
-        case "worker":
-            from .catalog import InvalidationPending
+        case "worker" | "capture" | "publish-captures":
+            from .worker_runtime import run_worker
 
-            stop = threading.Event()
-            if not 0 < args.poll_seconds <= 60:
-                raise ValueError("Poll interval must be positive and at most 60 seconds")
-            control = pipeline.worker_control
-            session = pipeline.start_worker(synthetic)
-            generation = session["generation"]
-            previous = {
-                number: signal.signal(number, lambda *_: stop.set())
-                for number in (signal.SIGTERM, signal.SIGINT)
-            }
-            try:
-                while not stop.is_set():
-                    state = control.heartbeat(pipeline.worker_id, generation)["state"]
-                    if state != "running":
-                        # Stay alive when remotely drained: an exit would trigger
-                        # Compose's restart policy and undo the deployment barrier.
-                        control.acknowledge_drain(pipeline.worker_id, generation)
-                        if not args.loop:
-                            return {"status": "drained"}
-                        stop.wait(min(args.poll_seconds, 1))
-                        continue
-                    try:
-                        result = pipeline.collect_batch(
-                            args.batch_size, synthetic=synthetic, should_stop=stop.is_set
-                        )
-                    except InvalidationPending:
-                        progress = pipeline.catalog.resume_invalidations(
-                            max_batches=1000, max_seconds=0.8, synthetic=synthetic
-                        )
-                        result = {"status": "invalidation_pending", "invalidations": progress}
-                    state = control.acknowledge_drain(pipeline.worker_id, generation)["state"]
-                    if not args.loop:
-                        return result
-                    print(canonical(result), flush=True)
-                    if state != "running":
-                        stop.wait(min(args.poll_seconds, 1))
-                        continue
-                    if result.get("status") == "invalidation_pending":
-                        progress = result["invalidations"]
-                        stop.wait(0.01 if progress["processed"] else min(args.poll_seconds, 0.25))
-                        continue
-                    # Drain busy work without delaying full batches. Signals are
-                    # also checked before every task, inside collect_batch.
-                    if (
-                        result.get("processed", 0) < args.batch_size
-                        or result.get("errors")
-                        or result.get("waiting")
-                        or result.get("quota_waiting")
-                    ):
-                        stop.wait(args.poll_seconds)
-                return {"status": "stopped"}
-            finally:
-                try:
-                    control.finish(pipeline.worker_id, generation)
-                finally:
-                    for number, handler in previous.items():
-                        signal.signal(number, handler)
+            return run_worker(
+                pipeline,
+                mode=args.command,
+                batch_size=args.batch_size,
+                synthetic=synthetic,
+                loop=args.loop,
+                poll_seconds=args.poll_seconds,
+            )
         case "worker-status":
             state = pipeline.worker_control.status(args.worker_id)
             if state is None:
                 raise ValueError("Unknown worker")
             return state
+        case "capture-policy":
+            from .capture_contracts import CapturePolicy
+
+            identity = pipeline.capture_contracts.register(
+                CapturePolicy.model_validate(read_json(args.file)), synthetic=synthetic
+            )
+            return {"contract_id": identity, "synthetic": synthetic}
+        case "capture-status":
+            return pipeline.capture_contracts.status(
+                as_of=cutoff, synthetic=synthetic, limit=args.limit
+            )
+        case "capture-pause":
+            return pipeline.capture_contracts.assess_pause(
+                as_of=cutoff,
+                synthetic=synthetic,
+                pause_seconds=args.pause_seconds,
+                rollback_seconds=args.rollback_seconds,
+                safety_seconds=args.safety_seconds,
+                catchup_requests_per_second=args.catchup_requests_per_second,
+                request_budget=args.request_budget,
+            )
         case "worker-drain":
             if args.wait_seconds is not None and not 0 < args.wait_seconds <= 3600:
                 raise ValueError("Drain wait must be positive and at most 3600 seconds")
