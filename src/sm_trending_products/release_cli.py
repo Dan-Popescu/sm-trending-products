@@ -339,6 +339,7 @@ class HostRuntime:
         if action == "abort":
             return self.rollback(release_id)
         controller = self.controller(row)
+        controller.execution = self.authorization.execution(row)
         result = controller.apply(release_id)
         if result["status"] == "completed" and result["phase"] == "retired":
             # Deployment requests authorize the whole application. Persist the
@@ -358,7 +359,9 @@ class HostRuntime:
         self.authorization.verify(row)
         if row["phase"] not in {"committed", "retired"}:
             self.authorization.cancel(row)
-        result = self.controller(row).rollback(release_id)
+        controller = self.controller(row)
+        controller.execution = self.authorization.execution(row)
+        result = controller.rollback(release_id)
         if result["release_id"] != release_id:
             self.authorization.rollback(self.run(result["release_id"]), row)
         return result

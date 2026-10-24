@@ -126,3 +126,107 @@ def test_authorized_source_handover_refreshes_all_roles_and_reverse_too(pipeline
     runtime.pending_processing = lambda: True
     result = runtime.pull()
     assert result["status"] == "completed" and refreshed[-1] is None
+
+
+def test_sealed_execution_rejects_sql_intent_swap_between_cli_and_controller(pipeline, tmp_path):
+    authority, controller, row, evidence, _ = authorized(pipeline, tmp_path)
+    controller.host.running["green"] = release("b").manifest.image
+    evidence.ready = True
+    runtime = object.__new__(HostRuntime)
+    runtime.catalog = pipeline.catalog
+    runtime.config = SimpleNamespace(target="fixture")
+    runtime.authorization = authority
+
+    def swapped(current):
+        pipeline.catalog.execute(
+            "UPDATE deployment_runs SET candidate_manifest=prior_manifest,"
+            "prior_manifest=candidate_manifest,"
+            "candidate_proof=prior_proof,prior_proof=candidate_proof,prior_slot='green',"
+            "prior_worker_id=candidate_worker_id,candidate_worker_id=prior_worker_id,"
+            "prior_generation=1,candidate_generation=1 WHERE release_id=%s",
+            (row["release_id"],),
+        )
+        pipeline.catalog.execute(
+            "UPDATE deployment_targets SET active_manifest=%s,active_proof=%s,active_slot='green',"
+            "active_worker_id=%s WHERE target='fixture'",
+            (
+                Jsonb(row["candidate_manifest"]),
+                Jsonb(row["candidate_proof"]),
+                row["candidate_worker_id"],
+            ),
+        )
+        return controller
+
+    runtime.controller = swapped
+    with pytest.raises(ReleaseBlocked, match="deployment_intent_changed"):
+        runtime.apply(row["release_id"])
+    assert controller.host.events == [] and set(controller.host.running) == {"blue", "green"}
+
+
+@pytest.mark.parametrize("forgery", ["abort", "completed"])
+def test_sql_progress_cannot_cancel_or_manufacture_a_completed_source_handover(
+    pipeline, tmp_path, forgery
+):
+    authority, controller, row, _, _ = authorized(pipeline, tmp_path)
+    controller.host.running["green"] = release("b").manifest.image
+    runtime = object.__new__(HostRuntime)
+    runtime.catalog = pipeline.catalog
+    runtime.config = SimpleNamespace(target="fixture")
+    runtime.authorization = authority
+    runtime.controller = lambda current: controller
+    runtime.refresh_processing_release = lambda *args, **kwargs: pytest.fail(
+        "Forged completion refreshed processing"
+    )
+    if forgery == "abort":
+        pipeline.catalog.execute(
+            "UPDATE deployment_runs SET abort_requested=true,phase='started',candidate_generation=1"
+        )
+    else:
+        pipeline.catalog.execute("UPDATE deployment_runs SET phase='retired',status='completed'")
+    result = runtime.apply(row["release_id"])
+    assert result["status"] == "blocked" and result["reason"] == "capture_proof_missing"
+    assert (
+        set(controller.host.running) == {"blue", "green"} and "retire" not in controller.host.events
+    )
+
+
+@pytest.mark.parametrize("boundary", ["prepare", "start", "committed_checkpoint", "retire"])
+def test_private_execution_resumes_after_host_and_cross_journal_crashes(
+    pipeline, tmp_path, boundary
+):
+    from test_release_control import ProcessDeath
+
+    authority, controller, row, evidence, _ = authorized(pipeline, tmp_path)
+    execution = authority.execution(row)
+    controller.execution = execution
+    evidence.ready = True
+    if boundary == "committed_checkpoint":
+        original = execution.checkpoint
+        interrupted = []
+
+        def checkpoint(current):
+            if current["phase"] == "committed" and not interrupted:
+                interrupted.append(True)
+                raise ProcessDeath()
+            original(current)
+
+        execution.checkpoint = checkpoint
+    else:
+        original = getattr(controller.host, boundary)
+        interrupted = []
+
+        def action(*args):
+            original(*args)
+            if not interrupted:
+                interrupted.append(True)
+                raise ProcessDeath()
+
+        setattr(controller.host, boundary, action)
+    with pytest.raises(ProcessDeath):
+        controller.apply(row["release_id"])
+    fresh = pipeline.catalog.one(
+        "SELECT * FROM deployment_runs WHERE release_id=%s", (row["release_id"],)
+    )
+    controller.execution = authority.execution(fresh)
+    result = controller.apply(row["release_id"])
+    assert result["status"] == "completed" and set(controller.host.running) == {"green"}

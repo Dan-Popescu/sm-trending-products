@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import re
 import stat
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from .catalog import Catalog
@@ -30,22 +32,45 @@ class HostAuthorization:
 
     @staticmethod
     def intent(row: dict) -> dict:
-        return {
-            key: row[key]
-            for key in (
-                "release_id",
-                "target",
-                "candidate_manifest",
-                "prior_manifest",
-                "prior_slot",
-                "prior_worker_id",
-                "prior_generation",
-                "candidate_worker_id",
-                "schema_version",
-                "synthetic",
-                "rollback_of",
+        return json.loads(
+            canonical(
+                {
+                    key: row[key]
+                    for key in (
+                        "release_id",
+                        "target",
+                        "candidate_manifest",
+                        "candidate_proof",
+                        "prior_manifest",
+                        "prior_proof",
+                        "prior_slot",
+                        "prior_worker_id",
+                        "prior_generation",
+                        "candidate_worker_id",
+                        "schema_version",
+                        "synthetic",
+                        "rollback_of",
+                        "created_at",
+                    )
+                }
             )
-        }
+        )
+
+    @contextmanager
+    def _exclusive(self):
+        descriptor = os.open(
+            self.directory / "authorization.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600
+        )
+        with os.fdopen(descriptor, "a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+
+    def execution(self, row: dict) -> AuthorizedExecution:
+        self.verify(row)
+        return AuthorizedExecution(self, row)
 
     def _path(self, release_id: str) -> Path:
         if not re.fullmatch(r"[0-9a-f]{64}", release_id):
@@ -63,8 +88,8 @@ class HostAuthorization:
                     or info.st_mode & 0o077
                 ):
                     raise ReleaseBlocked("deployment_authority_permissions_invalid")
-                body = handle.read(4 * 1024 * 1024 + 1)
-                if len(body) > 4 * 1024 * 1024:
+                body = handle.read(8 * 1024 * 1024 + 1)
+                if len(body) > 8 * 1024 * 1024:
                     raise ReleaseBlocked("deployment_authority_invalid")
                 value = json.loads(body)
                 if not isinstance(value, dict):
@@ -108,6 +133,10 @@ class HostAuthorization:
     def record_request(self, row: dict, request: DeploymentRequest, proof: dict) -> None:
         self.trust.verify_request(request, proof)
         self._bound_request(row, request)
+        with self._exclusive():
+            self._record_request(row, request, proof)
+
+    def _record_request(self, row: dict, request: DeploymentRequest, proof: dict) -> None:
         highest = self.sequence(request)
         if (
             highest
@@ -126,6 +155,7 @@ class HostAuthorization:
                 {
                     "intent": intent,
                     "action": "apply",
+                    "progress": AuthorizedExecution.progress(row),
                     "authority": {
                         "kind": "request",
                         "request": request.model_dump(mode="json"),
@@ -192,10 +222,11 @@ class HostAuthorization:
 
     def cancel(self, row: dict) -> None:
         self.verify(row)
-        value = self._read(self._path(row["release_id"]))
-        assert value is not None
-        value["action"] = "abort"
-        self._write(self._path(row["release_id"]), value)
+        with self._exclusive():
+            value = self._read(self._path(row["release_id"]))
+            assert value is not None
+            value["action"] = "abort"
+            self._write(self._path(row["release_id"]), value)
 
     def rollback(self, row: dict, original: dict) -> None:
         self.verify(original)
@@ -204,6 +235,55 @@ class HostAuthorization:
             {
                 "intent": self.intent(row),
                 "action": "apply",
+                "progress": AuthorizedExecution.progress(row),
                 "authority": {"kind": "host_rollback", "parent_release_id": original["release_id"]},
             },
         )
+
+
+class AuthorizedExecution:
+    """Pinned identities and private progress replace app-writable execution input."""
+
+    def __init__(self, authority: HostAuthorization, row: dict):
+        self.authority, self.intent = authority, authority.intent(row)
+
+    @staticmethod
+    def progress(row: dict) -> dict:
+        return {
+            key: row[key]
+            for key in (
+                "phase",
+                "status",
+                "reason",
+                "evidence",
+                "candidate_generation",
+                "abort_requested",
+            )
+        }
+
+    def bind(self, row: dict) -> dict:
+        if self.authority.intent(row) != self.intent:
+            raise ReleaseBlocked("deployment_intent_changed")
+        value = self.authority._read(self.authority._path(row["release_id"]))
+        if (
+            not value
+            or value.get("intent") != self.intent
+            or not isinstance(value.get("progress"), dict)
+        ):
+            raise ReleaseBlocked("deployment_execution_authority_invalid")
+        # SQL progress is an operational mirror, never authority to skip checks,
+        # cancel a candidate or manufacture a terminal source handover.
+        return {
+            **row,
+            **self.intent,
+            **value["progress"],
+            "abort_requested": value.get("action") == "abort",
+        }
+
+    def checkpoint(self, row: dict) -> None:
+        with self.authority._exclusive():
+            value = self.authority._read(self.authority._path(row["release_id"]))
+            if not value or value.get("intent") != self.intent:
+                raise ReleaseBlocked("deployment_execution_authority_invalid")
+            value["progress"] = self.progress(row)
+            self.authority._write(self.authority._path(row["release_id"]), value)

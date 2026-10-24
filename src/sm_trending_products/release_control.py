@@ -150,6 +150,11 @@ class CaptureVerifier(Protocol):
     ) -> dict | None: ...
 
 
+class ReleaseExecution(Protocol):
+    def bind(self, row: dict) -> dict: ...
+    def checkpoint(self, row: dict) -> None: ...
+
+
 class DeploymentController:
     def __init__(
         self,
@@ -163,6 +168,10 @@ class DeploymentController:
     ):
         self.catalog, self.host, self.workers, self.evidence = catalog, host, workers, evidence
         self.trust, self.allow_synthetic = trust, allow_synthetic
+        self.execution: ReleaseExecution | None = None
+
+    def _bind(self, row: dict) -> dict:
+        return self.execution.bind(row) if self.execution is not None else row
 
     def _verify(self, manifest: ReleaseManifest, proof: dict, synthetic: bool) -> None:
         if synthetic and self.allow_synthetic and proof == {"method": "controlled_fixture"}:
@@ -285,12 +294,17 @@ class DeploymentController:
                     rollback_of,
                 ),
             )
-        return self.status(release_id)
+        return self._status(release_id, bind=False)
 
     def status(self, release_id: str) -> dict:
+        return self._status(release_id, bind=True)
+
+    def _status(self, release_id: str, *, bind: bool) -> dict:
         row = self.catalog.one("SELECT * FROM deployment_runs WHERE release_id=%s", (release_id,))
         if not row:
             raise ValueError("Unknown release")
+        if bind:
+            row = self._bind(row)
         # Public status omits signature bundles, host paths and credentials.
         return {
             key: row[key]
@@ -343,8 +357,7 @@ class DeploymentController:
                     connection.execute("SELECT pg_advisory_unlock(%s)", (key,))
                     connection.commit()
 
-    @staticmethod
-    def _record(connection, row: dict, fence: int, **changes) -> None:
+    def _record(self, connection, row: dict, fence: int, **changes) -> None:
         phase = changes.get("phase", row["phase"])
         status = changes.get("status", "running")
         reason = changes.get("reason")
@@ -352,6 +365,14 @@ class DeploymentController:
         candidate_generation = changes.get("candidate_generation", row["candidate_generation"])
         abort_requested = changes.get("abort_requested", row["abort_requested"])
         with connection.transaction():
+            if self.execution is not None:
+                current = connection.execute(
+                    "SELECT * FROM deployment_runs WHERE release_id=%s FOR UPDATE",
+                    (row["release_id"],),
+                ).fetchone()
+                if not current:
+                    raise ReleaseBlocked("deployment_execution_authority_invalid")
+                self.execution.bind(current)
             changed = connection.execute(
                 "UPDATE deployment_runs r SET phase=%s,status=%s,reason=%s,evidence=%s,fence=%s,"
                 "candidate_generation=%s,abort_requested=%s,"
@@ -380,6 +401,8 @@ class DeploymentController:
             candidate_generation=candidate_generation,
             abort_requested=abort_requested,
         )
+        if self.execution is not None:
+            self.execution.checkpoint(row)
 
     def _abort(self, connection, row: dict, fence: int) -> None:
         active = connection.execute(
@@ -431,6 +454,7 @@ class DeploymentController:
         row = self.catalog.one("SELECT * FROM deployment_runs WHERE release_id=%s", (release_id,))
         if not row:
             raise ValueError("Unknown release")
+        row = self._bind(row)
         candidate, prior = (
             ReleaseManifest.model_validate(row[key])
             for key in ("candidate_manifest", "prior_manifest")
@@ -447,6 +471,7 @@ class DeploymentController:
             ).fetchone()
             connection.commit()
             assert row is not None
+            row = self._bind(row)
             if row["status"] in {"completed", "aborted"}:
                 return self.status(release_id)
             if row["abort_requested"]:
@@ -473,7 +498,13 @@ class DeploymentController:
                     if row["phase"] in {"committed", "retired"}
                     else row["prior_worker_id"]
                 )
-                if (
+                committed_recovery = (
+                    row["phase"] == "verified"
+                    and active is not None
+                    and active["active_manifest"] == row["candidate_manifest"]
+                    and active["active_worker_id"] == row["candidate_worker_id"]
+                )
+                if not committed_recovery and (
                     not active
                     or active["active_manifest"] != expected_active
                     or active["active_worker_id"] != expected_worker
@@ -563,6 +594,8 @@ class DeploymentController:
                             (release_id,),
                         )
                     row["phase"] = "committed"
+                    if self.execution is not None:
+                        self.execution.checkpoint(row)
                 if row["phase"] == "committed":
                     self._require_replacement(row, candidate, slot)
                     evidence = self.evidence.verify(
@@ -608,6 +641,7 @@ class DeploymentController:
         row = self.catalog.one("SELECT * FROM deployment_runs WHERE release_id=%s", (release_id,))
         if not row:
             raise ValueError("Unknown release")
+        row = self._bind(row)
         self._verify(
             ReleaseManifest.model_validate(row["candidate_manifest"]),
             row["candidate_proof"],
@@ -624,6 +658,7 @@ class DeploymentController:
             ).fetchone()
             connection.commit()
             assert row is not None
+            row = self._bind(row)
             if row["phase"] not in {"committed", "retired"}:
                 self._record(connection, row, fence, abort_requested=True)
                 try:

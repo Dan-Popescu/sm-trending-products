@@ -34,6 +34,14 @@ if the SQL request history is altered. Host-console rollback records its own
 private authority referencing the previously authorized run; cancellation intent
 also survives independently of mutable SQL progress. Corruption or missing
 authority blocks all host mutations.
+The private authority also stores execution progress. SQL phase, completion and
+cancellation flags are mirrors and cannot choose a privileged path. Each
+controller reread binds the same sealed manifests/proofs, worker identities and
+creation time, then checkpoints private progress after transitions. A crash
+between SQL active-pointer commit and its private checkpoint resumes from the
+sealed verified phase and rechecks actual candidate captures and drain before
+recommitting. This extra journal is deployment metadata only; source task,
+publication and quota ownership remain in PostgreSQL.
 
 The existing worker and optional worker-green Compose services are the only
 mutable host slots. Fixed arguments select the local Docker socket, private
