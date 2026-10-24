@@ -137,6 +137,13 @@ def test_retained_history_counts_real_rows_and_checks_warm_delta_evicted_results
     assert report["phases"]["warm_same_cutoff"]["metrics"]["get_requests"] == 0
     assert report["phases"]["warm_same_cutoff"]["analysis_work"]["projection_hits"] == 3
     assert report["phases"]["refresh_1"]["analysis_work"]["delta_windows"] == 3
+    imports = report["refresh_imports"]["refresh_1"]
+    assert imports["completed_products"] == imports["requested_products"] == 3
+    assert imports["imported_observations"] == imports["requested_observations"] == 6
+    assert imports["seconds"] > 0
+    assert imports["cpu_process_seconds"] > 0
+    assert imports["metrics"]["put_requests"] == 9
+    assert imports["metrics"]["get_requests"] == 0
     assert report["phases"]["evicted"]["analysis_work"]["full_windows"] == 3
     assert report["checks"]["sampled_complete_oracle"]
     assert report["cleanup"] == {"schema_removed": True, "working_directory_removed": True}

@@ -496,6 +496,19 @@ def worker(config_path):
             sampled_oracle(initial, cutoff)
             del initial, warm
             for wave in range(config["refresh_waves"]):
+                wave_name = f"refresh_{wave + 1}"
+                report["current_phase"] = f"{wave_name}_import"
+                before_import = dict(pipeline.history.metrics)
+                import_start = time.perf_counter()
+                import_cpu_start = time.process_time()
+                progress = {
+                    "requested_products": config["products"],
+                    "requested_observations": config["products"] * config["videos_per_product"],
+                    "completed_products": 0,
+                    "imported_observations": 0,
+                }
+                report.setdefault("refresh_imports", {})[wave_name] = progress
+                publish()
                 for product in range(config["products"]):
                     pipeline.import_records(
                         [
@@ -504,8 +517,18 @@ def worker(config_path):
                         ],
                         synthetic=True,
                     )
+                    progress["completed_products"] = product + 1
+                    progress["imported_observations"] = (product + 1) * config["videos_per_product"]
+                    if (product + 1) % 100 == 0 or product + 1 == config["products"]:
+                        progress["seconds"] = time.perf_counter() - import_start
+                        progress["cpu_process_seconds"] = time.process_time() - import_cpu_start
+                        progress["metrics"] = {
+                            key: pipeline.history.metrics[key] - value
+                            for key, value in before_import.items()
+                        }
+                        publish()
                 at = cutoff + timedelta(hours=hours * (wave + 1))
-                changed = phase(f"refresh_{wave + 1}", at)
+                changed = phase(wave_name, at)
                 sampled_oracle(changed, at)
                 report["refresh_waves_completed"] = wave + 1
                 publish()

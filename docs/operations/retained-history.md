@@ -11,7 +11,7 @@ observation-index rows or analytical outputs to reach a requested volume.
 TEST_DATABASE_URL=postgresql://test_user:test_password@127.0.0.1:5432/pipeline_test \
   uv run --locked python scripts/retained-history.py \
   --products 1000 --videos-per-product 20 --history-days 30 \
-  --refreshes-per-day 4 --refresh-waves 2 --deadline-seconds 1800 \
+  --refreshes-per-day 4 --refresh-waves 4 --deadline-seconds 14400 \
   --output output/retained-1000-30.json
 ```
 
@@ -53,7 +53,12 @@ per upstream refresh. Provider grouping, quota, retry, discovery and source upda
 resolution remain separate workload assumptions. The case reports actual source
 datasets, observation counts, object bytes, analytical artifact counts/bytes and
 SQL relation/index bytes. Cold, unchanged, newly refreshed and completely evicted
-analytical paths execute the real published-assessment module.
+analytical paths execute the real published-assessment module. Refresh ingestion
+has separate wall/CPU times, request/byte deltas and completed product/observation
+counts under `refresh_imports`; the `phases.refresh_N` timer covers assessment.
+The supervisor's elapsed time also includes oracle verification and observation.
+The example declares a four-hour guard so dense retained history can complete
+rather than implicitly assuming a small-data deadline will suffice.
 
 HTTP Moto retains payloads up to 32 KiB in RAM and spools larger payloads into
 the owned working directory. The threshold is recorded, along with the unchanged
