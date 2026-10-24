@@ -25,7 +25,9 @@ class ReplayService:
             "transform_version": manifest["transform_version"],
         }
 
-    def replay(self, dataset_id: str, transform_version: str = "1") -> dict:
+    def replay(
+        self, dataset_id: str, transform_version: str = "1", *, publication_guard=None
+    ) -> dict:
         if not isinstance(transform_version, str) or transform_version not in {"1", "2"}:
             raise ValueError("Supported source transformation versions are 1 and 2")
         dataset = self.catalog.one(
@@ -33,6 +35,11 @@ class ReplayService:
         )
         if not dataset:
             raise ValueError("No completed dataset found")
+        if (
+            dataset["manifest"].get("kind") == "raw_capture"
+            and dataset["manifest"].get("acquisition_protocol") != "1"
+        ):
+            raise ValueError("Unsupported raw acquisition protocol")
         raw = self.history.raw(dataset)
         quarantine = raw.get("quarantine", [])
         source_replay = raw.get("kind") not in {"import", "compaction"}
@@ -85,7 +92,10 @@ class ReplayService:
                     raise ValueError("Collector normalizer version differs from requested replay")
                 observations = [Observation.model_validate(item) for item in result["records"]]
                 quarantine = result.get("quarantine", [])
-            if transform_version == "2":
+            if transform_version == "2" or dataset["manifest"].get("kind") == "raw_capture":
+                replay_id = digest(
+                    {"replay_of": parent["dataset_id"], "version": transform_version}
+                )
                 # Reserve only after the decoder actually returned evidence or a
                 # schema quarantine. The short SQL transaction never spans Rust/S3.
                 available_at = self.catalog.replay_available_at(
@@ -113,6 +123,7 @@ class ReplayService:
             transform_version=transform_version,
             supersedes=parent["dataset_id"],
             quarantine=quarantine,
+            **({"publication_guard": publication_guard} if publication_guard else {}),
         )
         published = self.catalog.one("SELECT * FROM datasets WHERE dataset_id=%s", (replay_id,))
         if not published or published["state"] != "committed":

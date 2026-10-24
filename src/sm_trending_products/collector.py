@@ -81,6 +81,43 @@ class Collector:
 
     def run(self, request: dict, *, normalize: bool = False) -> dict:
         args = [self.settings.collector_binary, *(["normalize"] if normalize else [])]
+        return self._execute(request, args)
+
+    def capture(
+        self,
+        request: dict,
+        task: dict,
+        *,
+        max_spool_bytes: int = 268_435_456,
+        worker_generation: int | None = None,
+    ) -> dict:
+        from .contracts import digest
+
+        capture_id = digest(
+            {"capture_of": task["task_id"], "page_index": task["page_index"], "protocol": "1"}
+        )
+        payload = {
+            "request": request,
+            "capture_id": capture_id,
+            "task_id": task["task_id"],
+            "page_index": task["page_index"],
+            "worker_id": task["lease_owner"],
+            "lease_version": task["lease_version"],
+            "request_fingerprint": digest(request),
+        }
+        if worker_generation is not None:
+            payload["worker_generation"] = worker_generation
+        args = [
+            self.settings.collector_binary,
+            "capture",
+            "--spool-dir",
+            str(self.settings.spool_dir / "captures"),
+            "--max-spool-bytes",
+            str(max_spool_bytes),
+        ]
+        return self._execute(payload, args, require_records=False)
+
+    def _execute(self, request: dict, args: list[str], *, require_records: bool = True) -> dict:
         with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
             try:
                 result = subprocess.run(
@@ -119,9 +156,14 @@ class Collector:
                     category = "invalid_request"
                 elif category == "rate_limit":
                     category = "rate_limited"
+                elif category == "capture" and isinstance(code, str):
+                    category = code
                 raise CollectionError(
                     category, error.get("retry_after_seconds") or 60, artifact=error.get("artifact")
                 )
-            if not isinstance(body.get("records"), list):
+            if require_records and not isinstance(body.get("records"), list):
                 raise CollectionError("invalid_collector_contract")
-            return redact(body)
+            # The capture binary redacts before writing its durable receipt.
+            # Applying a second environment-dependent transformation here would
+            # make adoption/cleanup differ after a credential rotation.
+            return redact(body) if require_records else body

@@ -631,8 +631,11 @@ class Catalog:
         *,
         task: dict | None = None,
         supersedes: str | None = None,
+        publication_guard=None,
     ) -> dict:
         with self.transaction() as connection:
+            if publication_guard:
+                publication_guard(connection)
             self.guard_namespace(connection, synthetic)
             if task:
                 self.assert_lease(connection, task)
@@ -718,8 +721,11 @@ class Catalog:
         task: dict | None = None,
         next_payload: dict | None = None,
         advance_task: bool = True,
+        publication_guard=None,
     ) -> None:
         with self.transaction() as connection:
+            if publication_guard:
+                publication_guard(connection)
             self.guard_retention(connection)
             if task:
                 self.assert_lease(connection, task)

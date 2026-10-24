@@ -66,7 +66,7 @@ pub enum Operation {
     Query,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CollectionRequest {
     pub source: Source,
@@ -284,6 +284,13 @@ impl Quota {
 }
 
 pub async fn fetch(request: &CollectionRequest) -> Result<FetchedPage> {
+    fetch_observed(request, |_, _, _| Ok(())).await
+}
+
+pub async fn fetch_observed<F>(request: &CollectionRequest, mut complete: F) -> Result<FetchedPage>
+where
+    F: FnMut(&[u8], DateTime<Utc>, usize) -> Result<()>,
+{
     let token = std::env::var(request.source.token_name()).unwrap_or_default();
     if token.is_empty() {
         return Err(CollectorError::new("authorization", "missing_access_token"));
@@ -380,6 +387,7 @@ pub async fn fetch(request: &CollectionRequest) -> Result<FetchedPage> {
             bytes.extend_from_slice(&chunk);
         }
         let observed_at = request.observed_at.unwrap_or_else(Utc::now);
+        complete(&bytes, observed_at, attempt + 1)?;
         let mut raw: Value =
             match serde_json::from_slice(&bytes) {
                 Ok(raw) => raw,
