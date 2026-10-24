@@ -396,8 +396,10 @@ class HostRuntime:
     def pending_processing(self) -> bool:
         return self.processing_refresh().pending()
 
-    def refresh_processing_release(self, release: VerifiedRelease | None = None) -> dict:
-        return self.processing_refresh().apply(release)
+    def refresh_processing_release(
+        self, release: VerifiedRelease | None = None, *, previous: VerifiedRelease | None = None
+    ) -> dict:
+        return self.processing_refresh().apply(release, previous=previous)
 
     def pull(self) -> dict:
         if self.pending_processing():

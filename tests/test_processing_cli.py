@@ -71,7 +71,8 @@ def test_processing_cli_recovers_after_controller_kill_without_restarting_captur
         + sys.executable
         + "\n"
         + """
-import hashlib,json,os,signal,subprocess,sys
+import hashlib,json,os,signal,socket,subprocess,sys
+from datetime import datetime,timezone
 from pathlib import Path
 args=sys.argv[1:]
 assert args.pop(0)=='--host=unix:///var/run/docker.sock'
@@ -86,13 +87,17 @@ elif args[:2]==['image','inspect']:
 elif args[0]=='compose' and 'ps' in args:
     if args[-1] in services: print(identifier(args[-1]))
 elif args[0]=='inspect':
-    value=next(value for name,value in services.items() if identifier(name)==args[-1])
-    for key in ('image','running','worker'): print(json.dumps(value[key]))
+    service=next(name for name in services if identifier(name)==args[-1]);value=services[service]
+    if 'Config.Hostname' in args[2]:
+        hostname=socket.gethostname() if service=='capture-planner-green' else 'previous-planner'
+        print(json.dumps(hostname));print(json.dumps(value.get('started_at','2020-01-01T00:00:00Z')))
+    else:
+        for key in ('image','running','worker'): print(json.dumps(value[key]))
 elif args[0]=='compose' and 'up' in args:
     name=args[-1]
     variables={'capture-planner':'ACQUISITION_PLANNER_BLUE_IMAGE','capture-planner-green':'ACQUISITION_PLANNER_GREEN_IMAGE','normalizer':'NORMALIZER_IMAGE','dagster-daemon':'ANALYTICS_IMAGE','dagster-webserver':'ANALYTICS_IMAGE','dashboard':'DASHBOARD_IMAGE'}
     assert name in variables and '--no-deps' in args and '--no-build' in args
-    services[name]={'image':os.environ[variables[name]],'running':True,'worker':None}
+    services[name]={'image':os.environ[variables[name]],'running':True,'worker':None,'started_at':datetime.now(timezone.utc).isoformat()}
     path.write_text(json.dumps(state))
     marker=Path(os.environ['PROCESSING_CRASH_MARKER'])
     if name=='normalizer' and not marker.exists():

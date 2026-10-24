@@ -2,12 +2,15 @@
 
 import hashlib
 import json
+from dataclasses import replace
 
 import pytest
 from psycopg.types.json import Jsonb
 from test_release_control import release
 
 from sm_trending_products.capture_coordinator import CaptureCoordinator
+from sm_trending_products.contracts import canonical, now
+from sm_trending_products.release_capacity import GIB, CapacityBudget, HostCapacity
 from sm_trending_products.release_control import ReleaseBlocked, VerifiedRelease
 from sm_trending_products.release_host import ComposeReleaseHost
 from sm_trending_products.release_processing import (
@@ -75,6 +78,12 @@ def processing(pipeline, tmp_path, monkeypatch):
         if args[0] == "inspect":
             service = next(name for name in state if identifier(name) == args[-1])
             value = state[service]
+            if "Config.Hostname" in args[2]:
+                return (
+                    json.dumps(service + "-host")
+                    + "\n"
+                    + json.dumps(value.get("started_at", "2020-01-01T00:00:00Z"))
+                )
             return "\n".join(json.dumps(value[key]) for key in ("image", "running", "worker"))
         if args[0] == "compose" and "up" in args:
             service = args[-1]
@@ -93,7 +102,14 @@ def processing(pipeline, tmp_path, monkeypatch):
                 if probe["busy"]
                 else CaptureCoordinator(pipeline).tick(True)
             )
-            return json.dumps(result)
+            if result["status"] == "planned":
+                service = next(name for name in state if identifier(name) == args[1])
+                probe["last"] = {
+                    "last_planner_id": service + "-host",
+                    "last_completed_at": now().isoformat(),
+                }
+            result.update(probe.get("last", {}))
+            return canonical(result)
         if args[0] == "stop":
             service = next(name for name in state if identifier(name) == args[-1])
             assert service in PLANNERS.values() and "--time=-1" in args
@@ -140,7 +156,7 @@ def test_refresh_overlaps_planner_and_keeps_capture_generation_quotas_and_raw_st
 def test_unqualified_planner_never_stops_predecessor_and_retry_resumes_private_intent(processing):
     refresh, state, commands, probe = processing
     probe["busy"] = True
-    assert refresh.apply(signed())["reason"] == "processing_planner_busy"
+    assert refresh.apply(signed())["reason"] == "processing_planner_unqualified"
     assert refresh.pending() and state["capture-planner"]["running"]
     assert not any(args[0] == "stop" for args in commands)
     starts = len([args for args in commands if args[0] == "compose" and "up" in args])
@@ -215,3 +231,102 @@ def test_pending_private_intent_does_not_accept_an_unrelated_new_release(process
     assert refresh.apply(signed())["status"] == "blocked"
     with pytest.raises(ReleaseBlocked, match="processing_refresh_pending"):
         refresh.apply(signed("c"))
+
+
+def test_planner_failure_during_retirement_restores_prior_pin_and_blocks(processing, monkeypatch):
+    refresh, state, _, _ = processing
+    original = ComposeReleaseHost._command
+
+    def fail_after_stop(self, args, **kwargs):
+        result = original(self, args, **kwargs)
+        if args[0] == "stop":
+            state["capture-planner-green"]["running"] = False
+        return result
+
+    monkeypatch.setattr(ComposeReleaseHost, "_command", fail_after_stop)
+    result = refresh.apply(signed())
+    assert result["status"] == "blocked" and result["active_planner_slot"] == "blue"
+    assert state["capture-planner"]["running"]
+    assert state["capture-planner"]["image"] == release("a").manifest.image
+    assert result["reason"] == "processing_planner_qualification_lost"
+
+
+def test_not_due_without_candidate_natural_tick_keeps_previous_planner(pipeline, processing):
+    refresh, state, commands, _ = processing
+    CaptureCoordinator(pipeline).tick(True)
+    result = refresh.apply(signed())
+    assert result["status"] == "blocked" and result["reason"] == "processing_planner_unqualified"
+    assert state["capture-planner"]["running"]
+    assert not any(args[0] == "stop" for args in commands)
+
+
+def test_restart_invalidates_old_planner_qualification_and_restores_predecessor(processing):
+    refresh, state, _, _ = processing
+    assert refresh.apply(signed())["status"] == "completed"
+    state["capture-planner-green"]["started_at"] = now().isoformat()
+    result = refresh.apply()
+    assert result["status"] == "blocked" and result["reason"] == "processing_planner_unqualified"
+    assert state["capture-planner"]["running"] and result["active_planner_slot"] == "blue"
+
+
+@pytest.mark.parametrize("limits", [{"mem_limit": 4 * GIB, "cpus": "2"}, {}])
+def test_cold_role_admission_uses_actual_host_compose_limits(processing, monkeypatch, limits):
+    refresh, _, _, _ = processing
+    capacity = HostCapacity(refresh.directory, refresh.directory, CapacityBudget(candidate_cpus=1))
+    refresh.host = replace(refresh.host, capacity=capacity)
+    original = ComposeReleaseHost._command
+    admitted = []
+
+    def command(self, args, **kwargs):
+        if "config" in args:
+            return json.dumps({"services": {"dagster-daemon": limits}})
+        return original(self, args, **kwargs)
+
+    monkeypatch.setattr(ComposeReleaseHost, "_command", command)
+    monkeypatch.setattr(HostCapacity, "admit", lambda self: admitted.append(self.budget))
+    if not limits:
+        with pytest.raises(ReleaseBlocked, match="processing_role_limits_unavailable"):
+            refresh._admit_role("dagster-daemon")
+        assert not admitted
+    else:
+        refresh._admit_role("dagster-daemon")
+        assert admitted[0].candidate_cpus == 2
+        assert admitted[0].candidate_memory_bytes == 4 * GIB
+        assert admitted[0].memory_reserve_bytes == capacity.budget.memory_reserve_bytes
+
+
+@pytest.mark.parametrize("prior", ["valid", "unsigned", "incompatible"])
+def test_first_processing_after_capture_handover_requires_signed_compatible_old_planner(
+    pipeline, processing, prior
+):
+    refresh, state, commands, _ = processing
+    old = release("a").manifest
+    if prior == "incompatible":
+        old = old.model_copy(update={"schema_max": 28})
+    pipeline.catalog.execute(
+        "INSERT INTO deployment_runs(release_id,target,candidate_manifest,candidate_proof,"
+        "prior_manifest,prior_proof,prior_slot,prior_worker_id,prior_generation,"
+        "candidate_worker_id,schema_version,synthetic) "
+        "VALUES('capture-handover','fixture',%s,%s,%s,%s,'blue','old',1,'new',34,true)",
+        (
+            Jsonb(signed().manifest.model_dump(mode="json")),
+            Jsonb(PROOF),
+            Jsonb(old.model_dump(mode="json")),
+            Jsonb({} if prior == "unsigned" else PROOF),
+        ),
+    )
+    pipeline.catalog.execute(
+        "UPDATE deployment_targets SET active_manifest=%s",
+        (Jsonb(signed().manifest.model_dump(mode="json")),),
+    )
+    state["worker"]["image"] = signed().manifest.image
+    if prior == "valid":
+        assert (
+            refresh.apply(signed(), previous=VerifiedRelease(old, PROOF))["status"] == "completed"
+        )
+    else:
+        with pytest.raises(ReleaseBlocked):
+            refresh.apply(
+                signed(), previous=VerifiedRelease(old, {} if prior == "unsigned" else PROOF)
+            )
+        assert not any(args[0] == "pull" or "up" in args or args[0] == "stop" for args in commands)

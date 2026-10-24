@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import stat
@@ -12,7 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from .catalog import Catalog
-from .contracts import canonical
+from .contracts import canonical, utc
 from .release_control import ReleaseBlocked, ReleaseManifest, ReleaseTrust, VerifiedRelease
 from .release_host import ComposeReleaseHost
 
@@ -121,6 +122,7 @@ class ProcessingRefresh:
             raise ReleaseBlocked("processing_acquisition_unavailable")
         active = ReleaseManifest.model_validate(row["active_manifest"])
         self.trust.verify(active, row["active_proof"])
+        self._active_release = VerifiedRelease(active, row["active_proof"])
         if (
             manifest.capture_protocol != active.capture_protocol
             or not manifest.schema_min <= row["schema_version"] <= manifest.schema_max
@@ -159,11 +161,32 @@ class ProcessingRefresh:
             return container
         return None
 
+    def _admit_role(self, service: str) -> None:
+        capacity = self.host.capacity
+        if capacity is None:
+            return
+        # Compose is private host configuration. Discard its raw output, which
+        # can include environment secrets; retain only explicit numeric limits.
+        try:
+            config = json.loads(
+                self.host._command([*self.host._compose(), "config", "--format", "json", service])
+            )["services"][service]
+            memory, cpus = int(config["mem_limit"]), float(config["cpus"])
+            if memory <= 0 or not math.isfinite(cpus) or cpus <= 0:
+                raise ValueError("Unbounded role")
+        except (KeyError, ValueError, TypeError):
+            raise ReleaseBlocked("processing_role_limits_unavailable") from None
+        budget = replace(
+            capacity.budget,
+            candidate_memory_bytes=max(capacity.budget.candidate_memory_bytes, memory),
+            candidate_cpus=max(capacity.budget.candidate_cpus, cpus),
+        )
+        replace(capacity, budget=budget).admit()
+
     def _start(self, service: str, image: str, manifest: ReleaseManifest, watch: dict) -> str:
         self._acquisition(manifest, watch)
         if not self._running(service, image):
-            if self.host.capacity is not None:
-                self.host.capacity.admit()
+            self._admit_role(service)
             self.host._command(
                 [
                     *self.host._compose(),
@@ -200,27 +223,114 @@ class ProcessingRefresh:
                 raise ReleaseBlocked("image_digest_mismatch")
         self._acquisition(manifest, watch)
 
+    def _planner_identity(self, container: str) -> dict:
+        values = self.host._command(
+            [
+                "inspect",
+                "--format",
+                "{{json .Config.Hostname}}\n{{json .State.StartedAt}}",
+                container,
+            ]
+        ).splitlines()
+        try:
+            hostname, started = (json.loads(value) for value in values)
+            if not isinstance(hostname, str) or not re.fullmatch(
+                r"[A-Za-z0-9_.-]{1,253}", hostname
+            ):
+                raise ValueError("Invalid planner identity")
+            utc(started)
+        except (ValueError, TypeError):
+            raise ReleaseBlocked("processing_planner_identity_unavailable") from None
+        return {"container": container, "hostname": hostname, "started_at": started}
+
+    def _planner_current(self, service: str, image: str, identity: dict) -> bool:
+        container = self._running(service, image)
+        return bool(container and self._planner_identity(container) == identity)
+
+    def _restore_planner(self, row: dict, manifest: ReleaseManifest, watch: dict) -> None:
+        prior = ReleaseManifest.model_validate(row["planner_previous_manifest"])
+        self.trust.verify(prior, row["planner_previous_proof"])
+        self._acquisition(prior, watch)
+        slot = row["planner_previous"]
+        self._start(PLANNERS[slot], prior.image, manifest, watch)
+        row["active_planner_slot"] = slot
+        row.pop("planner_qualification", None)
+        self._persist(row)
+
+    def _ensure_planner(self, row: dict, manifest: ReleaseManifest, watch: dict) -> None:
+        identity = row.get("planner_qualification", {}).get("identity", {})
+        if not self._planner_current(PLANNERS[row["planner_candidate"]], manifest.image, identity):
+            self._restore_planner(row, manifest, watch)
+            raise ReleaseBlocked("processing_planner_qualification_lost")
+
+    def _previous_release(self, row: dict | None, image: str, watch: dict) -> VerifiedRelease:
+        if row and row["manifest"]["image"] == image:
+            previous = VerifiedRelease(
+                ReleaseManifest.model_validate(row["manifest"]), row["proof"]
+            )
+        elif self._active_release.manifest.image == image:
+            previous = self._active_release
+        elif self._previous_supplied is not None:
+            previous = self._previous_supplied
+        else:
+            raise ReleaseBlocked("processing_planner_bootstrap_required")
+        if previous.manifest.image != image:
+            raise ReleaseBlocked("processing_planner_bootstrap_required")
+        self.trust.verify(previous.manifest, previous.proof)
+        self._acquisition(previous.manifest, watch)
+        return previous
+
     def _planner(self, row: dict, manifest: ReleaseManifest, watch: dict) -> None:
+        try:
+            self._qualify_planner(row, manifest, watch)
+        except Exception:
+            self._restore_planner(row, manifest, watch)
+            raise
+
+    def _qualify_planner(self, row: dict, manifest: ReleaseManifest, watch: dict) -> None:
         slot = row["planner_candidate"]
         container = self._start(PLANNERS[slot], manifest.image, manifest, watch)
+        identity = self._planner_identity(container)
+        previous = self._running(
+            PLANNERS[row["planner_previous"]], row["planner_previous_manifest"]["image"]
+        )
+        if (
+            previous
+            and previous != container
+            and self._planner_identity(previous)["hostname"] == identity["hostname"]
+        ):
+            raise ReleaseBlocked("processing_planner_identity_not_unique")
+        qualified = row.get("planner_qualification", {})
+        if qualified.get("identity") != identity:
+            qualified = {}
         # Use the configured scheduler budget. A zero-budget tick would erase due work.
-        for _ in range(10):
+        for _ in range(10 if not qualified else 0):
             self._acquisition(manifest, watch)
             probe = json.loads(
                 self.host._command(
                     ["exec", container, "python", "-m", "sm_trending_products.capture_coordinator"]
                 )
             )
-            if probe.get("status") in {"planned", "not_due"}:
+            completed = probe.get("last_completed_at")
+            if (
+                probe.get("status") in {"planned", "not_due"}
+                and probe.get("last_planner_id") == identity["hostname"]
+                and completed is not None
+                and utc(completed) >= utc(identity["started_at"])
+            ):
+                qualified = {"identity": identity, "completed_at": completed}
                 break
-            if probe.get("status") != "coordinator_busy":
+            if probe.get("status") not in {"coordinator_busy", "not_due"}:
                 raise ReleaseBlocked("processing_planner_probe_failed")
+            if probe.get("status") == "not_due":
+                break
             time.sleep(0.1)
-        else:
-            raise ReleaseBlocked("processing_planner_busy")
-        if not self._running(PLANNERS[slot], manifest.image):
+        if not qualified:
+            raise ReleaseBlocked("processing_planner_unqualified")
+        if not self._planner_current(PLANNERS[slot], manifest.image, identity):
             raise ReleaseBlocked("processing_planner_unavailable")
         self._acquisition(manifest, watch)
+        row["planner_qualification"] = qualified
         row["active_planner_slot"] = slot
         self._persist(row)
         previous = row["planner_previous"]
@@ -228,8 +338,12 @@ class ProcessingRefresh:
             self._acquisition(manifest, watch)
             self.host._command(["stop", "--time=-1", old])
             self._acquisition(manifest, watch)
+        self._ensure_planner(row, manifest, watch)
 
-    def apply(self, release: VerifiedRelease | None = None) -> dict:
+    def apply(
+        self, release: VerifiedRelease | None = None, *, previous: VerifiedRelease | None = None
+    ) -> dict:
+        self._previous_supplied = previous
         with self.host.exclusive(self.host.project):
             row = self._load()
             if release is None:
@@ -248,17 +362,17 @@ class ProcessingRefresh:
             ):
                 raise ReleaseBlocked("processing_refresh_pending")
             if not row or row["manifest"] != manifest.model_dump(mode="json"):
-                previous = row["active_planner_slot"] if row else "blue"
-                old = self._container(PLANNERS[previous])
+                previous_slot = row["active_planner_slot"] if row else "blue"
+                old = self._container(PLANNERS[previous_slot])
                 if not old:
                     raise ReleaseBlocked("processing_planner_bootstrap_required")
                 image, running, _ = self.host._identity(old)
                 if not running:
                     raise ReleaseBlocked("processing_planner_unavailable")
-                ReleaseManifest.model_validate({**manifest.model_dump(mode="json"), "image": image})
-                slot = "green" if previous == "blue" else "blue"
+                previous_release = self._previous_release(row, image, watch)
+                slot = "green" if previous_slot == "blue" else "blue"
                 pins = {name: manifest.image for name in set(ROLE_VARIABLES.values())}
-                pins[f"ACQUISITION_PLANNER_{previous.upper()}_IMAGE"] = image
+                pins[f"ACQUISITION_PLANNER_{previous_slot.upper()}_IMAGE"] = image
                 pins[f"ACQUISITION_PLANNER_{slot.upper()}_IMAGE"] = manifest.image
                 row = {
                     "schema_version": 1,
@@ -266,9 +380,11 @@ class ProcessingRefresh:
                     "manifest": manifest.model_dump(mode="json"),
                     "proof": release.proof,
                     "pins": pins,
-                    "planner_previous": previous,
+                    "planner_previous": previous_slot,
+                    "planner_previous_manifest": previous_release.manifest.model_dump(mode="json"),
+                    "planner_previous_proof": previous_release.proof,
                     "planner_candidate": slot,
-                    "active_planner_slot": previous,
+                    "active_planner_slot": previous_slot,
                     "completed_roles": [],
                     "status": "running",
                 }
@@ -281,10 +397,17 @@ class ProcessingRefresh:
                 self._prepare(manifest, watch)
                 self._planner(row, manifest, watch)
                 for service in PROCESSING_SERVICES:
+                    self._ensure_planner(row, manifest, watch)
                     self._start(service, manifest.image, manifest, watch)
+                    self._ensure_planner(row, manifest, watch)
                     if service not in row["completed_roles"]:
                         row["completed_roles"].append(service)
                     self._persist(row)
+                if any(
+                    not self._running(service, manifest.image) for service in PROCESSING_SERVICES
+                ):
+                    raise ReleaseBlocked("processing_container_unavailable")
+                self._ensure_planner(row, manifest, watch)
                 self._acquisition(manifest, watch)
                 row["status"] = "completed"
                 self._persist(row)

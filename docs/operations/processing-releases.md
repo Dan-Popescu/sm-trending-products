@@ -23,6 +23,12 @@ immutable role image pins. Both files are atomically replaced and synchronized
 before host mutations. For manual Compose operations, load this pin file after
 the private runtime environment, alongside the collector's `slots.env`.
 
+The first refresh after a collector handover receives its signed predecessor
+descriptor from the authorized source release. It must match the actual old
+planner image and the current SQL/protocol contract. Later refreshes use the
+signed processing descriptor already retained privately. An unknown prior image
+blocks overlap; the new image's compatibility claims are never borrowed for it.
+
 The refresh shares the collector release's exclusive host lock. Before and after
 each action it requires the same current acquisition identity/generation, a
 running container, a fresh registry heartbeat and compatible signed metadata.
@@ -34,18 +40,25 @@ Planner replacement overlaps the old and new coordinator. The candidate uses
 the configured scheduling budget and existing transactional planning authority;
 it never uses a zero-budget probe that could advance a due tick without work.
 `coordinator_busy` keeps the predecessor alive and blocks when its bounded retry
-ends. `planned` or `not_due` establishes an executed compatible coordinator path;
-`not_due` does not prove that the candidate has completed a full future plan.
-The active planner pointer is persisted only after that probe and an exact
-running-image check, then the prior planner stops gracefully. A controller crash
-may leave both planners running under the same authoritative cadence lock.
+ends. Qualification requires a naturally due completed plan attributed to the
+candidate's Docker hostname after its current process start. `not_due` qualifies
+only when durable coordinator metadata proves that the candidate's background
+loop already completed that tick; otherwise the old planner remains available
+until a later retry. The proof binds the exact container and start timestamp, so
+a process restart invalidates it. The active planner pointer is persisted only
+after that proof and a matching running-image check, then the prior planner stops
+gracefully. Candidate failure during retirement restores the compatible prior
+planner/pointer and blocks. A controller crash may leave both planners running
+under the same authoritative cadence lock.
 
 Other roles restart individually with `--no-deps --no-build --pull never`.
 Already running exact digests are inspected rather than recreated on retries.
 Normalization interruption is recoverable through committed raw inputs and its
 existing publication leases. The refresh does not reset source cursors, quotas,
 obligations or processing evidence. Capacity preflight applies before a new pull
-or process starts; blocked admission never deletes an unshipped receipt.
+or process starts; a selected role's actual trusted Compose memory/CPU ceilings
+raise the candidate budget when they exceed the collector budget. Missing limits
+block cold recovery. Blocked admission never deletes an unshipped receipt.
 
 Native tests exercise transactional planner probes, acquisition changes and
 private-intent retry. The actual CLI test kills its controller after a host
