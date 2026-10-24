@@ -45,6 +45,10 @@ def parser() -> argparse.ArgumentParser:
     capacity.add_argument("--videos-per-request", type=int, default=20)
     capacity.add_argument("--history-days", type=int, default=90)
     capacity.add_argument("--source-requests-per-day", type=int)
+    cost = command("cost", "Price an explicit scenario without database or cloud credentials")
+    cost.add_argument(
+        "--config", type=Path, required=True, help="Scenario JSON including dated prices"
+    )
     tasks = command(
         "enqueue", "Queue a bounded source request with an idempotency key", synthetic=True
     )
@@ -204,6 +208,10 @@ def main(argv: list[str] | None = None) -> int:
                 history_days=arguments.history_days,
                 source_requests_per_day=arguments.source_requests_per_day,
             ).report(PlanningSettings())
+        elif arguments.command == "cost":
+            from .costs import Scenario, estimate
+
+            result = estimate(Scenario.model_validate_json(arguments.config.read_text()))
         else:
             from .pipeline import Pipeline
 
