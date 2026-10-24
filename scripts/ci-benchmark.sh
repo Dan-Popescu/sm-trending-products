@@ -42,8 +42,15 @@ checks = {
     ] is True,
     "cold_and_warm_cache_measured": all(
         sample["phases"][f"analysis_{stage}_cold"]["cache_before"]["file_bytes"] == 0
+        and sample["phases"][f"analysis_{stage}_cold"]["compute_cache_before"]
+        == {"feature_projections": 0, "raw_windows": 0}
         and sample["phases"][f"analysis_{stage}_cold"]["storage_traffic"]["get_requests"] > 0
-        and sample["phases"][f"analysis_{stage}_warm"]["storage_traffic"]["cache_hits"] > 0
+        and sample["phases"][f"analysis_{stage}_cold"]["analysis_work"]["projection_hits"] == 0
+        and sample["phases"][f"analysis_{stage}_warm"]["analysis_work"]["projection_hits"]
+        == sample["phases"][f"analysis_{stage}_cold"]["analysis_work"]["projection_misses"]
+        > 0
+        and sample["phases"][f"analysis_{stage}_warm"]["analysis_work"]["projection_misses"] == 0
+        and sample["phases"][f"analysis_{stage}_warm"]["storage_traffic"]["get_requests"] == 0
         and sample["phases"][f"analysis_{stage}_warm"]["storage_traffic"]["download_bytes"] == 0
         for stage in ("pre", "post")
     ),
