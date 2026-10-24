@@ -75,6 +75,11 @@ def main():
     if changed.strip():
         parser.error("Commit runtime source before building immutable fixture images")
     docker = ["docker", "--host=unix:///var/run/docker.sock"]
+    driver = command([*docker, "info", "--format", "{{.Driver}}"]).strip()
+    if driver == "vfs" and shutil.disk_usage(root).free < 8 * 1024**3:
+        parser.error(
+            "VFS fixture builds require at least 8 GiB free; remove obsolete fixture images first"
+        )
     installed = command(
         [
             *docker,

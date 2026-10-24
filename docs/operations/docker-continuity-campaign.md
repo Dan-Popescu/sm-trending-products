@@ -29,6 +29,10 @@ publishing to the fixture registry. Runtime source must be committed. The
 collector must run with the runtime foundation's C library. The host Docker daemon
 must support Compose, local registry pulls and `host-gateway` addressing. Allow
 enough disk for two worker containers with the daemon's storage driver.
+The builder requires at least 8 GiB free for VFS: repeated nested fixture
+foundations copy the filesystem and can exhaust a small managed environment.
+Reuse the original foundation, retire obsolete fixture generations, and avoid
+running a disk-heavy native campaign concurrently on that daemon.
 By default the helper extracts the collector from that foundation. Use
 `--collector-binary` only when testing newly compiled acquisition code with an
 otherwise unchanged dependency foundation.
@@ -47,6 +51,8 @@ foundation is `sm-trending-products:local`; `CONTINUITY_BASE_IMAGE` can select
 another already built runtime. The wrapper creates and cleans up its own registry
 and writes JUnit results plus sanitized evidence under `output/continuity-*`.
 Archive the JSON evidence and JUnit file, not the extracted collector executable.
+For local validation with an older dependency foundation,
+`CONTINUITY_COLLECTOR_BINARY` supplies the newly compiled collector directly.
 
 The campaign checks these externally visible behaviors:
 
@@ -56,8 +62,10 @@ The campaign checks these externally visible behaviors:
 - An accepted one-shot HTTP response completes and becomes durable before its
   predecessor is retired. Both images remain alive while that operation is busy.
 - A running candidate without capture proof leaves the predecessor admitting
-  work. Rollback drains and stops that candidate before declaring the attempt
-  aborted, and the predecessor continues collecting.
+  work. Rollback remains blocked while that candidate has an accepted one-shot
+  operation; the predecessor continues collecting during that drain. The
+  candidate's response becomes durable before it is stopped and the attempt is
+  declared aborted.
 - Compose restart retains a requested pause. Delayed drain or resume commands
   cannot affect the replacement generation, and only its explicit resume permits
   new source requests.

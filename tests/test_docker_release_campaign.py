@@ -288,11 +288,21 @@ class Campaign:
         )
 
     def done(self, task_id):
-        return eventually(
-            lambda: self.pipeline.catalog.one(
-                "SELECT * FROM collection_tasks WHERE task_id=%s AND state='done'", (task_id,)
+        try:
+            return eventually(
+                lambda: self.pipeline.catalog.one(
+                    "SELECT * FROM collection_tasks WHERE task_id=%s AND state='done'", (task_id,)
+                )
             )
-        )
+        except AssertionError:
+            state = self.pipeline.catalog.one(
+                "SELECT state,last_error,attempts,lease_owner,due_at "
+                "FROM collection_tasks WHERE task_id=%s",
+                (task_id,),
+            )
+            raise AssertionError(
+                json.dumps({"task": state, "requests": self.source.requests}, default=str)
+            ) from None
 
     def controller(self):
         return DeploymentController(
@@ -473,6 +483,26 @@ def test_unqualified_actual_candidate_rolls_back_without_stopping_the_predecesso
     result = campaign.controller().apply(planned["release_id"])
     assert result["reason"] == "capture_proof_missing"
     assert campaign.pipeline.worker_control.status("fixture-blue")["state"] == "running"
+    # Route a real accepted operation to the candidate, then let the controller
+    # restore predecessor admission while that unqualified request is in flight.
+    control = campaign.pipeline.worker_control
+    old = control.status("fixture-blue")
+    control.request_drain("fixture-blue", old["generation"])
+    campaign.worker("fixture-blue", "drained")
+    held = campaign.enqueue("held")
+    assert campaign.source.entered.wait(15)
+    result = campaign.controller().apply(planned["release_id"])
+    assert result["reason"] == "capture_proof_missing"
+    assert control.status("fixture-blue")["state"] == "running"
+    result = campaign.controller().rollback(planned["release_id"])
+    assert result["status"] == "blocked" and result["reason"] == "candidate_busy"
+    assert campaign.host.healthy(
+        campaign.project, campaign.green.manifest, "green", planned["candidate_worker_id"]
+    )
+    campaign.done(campaign.enqueue("during-candidate-drain"))
+    campaign.source.release.set()
+    campaign.done(held)
+    campaign.worker(planned["candidate_worker_id"], "drained")
     result = eventually(
         lambda: (
             row

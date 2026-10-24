@@ -8,15 +8,20 @@ task_docker=(env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_TLS -u DOCKER_TLS_VE
 task_registry="sm-continuity-ci-${RANDOM}-${RANDOM}"
 cleanup() {
   "${task_docker[@]}" stop --timeout=5 "$task_registry" >/dev/null 2>&1 || true
-  "${task_docker[@]}" rm "$task_registry" >/dev/null 2>&1 || true
+  "${task_docker[@]}" rm --volumes "$task_registry" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 "${task_docker[@]}" run --detach --name "$task_registry" \
   --publish 127.0.0.1:80:5000 registry:2.8.3 >/dev/null
-uv run --locked python scripts/build-continuity-fixtures.py \
-  --base-image "${CONTINUITY_BASE_IMAGE:-sm-trending-products:local}" \
+task_fixture_arguments=(
+  --base-image "${CONTINUITY_BASE_IMAGE:-sm-trending-products:local}"
   --output "$PWD/output/continuity-fixture-images.json"
+)
+if [[ -n "${CONTINUITY_COLLECTOR_BINARY:-}" ]]; then
+  task_fixture_arguments+=(--collector-binary "$CONTINUITY_COLLECTOR_BINARY")
+fi
+uv run --locked python scripts/build-continuity-fixtures.py "${task_fixture_arguments[@]}"
 PYTHONPATH=src:tests \
 CONTINUITY_DOCKER_MANIFEST="$PWD/output/continuity-fixture-images.json" \
 CONTINUITY_DOCKER_EVIDENCE_DIR="$PWD/output/continuity-evidence" \
