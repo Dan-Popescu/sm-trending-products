@@ -49,6 +49,9 @@ class Host:
             and self.running.get(slot) == manifest.image
         )
 
+    def absent(self, target, slot):
+        return slot not in self.running
+
     def retire(self, target, manifest, slot, worker_id):
         self.events.append("retire")
         self.running.pop(slot, None)

@@ -49,7 +49,8 @@ state=Path(os.environ['STATE'])
 value=json.loads(state.read_text())
 if args[0]=='pull': pass
 elif args[:2]==['image','inspect']: print(json.dumps([value['image']]))
-elif args[0]=='compose' and 'ps' in args: print('c'*64)
+elif args[0]=='compose' and 'ps' in args:
+    if value.get('exists',True): print('c'*64)
 elif args[0]=='compose' and 'up' in args:
     value['running']=True;state.write_text(json.dumps(value))
 elif args[0]=='inspect':
@@ -117,6 +118,11 @@ else: raise SystemExit(9)
         denied.start("fixture", manifest(), "green", "candidate")
     after = [json.loads(line) for line in trace.read_text().splitlines()]
     assert sum(row[0] == "compose" and "up" in row for row in after) == 1
+    assert not host.absent("fixture", "green")  # A stopped container is still present.
+    value = json.loads(state.read_text())
+    value["exists"] = False
+    state.write_text(json.dumps(value))
+    assert host.absent("fixture", "green")
     with pytest.raises(ValueError, match="Unexpected processing image override"):
         replace(host, role_images={"POSTGRES_IMAGE": image})
     with pytest.raises(ValueError, match="immutable image digests"):

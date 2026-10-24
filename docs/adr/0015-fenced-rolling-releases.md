@@ -94,6 +94,11 @@ rechecks candidate health/evidence and the drain barrier before retiring a prior
 worker, including after the active pointer was committed.
 
 Rollback before commit cancels candidate admission after restoring the predecessor.
+If preparation never produced a registered worker, cancellation requires verified
+container absence and zero accepted leases under the authoritative admission
+lock. A stopped identity with durable drain intent then prevents a delayed
+startup or legacy claim from reopening work. Unknown containers or accepted work
+remain blocked; no unregistered process is killed.
 Rollback after commit creates a reverse handover to the verified compatible prior
 image. Its explicit journal reference allows recovery from an unhealthy current
 image. SQL data, quotas, cursors and captured inputs are not rewound. An aborted

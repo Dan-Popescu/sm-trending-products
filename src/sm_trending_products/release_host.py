@@ -240,6 +240,10 @@ class ComposeReleaseHost:
         container = self._container(slot)
         return bool(container and self._identity(container) == (manifest.image, True, worker_id))
 
+    def absent(self, target: str, slot: str) -> bool:
+        self._target(target)
+        return self._container(slot) is None
+
     def retire(self, target: str, manifest: ReleaseManifest, slot: str, worker_id: str) -> None:
         self._target(target)
         container = self._container(slot)
@@ -262,6 +266,9 @@ class CatalogWorkerGate:
 
     def status(self, worker_id: str) -> dict | None:
         return self.control.status(worker_id)
+
+    def cancel_unregistered(self, worker_id: str, synthetic: bool) -> bool:
+        return self.control.cancel_unregistered(worker_id, synthetic=synthetic)
 
     def request_drain(self, worker_id: str, generation: int) -> dict:
         status = self.control.status(worker_id)

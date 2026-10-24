@@ -107,6 +107,7 @@ class WorkerControl:
                     (row["heartbeat_at"] if row else None, stale_after_seconds),
                 ).fetchone(),
             )
+
             if leases["unexpired_leases"] or (
                 row is not None and row["state"] != "stopped" and not stale["stale"]
             ):
@@ -125,6 +126,29 @@ class WorkerControl:
                     (worker_id, synthetic),
                 ).fetchone(),
             )
+
+    def cancel_unregistered(self, worker_id: str, *, synthetic: bool) -> bool:
+        """Fence an absent, never-registered identity with zero accepted work.
+
+        The host controller must prove its fixed slot has no container first.
+        No running worker is acknowledged or stopped here. The admission lock
+        prevents a legacy claim racing the zero-lease check; a delayed startup
+        inherits the durable pause when it eventually registers.
+        """
+        if not worker_id or len(worker_id) > 200:
+            raise ValueError("Invalid worker identity")
+        with self.catalog.transaction() as connection:
+            if self._lock(connection, worker_id) is not None:
+                return False
+            if self._leases(connection, worker_id)["owned_leases"]:
+                return False
+            connection.execute(
+                "INSERT INTO collection_workers(worker_id,generation,synthetic,state,"
+                "drain_requested_at,stopped_at) "
+                "VALUES(%s,1,%s,'stopped',clock_timestamp(),clock_timestamp())",
+                (worker_id, synthetic),
+            )
+            return True
 
     def heartbeat(self, worker_id: str, generation: int) -> dict:
         with self.catalog.transaction() as connection:

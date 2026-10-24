@@ -158,12 +158,14 @@ class ReleaseHost(Protocol):
         self, target: str, manifest: ReleaseManifest, slot: str, worker_id: str
     ) -> bool: ...
     def retire(self, target: str, manifest: ReleaseManifest, slot: str, worker_id: str) -> None: ...
+    def absent(self, target: str, slot: str) -> bool: ...
 
 
 class WorkerGate(Protocol):
     def status(self, worker_id: str) -> dict | None: ...
     def request_drain(self, worker_id: str, generation: int) -> dict: ...
     def resume(self, worker_id: str, generation: int) -> Any: ...
+    def cancel_unregistered(self, worker_id: str, synthetic: bool) -> bool: ...
 
 
 class CaptureVerifier(Protocol):
@@ -448,6 +450,11 @@ class DeploymentController:
         slot = "green" if row["prior_slot"] == "blue" else "blue"
         worker = self.workers.status(row["candidate_worker_id"])
         if not worker:
+            if self.host.absent(row["target"], slot) and self.workers.cancel_unregistered(
+                row["candidate_worker_id"], row["synthetic"]
+            ):
+                self._record(connection, row, fence, status="aborted")
+                return
             raise ReleaseBlocked("candidate_worker_unavailable")
         if worker["generation"] != row["candidate_generation"]:
             if not self.host.healthy(row["target"], candidate, slot, row["candidate_worker_id"]):
