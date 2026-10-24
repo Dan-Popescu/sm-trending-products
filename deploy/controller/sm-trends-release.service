@@ -1,0 +1,29 @@
+[Unit]
+Description=Resume and pull signed SM Trends pilot deployment
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/sm-trends/runtime
+ExecStart=/opt/sm-trends/controller/bin/python -m sm_trending_products.release_cli pull --config /etc/sm-trends/release-controller.json
+SuccessExitStatus=2
+# Docker pull has a bounded timeout. A graceful stop is never changed to SIGKILL.
+TimeoutStartSec=10min
+TimeoutStopSec=1min
+KillMode=process
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/sm-trends/release
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

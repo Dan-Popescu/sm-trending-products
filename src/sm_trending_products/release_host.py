@@ -7,12 +7,17 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .release_control import IMAGE_DIGEST_PATTERN, ReleaseBlocked, ReleaseManifest
+
+if TYPE_CHECKING:
+    from .release_capacity import HostCapacity
 
 SLOT_SERVICES = {"blue": "worker", "green": "worker-green"}
 
@@ -33,6 +38,8 @@ class ComposeReleaseHost:
     slot_images: Mapping[str, str]
     slot_workers: Mapping[str, str]
     docker: str = "/usr/bin/docker"
+    slot_state_file: Path | None = None
+    capacity: HostCapacity | None = None
 
     def __post_init__(self):
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", self.project):
@@ -54,6 +61,33 @@ class ComposeReleaseHost:
             for value in self.slot_workers.values()
         ):
             raise ValueError("Invalid capture worker identity")
+        if self.slot_state_file is not None and not self.slot_state_file.is_absolute():
+            raise ValueError("Slot pin path must be absolute")
+
+    def persist_slots(self) -> None:
+        """Publish only immutable image/worker pins, never Compose credentials."""
+        if self.slot_state_file is None:
+            return
+        path = self.slot_state_file
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=path.parent, prefix=".slots-", delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            try:
+                for slot in SLOT_SERVICES:
+                    handle.write(f"CAPTURE_{slot.upper()}_IMAGE={self.slot_images[slot]}\n")
+                    handle.write(f"CAPTURE_{slot.upper()}_WORKER_ID={self.slot_workers[slot]}\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+                os.replace(temporary, path)
+                descriptor = os.open(path.parent, os.O_DIRECTORY | os.O_RDONLY)
+                try:
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+            finally:
+                temporary.unlink(missing_ok=True)
 
     @contextmanager
     def exclusive(self, target: str) -> Iterator[None]:
@@ -149,6 +183,8 @@ class ComposeReleaseHost:
         self._target(target)
         if self.slot_images.get(slot) != manifest.image:
             raise ReleaseBlocked("capture_slot_configuration_mismatch")
+        if self.capacity is not None:
+            self.capacity.admit()
         self._command(["pull", manifest.image], timeout=300)
         try:
             digests = json.loads(
@@ -172,6 +208,9 @@ class ComposeReleaseHost:
                 if (image, worker) != (manifest.image, worker_id):
                     raise ReleaseBlocked("candidate_slot_occupied")
                 return
+        if self.capacity is not None:
+            self.capacity.admit()
+        self.persist_slots()
         self._command(
             [*self._compose(), "up", "--detach", "--no-deps", "--no-build", SLOT_SERVICES[slot]]
         )

@@ -2,6 +2,7 @@
 
 import json
 import sys
+from dataclasses import replace
 
 import pytest
 
@@ -61,6 +62,14 @@ else: raise SystemExit(9)
     monkeypatch.setenv("TRACE", str(trace))
     monkeypatch.setenv("STATE", str(state))
     monkeypatch.setenv("DOCKER_HOST", "tcp://unrelated-host:2375")
+
+    class Capacity:
+        calls = 0
+
+        def admit(self):
+            self.calls += 1
+
+    capacity = Capacity()
     host = ComposeReleaseHost(
         project="fixture",
         compose_file=tmp_path / "compose.yaml",
@@ -69,6 +78,7 @@ else: raise SystemExit(9)
         docker=str(binary),
         slot_images={"blue": "ghcr.io/example/pipeline@sha256:" + "a" * 64, "green": image},
         slot_workers={"blue": "old", "green": "candidate"},
+        capacity=capacity,
     )
     with host.exclusive("fixture"):
         with pytest.raises(ReleaseBlocked, match="deployment_host_busy"):
@@ -76,6 +86,8 @@ else: raise SystemExit(9)
                 pytest.fail("A second controller acquired the same host")
         host.prepare("fixture", manifest(), "green")
         host.start("fixture", manifest(), "green", "candidate")
+        host.start("fixture", manifest(), "green", "candidate")
+        assert capacity.calls == 2  # Pull plus first start, no double-count for existing slot.
         assert host.healthy("fixture", manifest(), "green", "candidate")
         host.retire("fixture", manifest(), "green", "candidate")
     commands = [json.loads(line) for line in trace.read_text().splitlines()]
@@ -86,6 +98,20 @@ else: raise SystemExit(9)
     assert all(
         not set(row) & {"down", "rm", "postgres", "--volumes", "--force"} for row in commands
     )
+
+    class Denied:
+        def admit(self):
+            raise ReleaseBlocked("insufficient_release_capacity")
+
+    denied = replace(host, capacity=Denied())
+    before = trace.read_bytes()
+    with pytest.raises(ReleaseBlocked, match="insufficient_release_capacity"):
+        denied.prepare("fixture", manifest(), "green")
+    assert trace.read_bytes() == before
+    with pytest.raises(ReleaseBlocked, match="insufficient_release_capacity"):
+        denied.start("fixture", manifest(), "green", "candidate")
+    after = [json.loads(line) for line in trace.read_text().splitlines()]
+    assert sum(row[0] == "compose" and "up" in row for row in after) == 1
 
 
 def test_release_verifier_fails_closed_and_pins_host_identity_not_bundle_claims(tmp_path):
