@@ -20,6 +20,15 @@ if TYPE_CHECKING:
     from .release_capacity import HostCapacity
 
 SLOT_SERVICES = {"blue": "worker", "green": "worker-green"}
+ROLE_IMAGE_VARIABLES = frozenset(
+    {
+        "NORMALIZER_IMAGE",
+        "ANALYTICS_IMAGE",
+        "DASHBOARD_IMAGE",
+        "ACQUISITION_PLANNER_BLUE_IMAGE",
+        "ACQUISITION_PLANNER_GREEN_IMAGE",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +49,7 @@ class ComposeReleaseHost:
     docker: str = "/usr/bin/docker"
     slot_state_file: Path | None = None
     capacity: HostCapacity | None = None
+    role_images: Mapping[str, str] | None = None
 
     def __post_init__(self):
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", self.project):
@@ -63,6 +73,13 @@ class ComposeReleaseHost:
             raise ValueError("Invalid capture worker identity")
         if self.slot_state_file is not None and not self.slot_state_file.is_absolute():
             raise ValueError("Slot pin path must be absolute")
+        if self.role_images is not None:
+            if not set(self.role_images) <= ROLE_IMAGE_VARIABLES:
+                raise ValueError("Unexpected processing image override")
+            if any(
+                not re.fullmatch(IMAGE_DIGEST_PATTERN, image) for image in self.role_images.values()
+            ):
+                raise ValueError("Processing roles require immutable image digests")
 
     def persist_slots(self) -> None:
         """Publish only immutable image/worker pins, never Compose credentials."""
@@ -124,6 +141,9 @@ class ComposeReleaseHost:
         for slot in SLOT_SERVICES:
             environment[f"CAPTURE_{slot.upper()}_IMAGE"] = self.slot_images[slot]
             environment[f"CAPTURE_{slot.upper()}_WORKER_ID"] = self.slot_workers[slot]
+        for variable in ROLE_IMAGE_VARIABLES:
+            environment.pop(variable, None)
+        environment.update(self.role_images or {})
         try:
             result = subprocess.run(
                 [self.docker, "--host=unix:///var/run/docker.sock", *arguments],

@@ -41,6 +41,8 @@ import json,os,sys
 from pathlib import Path
 args=sys.argv[1:]
 assert args.pop(0)=='--host=unix:///var/run/docker.sock'
+assert os.environ['NORMALIZER_IMAGE']==os.environ['CAPTURE_GREEN_IMAGE']
+assert 'ANALYTICS_IMAGE' not in os.environ
 with Path(os.environ['TRACE']).open('a') as handle:
     handle.write(json.dumps(args)+'\\n')
 state=Path(os.environ['STATE'])
@@ -62,6 +64,8 @@ else: raise SystemExit(9)
     monkeypatch.setenv("TRACE", str(trace))
     monkeypatch.setenv("STATE", str(state))
     monkeypatch.setenv("DOCKER_HOST", "tcp://unrelated-host:2375")
+    monkeypatch.setenv("NORMALIZER_IMAGE", "untrusted:mutable")
+    monkeypatch.setenv("ANALYTICS_IMAGE", "untrusted:mutable")
 
     class Capacity:
         calls = 0
@@ -79,6 +83,7 @@ else: raise SystemExit(9)
         slot_images={"blue": "ghcr.io/example/pipeline@sha256:" + "a" * 64, "green": image},
         slot_workers={"blue": "old", "green": "candidate"},
         capacity=capacity,
+        role_images={"NORMALIZER_IMAGE": image},
     )
     with host.exclusive("fixture"):
         with pytest.raises(ReleaseBlocked, match="deployment_host_busy"):
@@ -112,6 +117,10 @@ else: raise SystemExit(9)
         denied.start("fixture", manifest(), "green", "candidate")
     after = [json.loads(line) for line in trace.read_text().splitlines()]
     assert sum(row[0] == "compose" and "up" in row for row in after) == 1
+    with pytest.raises(ValueError, match="Unexpected processing image override"):
+        replace(host, role_images={"POSTGRES_IMAGE": image})
+    with pytest.raises(ValueError, match="immutable image digests"):
+        replace(host, role_images={"NORMALIZER_IMAGE": "untrusted:latest"})
 
 
 def test_release_verifier_fails_closed_and_pins_host_identity_not_bundle_claims(tmp_path):
