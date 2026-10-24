@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import defaultdict
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any
@@ -10,8 +10,8 @@ from uuid import uuid4
 
 from psycopg.types.json import Jsonb
 
-from .analysis_batches import bounded_product_batches
-from .analytics import AssessmentIdentity, assess, normalize_assessments
+from .analytics import AssessmentIdentity
+from .assessment_service import AssessmentService
 from .catalog import Catalog
 from .collector import redact
 from .contracts import (
@@ -134,52 +134,37 @@ class EvaluationService:
         identity = AssessmentIdentity.resolve(
             products, links, cutoff, synthetic, policy.min_link_confidence
         )
-        counts: Counter[str] = Counter()
-        rows: list[dict[str, Any]] = []
-        input_scopes = []
         since = cutoff - timedelta(days=policy.lookback_days)
-
-        def load(keys: set[str]) -> tuple[list[Observation], set[str]]:
-            return self._read_scope(cutoff, synthetic, keys, since, cutoff)
-
-        for batch, _keys, (observations, _dependencies) in bounded_product_batches(
-            products, links, self.history.settings.analysis_product_batch_size, load
-        ):
-            input_scopes.extend(
-                self.provenance.audit_products(observations, identity.owners, synthetic)
-            )
-            eligible = eligible_evidence(
+        # _source_scope also uses the source names of future capability entries;
+        # bind that complete metadata contract plus currently visible grants.
+        capabilities = metadata["capabilities"]
+        eligibility_version = digest(
+            {
+                "format": "evaluation-eligibility-v1",
+                "market": config.market,
+                "capabilities": capabilities,
+                "visible_capabilities": [row for row in capabilities if row.available_at <= cutoff],
+            }
+        )
+        prepared = AssessmentService(self.history, self.provenance).prepare(
+            products,
+            links,
+            identity,
+            cutoff,
+            synthetic,
+            policy,
+            eligibility=lambda observations: eligible_evidence(
                 observations,
                 cutoff,
                 synthetic,
                 config.market,
-                metadata["capabilities"],
+                capabilities,
                 since=since,
-            )
-            counts.update(
-                entity_key
-                for entity_key, _observed_at in {
-                    (row.entity_key, utc(row.observed_at)) for row in eligible
-                }
-            )
-            rows.extend(
-                self.provenance.compact(
-                    assess(
-                        eligible,
-                        batch,
-                        links,
-                        cutoff,
-                        synthetic,
-                        policy,
-                        normalize=False,
-                        identity=identity,
-                    ),
-                    eligible,
-                    synthetic,
-                )
-            )
-
-        normalized = normalize_assessments(rows, policy)
+            ),
+            eligibility_version=eligibility_version,
+        )
+        normalized = prepared.rows
+        counts, input_scopes = prepared.observation_counts, prepared.input_scopes
         snapshot = freeze_decision(
             [],
             products,
@@ -513,21 +498,22 @@ class EvaluationService:
                 datasets.update(used)
             return observations
 
-        payload = mature_decision(
-            snapshot,
-            [],
-            cutoff,
-            product_evidence_loader=load_product,
-            verified_evidence_refs=None if compact else snapshot["evidence_refs"],
-            provenance_verified=compact,
-            outcome_compactor=(
-                lambda outcomes, observations: self.provenance.compact(
-                    outcomes, observations, bool(snapshot["synthetic"])
+        with self.history.read_session():
+            payload = mature_decision(
+                snapshot,
+                [],
+                cutoff,
+                product_evidence_loader=load_product,
+                verified_evidence_refs=None if compact else snapshot["evidence_refs"],
+                provenance_verified=compact,
+                outcome_compactor=(
+                    lambda outcomes, observations: self.provenance.compact(
+                        outcomes, observations, bool(snapshot["synthetic"])
+                    )
                 )
+                if compact
+                else None,
             )
-            if compact
-            else None,
-        )
         if compact:
             payload["input_provenance"] = self.provenance.combine(
                 input_scopes, bool(snapshot["synthetic"])

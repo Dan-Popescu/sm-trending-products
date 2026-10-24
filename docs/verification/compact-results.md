@@ -97,6 +97,38 @@ even when it produces a censored outcome with no displayed successful evidence.
 Earlier-cutoff successful reports remain immutable and valid when only that later
 correction is invalidated.
 
+## Follow-up attachment reduction
+
+The counters above deliberately remain those of revision `839d2ca`. A subsequent
+publication-scope change removes duplicate direct assessment edges to product
+roots already included under the combined input root. A native three-product
+regression verifies one new edge for an unchanged run, instead of four, and
+verifies that transitive invalidation still reaches the assessment. Separate
+coverage retains an uncovered evidence subset and the single-product root.
+For the common all-input case of this 100-product fixture, the same construction
+requires one new attachment rather than 101; this is structural arithmetic, not
+a rerun of the timings above. Provenance objects and result bytes stay unchanged.
+
+## Follow-up reuse with a cold process memo
+
+A separate [native prior-module comparison](provenance-node-plan.json) measures
+only provenance publication for two products, each with 20 videos and 120
+samples. The actual module from `3c417e4` is the oracle. Each product starts with
+its process memo cleared; the candidate disables its global memo entirely.
+Rebuilding an already published product root requires **one catalog transaction
+instead of 39**, with zero PUTs and GETs in both implementations. Root descriptors,
+object checksums and bytes match exactly across both implementations. Local
+publication-only timings were 0.011–0.012 seconds versus 0.105–0.178 seconds;
+these are not full assessment timings.
+
+For one appended 20-video wave on matched separate products, both writers create
+three nodes and upload 6,896 bytes. The bounded plan uses ten catalog transactions
+versus 45 in the prior writer, measured at 0.038 versus 0.118 seconds locally.
+A new node still costs three transactions: staging, the existing guarded object
+upload, and final source/publication checks. The plan reduces redundant lookups;
+it does not remove those fences. Node/byte budget flushes, descriptor collisions,
+staged recovery and concurrent retirement are verified separately.
+
 ## Repeat
 
 After installing development dependencies and configuring an isolated native

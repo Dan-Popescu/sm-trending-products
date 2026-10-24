@@ -975,49 +975,54 @@ class Maintenance:
         cursor_sql = "AND (created_at,object_key)>(%s,%s) " if after else ""
         cursor_params = tuple(after) if after else ()
         pending = self.catalog.all(
-            "SELECT object_key,created_at FROM retention_objects WHERE state='pending' "
+            "SELECT object_key,created_at,COALESCE((to_jsonb(retention_objects)->>'local_only')"
+            "::boolean,false) AS local_only FROM retention_objects WHERE state='pending' "
             + cursor_sql
             + "ORDER BY created_at,object_key LIMIT %s",
             (*cursor_params, limit),
         )
         if not pending:
             return result
-        try:
-            if budget:
-                budget.request()
-            self.history.metrics["get_requests"] += 1
-            versioning = self.history.client.get_bucket_versioning(Bucket=self.history.bucket)
-            versioned = versioning.get("Status") in {"Enabled", "Suspended"}
-        except _BudgetExhausted as error:
-            result["stop_reason"] = str(error)
-            return result
-        except (BotoCoreError, ClientError):
-            self.catalog.execute(
-                "UPDATE retention_objects SET attempts=attempts+1,"
-                "last_error='versioning_verification_failed' WHERE object_key=ANY(%s)",
-                ([item["object_key"] for item in pending],),
-            )
-            result.update(
-                failed=len(pending),
-                attempted=len(pending),
-                cursor=(pending[-1]["created_at"], pending[-1]["object_key"]),
-            )
-            return result
+        remote_keys = [item["object_key"] for item in pending if not item["local_only"]]
+        versioned = versioning_failed = False
+        if remote_keys:
+            try:
+                if budget:
+                    budget.request()
+                self.history.metrics["get_requests"] += 1
+                versioning = self.history.client.get_bucket_versioning(Bucket=self.history.bucket)
+                versioned = versioning.get("Status") in {"Enabled", "Suspended"}
+            except _BudgetExhausted as error:
+                result["stop_reason"] = str(error)
+                return result
+            except (BotoCoreError, ClientError):
+                self.catalog.execute(
+                    "UPDATE retention_objects SET attempts=attempts+1,"
+                    "last_error='versioning_verification_failed' WHERE object_key=ANY(%s)",
+                    (remote_keys,),
+                )
+                versioning_failed = True
         for item in pending:
             key = item["object_key"]
+            if versioning_failed and not item["local_only"]:
+                result["failed"] += 1
+                result["attempted"] += 1
+                result["cursor"] = (item["created_at"], key)
+                continue
             try:
                 if budget:
                     budget.check()
                 with cache_object_lock(self.history, key):
-                    if versioned:
-                        self._delete_object_versions(key, budget=budget)
-                    else:
-                        if budget:
-                            budget.request()
-                        self.history.metrics["delete_requests"] = (
-                            self.history.metrics.get("delete_requests", 0) + 1
-                        )
-                        self.history.client.delete_object(Bucket=self.history.bucket, Key=key)
+                    if not item["local_only"]:
+                        if versioned:
+                            self._delete_object_versions(key, budget=budget)
+                        else:
+                            if budget:
+                                budget.request()
+                            self.history.metrics["delete_requests"] = (
+                                self.history.metrics.get("delete_requests", 0) + 1
+                            )
+                            self.history.client.delete_object(Bucket=self.history.bucket, Key=key)
                     with (self.pipeline.settings.cache_dir / ".cache.lock").open("a") as lock:
                         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
                         cached = (

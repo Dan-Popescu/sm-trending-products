@@ -10,8 +10,12 @@ import fcntl
 import hashlib
 import os
 import stat
+import threading
+from collections import OrderedDict
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO
 from uuid import uuid4
@@ -22,6 +26,27 @@ if TYPE_CHECKING:
 
 class CacheCapacityError(ValueError):
     """Active readers/downloads leave insufficient shared-cache space."""
+
+
+# Operation-local reuse must not pin a large analytical corpus. These are upper
+# bounds, further reduced to one quarter of the shared cache's payload budget.
+_SESSION_MAX_BYTES = 256 * 1024 * 1024
+_SESSION_MAX_PINS = 64
+_Identity = tuple[int, int, int, int, int]
+
+
+def _identity(path: Path) -> _Identity:
+    info = path.stat(follow_symlinks=False)
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _declared_size(obj: dict[str, Any]) -> int | None:
+    declared = obj.get("bytes")
+    if declared is not None and (
+        isinstance(declared, bool) or not isinstance(declared, int) or declared < 0
+    ):
+        raise ValueError("Invalid object size")
+    return declared
 
 
 def file_digest(path: Path) -> str:
@@ -50,6 +75,7 @@ class _Cache:
         self.pins = self._directory(".pins")
         self.downloads = self._directory(".downloads")
         self.locks = self._directory(".object-locks")
+        self.verified_identity: _Identity | None = None
 
     def _directory(self, name: str) -> Path:
         path = self.root / name
@@ -182,7 +208,9 @@ class _Cache:
         finally:
             handle.close()
 
-    def _try_cached(self, local: Path, expected: str) -> tuple[Path, Path, BinaryIO] | None:
+    def _try_cached(
+        self, local: Path, expected: str, *, refresh: bool = True
+    ) -> tuple[Path, Path, BinaryIO] | None:
         with self.global_lock():
             if local.is_symlink():
                 raise ValueError("Cache file escaped its configured root")
@@ -191,10 +219,18 @@ class _Cache:
             return None
         target, handle = pinned
         try:
+            before = _identity(target)
             if file_digest(target) == expected:
+                after = _identity(target)
                 with self.global_lock():
                     if _regular(local) and local.stat().st_ino == target.stat().st_ino:
-                        local.touch()
+                        if refresh:
+                            local.touch()
+                    # Ordinary reads preserve their existing verification path.
+                    # Sessions can reuse only a checksum whose inode metadata
+                    # stayed unchanged throughout verification and afterwards.
+                    if not refresh and before == after == _identity(target):
+                        self.verified_identity = after
                 self.history.metrics["cache_hits"] += 1
                 return local, target, handle
             with self.global_lock():
@@ -206,32 +242,88 @@ class _Cache:
         self.release(target, handle)
         return None
 
-    def obtain(self, obj: dict[str, Any]) -> tuple[Path, Path, BinaryIO]:
-        key, expected = obj["key"], obj["sha256"]
-        local = self.root / hashlib.sha256(key.encode()).hexdigest()
+    def _reconcile_budget(self, local: Path) -> None:
         configuration = (self.root, self.limit)
         if getattr(self.history, "_cache_budget_configuration", None) != configuration:
             with self.global_lock():
                 if getattr(self.history, "_cache_budget_configuration", None) != configuration:
-                    # A restart may reuse payloads admitted under a larger limit.
-                    # Reconcile once per root/limit, preserving the requested warm
-                    # input when it fits. Live pins/reservations still fence eviction.
+                    # Reconcile once after restart or a reduced cache limit.
                     keep = local if _regular(local) and local.stat().st_size <= self.limit else None
                     self._make_room(0, keep=keep)
                     self.history._cache_budget_configuration = configuration
-        declared = obj.get("bytes")
-        if declared is not None and (
-            isinstance(declared, bool) or not isinstance(declared, int) or declared < 0
+
+    def obtain_local(self, obj: dict[str, Any]) -> tuple[Path, Path, BinaryIO] | None:
+        """An optional local state never invokes a provider on a miss."""
+        key, expected = obj["key"], obj["sha256"]
+        if not key.startswith("local-feature-state/") or obj.get("local_only") is not True:
+            raise ValueError("Not a local projection descriptor")
+        local = self.root / hashlib.sha256(key.encode()).hexdigest()
+        self._reconcile_budget(local)
+        return self._try_cached(local, expected)
+
+    def admit_local(
+        self, body: bytes, descriptor: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
+        """Use the ordinary global reservations, budget and immutable object names."""
+        checksum = hashlib.sha256(body).hexdigest()
+        key = f"local-feature-state/{checksum}.parquet"
+        obj = descriptor or {"key": key, "sha256": checksum, "bytes": len(body), "local_only": True}
+        if (
+            not obj["key"].startswith("local-feature-state/")
+            or obj.get("local_only") is not True
+            or obj["sha256"] != checksum
+            or obj["bytes"] != len(body)
         ):
-            raise ValueError("Invalid object size")
+            raise ValueError("Invalid local projection descriptor")
+        key = obj["key"]
+        if len(body) > self.limit:
+            return None
+        local = self.root / hashlib.sha256(key.encode()).hexdigest()
+        self._reconcile_budget(local)
+        with self.object_lock(key):
+            hit = self._try_cached(local, checksum)
+            if hit is not None:
+                self.release(hit[1], hit[2])
+                return obj
+            record = self.downloads / (uuid4().hex + ".reserve")
+            temporary = record.with_suffix(".part")
+            reservation: BinaryIO | None = None
+            try:
+                with self.global_lock():
+                    self._make_room(len(body))
+                    reservation = _open(record)
+                    fcntl.flock(reservation.fileno(), fcntl.LOCK_EX)
+                    reservation.write(str(len(body)).encode())
+                    reservation.flush()
+                with _open(temporary) as output:
+                    output.write(body)
+                    output.flush()
+                    os.fsync(output.fileno())
+                with self.global_lock():
+                    os.replace(temporary, local)
+                    record.unlink()
+                return obj
+            finally:
+                if reservation is not None:
+                    with self.global_lock():
+                        temporary.unlink(missing_ok=True)
+                        record.unlink(missing_ok=True)
+                    reservation.close()
+
+    def obtain(self, obj: dict[str, Any], *, refresh: bool = True) -> tuple[Path, Path, BinaryIO]:
+        self.verified_identity = None
+        key, expected = obj["key"], obj["sha256"]
+        local = self.root / hashlib.sha256(key.encode()).hexdigest()
+        self._reconcile_budget(local)
+        declared = _declared_size(obj)
         amount = self.limit if declared is None else declared
         if amount > self.limit:
             raise ValueError("Object exceeds cache budget; compact into smaller partitions")
-        hit = self._try_cached(local, expected)
+        hit = self._try_cached(local, expected, refresh=refresh)
         if hit is not None:
             return hit
         with self.object_lock(key):
-            hit = self._try_cached(local, expected)
+            hit = self._try_cached(local, expected, refresh=refresh)
             if hit is not None:
                 return hit
 
@@ -279,9 +371,167 @@ class _Cache:
                     reservation.close()
 
 
+@dataclass
+class _ReadPin:
+    local: Path
+    target: Path
+    handle: BinaryIO
+    identity: _Identity
+    expected: str
+    declared: int | None
+    users: int = 0
+    retained: bool = True
+
+
+class _ReadSession:
+    def __init__(self, history: History):
+        self.history = history
+        self.owner = threading.get_ident()
+        self.cache = _Cache(history)
+        self.limit = min(_SESSION_MAX_BYTES, self.cache.limit // 4)
+        self.entries: OrderedDict[str, _ReadPin] = OrderedDict()
+        self.used = 0
+
+    def _dispose(self, entry: _ReadPin) -> None:
+        try:
+            # Refresh ordinary eviction recency only after reuse has ended.
+            # Touching on every hit would itself invalidate the saved identity.
+            with self.cache.global_lock():
+                if _regular(entry.local) and _identity(entry.local) == entry.identity:
+                    entry.local.touch()
+        finally:
+            self.cache.release(entry.target, entry.handle)
+
+    def _forget(self, key: str) -> None:
+        entry = self.entries.pop(key)
+        self.used -= entry.identity[2]
+        entry.retained = False
+        if not entry.users:
+            self._dispose(entry)
+
+    def _release_idle(self) -> None:
+        for key, entry in list(self.entries.items()):
+            if not entry.users:
+                self._forget(key)
+
+    def close(self) -> None:
+        for key in list(self.entries):
+            self._forget(key)
+
+    def _unchanged(self, entry: _ReadPin) -> bool:
+        # Never resurrect an object retired/replaced through its ordinary name.
+        # A retained pin keeps bytes safe for an existing reader, but is not
+        # authority to admit another read after retention removes that name.
+        with self.cache.global_lock():
+            if entry.local.is_symlink():
+                raise ValueError("Cache file escaped its configured root")
+            return (
+                _regular(entry.local)
+                and _regular(entry.target)
+                and _identity(entry.local) == entry.identity
+                and _identity(entry.target) == entry.identity
+            )
+
+    def _retain(self, key: str, entry: _ReadPin) -> bool:
+        size = entry.identity[2]
+        if size > self.limit or not self._unchanged(entry):
+            return False
+        for old_key, old in list(self.entries.items()):
+            if self.used + size <= self.limit and len(self.entries) < _SESSION_MAX_PINS:
+                break
+            if not old.users:
+                self._forget(old_key)
+        if self.used + size > self.limit or len(self.entries) >= _SESSION_MAX_PINS:
+            return False
+        self.entries[key] = entry
+        self.used += size
+        return True
+
+    @contextmanager
+    def pin(self, obj: dict[str, Any]) -> Iterator[Path]:
+        declared = _declared_size(obj)
+        key, expected = obj["key"], obj["sha256"]
+        entry = self.entries.get(key)
+        if entry is not None:
+            if entry.expected == expected and entry.declared == declared and self._unchanged(entry):
+                self.entries.move_to_end(key)
+                self.history.metrics["cache_hits"] += 1
+            else:
+                self._forget(key)
+                entry = None
+        if entry is None:
+            try:
+                local, target, handle = self.cache.obtain(obj, refresh=False)
+            except CacheCapacityError:
+                # Idle session pins are optional. Release them before the normal
+                # admission retry; genuine active readers retain their fences.
+                self._release_idle()
+                local, target, handle = self.cache.obtain(obj, refresh=False)
+            verified = self.cache.verified_identity
+            if verified is None:
+                # Cold downloads already verify their stream, but rename/pin
+                # changes inode metadata afterwards. Keep the ordinary lifetime;
+                # the next warm read can establish a stable checksum identity.
+                try:
+                    yield target
+                finally:
+                    self.cache.release(target, handle)
+                return
+            entry = _ReadPin(local, target, handle, verified, expected, declared)
+            try:
+                entry.retained = self._retain(key, entry)
+            except BaseException:
+                self.cache.release(target, handle)
+                raise
+        entry.users += 1
+        try:
+            yield entry.target
+        finally:
+            entry.users -= 1
+            if not entry.retained and not entry.users:
+                self._dispose(entry)
+
+
+_read_session: ContextVar[_ReadSession | None] = ContextVar("verified_read_session", default=None)
+
+
+@contextmanager
+def read_session(history: History) -> Iterator[None]:
+    """Reuse verified, unchanged pins within one bounded analytical operation."""
+    current = _read_session.get()
+    if (
+        current is not None
+        and current.history is history
+        and current.owner == threading.get_ident()
+    ):
+        yield
+        return
+    session = _ReadSession(history)
+    token = _read_session.set(session)
+    try:
+        yield
+    finally:
+        _read_session.reset(token)
+        session.close()
+
+
 @contextmanager
 def pin_cached(history: History, obj: dict[str, Any]) -> Iterator[Path]:
     """Hold verified bytes within the global budget for the reader's lifetime."""
+    session = _read_session.get()
+    if (
+        session is not None
+        and session.history is history
+        and session.owner == threading.get_ident()
+    ):
+        if (
+            session.cache.root == history.settings.cache_dir.resolve()
+            and session.cache.limit == history.settings.cache_max_bytes
+        ):
+            with session.pin(obj) as target:
+                yield target
+            return
+        session._release_idle()
     cache = _Cache(history)
     _local, target, handle = cache.obtain(obj)
     try:
@@ -309,3 +559,60 @@ def cache_object_lock(history: History, key: str) -> Iterator[None]:
     """Fence remote deletion/cache invalidation against an in-flight fill."""
     with _Cache(history).object_lock(key):
         yield
+
+
+def local_cache_descriptor(body: bytes, identity: str) -> dict[str, Any]:
+    """Bind an immutable local state to both its bytes and publication ownership."""
+    checksum = hashlib.sha256(body).hexdigest()
+    name = hashlib.sha256((identity + ":" + checksum).encode()).hexdigest()
+    return {
+        "key": f"local-feature-state/{name}.parquet",
+        "sha256": checksum,
+        "bytes": len(body),
+        "local_only": True,
+    }
+
+
+def store_local_cached(
+    history: History,
+    body: bytes,
+    *,
+    descriptor: dict[str, Any] | None = None,
+    connection: Any = None,
+) -> dict[str, Any] | None:
+    """Admit disposable verified state without crossing a retirement tombstone."""
+    obj = descriptor or local_cache_descriptor(body, "standalone")
+    try:
+        transaction = (
+            history.catalog.transaction() if connection is None else nullcontext(connection)
+        )
+        with transaction as current:
+            history.catalog.guard_retention(current)
+            retired = current.execute(
+                "SELECT 1 FROM retention_objects WHERE object_key=%s", (obj["key"],)
+            ).fetchone()
+            if retired is not None:
+                return None
+            return _Cache(history).admit_local(body, obj)
+    except (CacheCapacityError, OSError, ValueError):
+        return None
+
+
+@contextmanager
+def pin_local_cached(history: History, obj: dict[str, Any]) -> Iterator[Path | None]:
+    """Pin existing state or report a miss, with no remote fallback or fake GET."""
+    cache: _Cache | None = None
+    hit: tuple[Path, Path, BinaryIO] | None = None
+    try:
+        cache = _Cache(history)
+        hit = cache.obtain_local(obj)
+    except (CacheCapacityError, OSError, ValueError):
+        pass
+    if hit is None:
+        yield None
+        return
+    assert cache is not None
+    try:
+        yield hit[1]
+    finally:
+        cache.release(hit[1], hit[2])

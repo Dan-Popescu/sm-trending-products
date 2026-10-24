@@ -419,3 +419,205 @@ def test_deleted_artifact_generations_leave_only_current_source_removal_work(pip
     assert pipeline.catalog.all(
         "SELECT state,count(*) AS count FROM derived_publications GROUP BY state ORDER BY state"
     ) == [{"state": "deleted", "count": 8}, {"state": "invalidated", "count": 1}]
+
+
+@pytest.mark.integration
+def test_unchanged_multi_product_publications_attach_only_the_existing_combined_root(pipeline):
+    cutoff, _records, datasets = seed(pipeline, products=3, videos=2, points=4)
+    first = pipeline.assess(cutoff, True)
+    before = pipeline.catalog.one("SELECT count(*) AS count FROM derived_artifact_edges")["count"]
+    second = pipeline.assess(cutoff + timedelta(seconds=1), True)
+    after = pipeline.catalog.one("SELECT count(*) AS count FROM derived_artifact_edges")["count"]
+    assert after - before == 1
+    combined_key = second["input_provenance"]["root"]["key"]
+    parent = f"assessments/synthetic/{second['run_id']}.json"
+    assert pipeline.catalog.all(
+        "SELECT c.object_key AS child_key FROM derived_artifact_edges e "
+        "JOIN derived_publications p ON p.object_id=e.parent_id "
+        "JOIN derived_publications c ON c.object_id=e.child_id WHERE p.object_key=%s",
+        (parent,),
+    ) == [{"child_key": combined_key}]
+    assert second["input_provenance"] == first["input_provenance"]
+    # Every displayed root remains reachable even though direct duplicate edges vanished.
+    reachable = pipeline.catalog.all(
+        "WITH RECURSIVE reachable(object_id) AS ("
+        "SELECT e.child_id FROM derived_artifact_edges e "
+        "JOIN derived_publications p ON p.object_id=e.parent_id WHERE p.object_key=%s "
+        "UNION SELECT e.child_id FROM derived_artifact_edges e "
+        "JOIN reachable r ON r.object_id=e.parent_id) "
+        "SELECT p.object_key FROM reachable r JOIN derived_publications p USING(object_id)",
+        (parent,),
+    )
+    assert {root["key"] for root in pipeline.provenance.roots(second["rows"])} <= {
+        row["object_key"] for row in reachable
+    }
+    pipeline.catalog.invalidate_dataset(datasets[0], "transitive-input-removal")
+    assert pipeline.assessment("p0", True) is None
+    assert (
+        pipeline.catalog.one(
+            "SELECT state FROM derived_publications WHERE object_key=%s", (parent,)
+        )["state"]
+        == "invalidated"
+    )
+
+
+@pytest.mark.integration
+def test_publication_scope_keeps_single_product_and_uncovered_subset_roots(pipeline):
+    cutoff, _records, datasets = seed(pipeline, videos=2, points=4)
+    observations, _manifests = pipeline.history.observations(cutoff, True)
+    full = pipeline.provenance.audit(observations, True)
+    subset = pipeline.provenance.compact(
+        {"evidence_refs": [observations[0].observation_id]}, observations, True
+    )["evidence_refs"]
+    scope = pipeline.provenance.publication_scope(
+        [full], {"evidence_refs": full, "dimension": {"evidence_refs": subset}}, True
+    )
+    assert scope.input_provenance == full
+    assert {root["key"] for root in scope.roots} == {full["root"]["key"], subset["root"]["key"]}
+    parent = "assessments/synthetic/subset-fixture.json"
+    pipeline.catalog.stage_derivation(parent, ())
+    with pipeline.catalog.transaction() as connection:
+        pipeline.provenance.attach(connection, parent, scope.roots)
+        connection.execute(
+            "UPDATE derived_publications SET state='committed' WHERE object_key=%s", (parent,)
+        )
+    pipeline.catalog.invalidate_dataset(datasets[0], "subset-input-removal")
+    assert (
+        pipeline.catalog.one(
+            "SELECT state FROM derived_publications WHERE object_key=%s", (parent,)
+        )["state"]
+        == "invalidated"
+    )
+
+
+@pytest.mark.integration
+def test_committed_node_reuse_batches_sql_even_with_no_process_memo(pipeline, monkeypatch):
+    from contextlib import contextmanager
+
+    cutoff, _records, _datasets = seed(pipeline, videos=20, points=120)
+    observations, _manifests = pipeline.history.observations(cutoff, True)
+    original = pipeline.provenance.audit(observations, True)
+    monkeypatch.setattr(provenance_module, "NODE_REUSE_CACHE", 0)
+    pipeline.provenance._published.clear()
+    transactions = 0
+    transaction = pipeline.catalog.transaction
+
+    @contextmanager
+    def counted():
+        nonlocal transactions
+        transactions += 1
+        with transaction() as connection:
+            yield connection
+
+    monkeypatch.setattr(pipeline.catalog, "transaction", counted)
+    before = dict(pipeline.history.metrics)
+    repeated = pipeline.provenance.audit(observations, True)
+    assert repeated == original
+    assert transactions == 1
+    assert pipeline.history.metrics["put_requests"] == before["put_requests"]
+    assert pipeline.history.metrics["get_requests"] == before["get_requests"]
+    assert not pipeline.provenance._published
+    # Append a wave, then exclude history selection/import from the publication counters.
+    new_cutoff = cutoff + timedelta(hours=1)
+    pipeline.import_records(
+        [
+            {
+                "observation_id": f"next-wave-{video}",
+                "source": "provenance_fixture",
+                "entity_type": "video",
+                "entity_id": f"p0-v{video}",
+                "observed_at": new_cutoff.isoformat(),
+                "available_at": new_cutoff.isoformat(),
+                "synthetic": True,
+                "metrics": {"view_count": {"lower": 12100, "upper": 12100}},
+            }
+            for video in range(20)
+        ],
+        synthetic=True,
+    )
+    updated_observations, _manifests = pipeline.history.observations(new_cutoff, True)
+    before = dict(pipeline.history.metrics)
+    transactions = 0
+    updated = pipeline.provenance.audit(updated_observations, True)
+    puts = pipeline.history.metrics["put_requests"] - before["put_requests"]
+    assert updated["count"] == 2420
+    assert 1 <= puts <= 4
+    assert transactions == 1 + 3 * puts
+    assert pipeline.history.metrics["get_requests"] == before["get_requests"]
+    assert reference_ids(pipeline, updated) == sorted(
+        row.observation_id for row in updated_observations
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("byte_budget", [2000, provenance_module.PLAN_BYTES])
+def test_node_plan_flush_limits_preserve_exact_roots_and_all_references(
+    pipeline, monkeypatch, byte_budget
+):
+    cutoff, _records, _datasets = seed(pipeline, videos=4, points=20)
+    observations, _manifests = pipeline.history.observations(cutoff, True)
+    expected = pipeline.provenance.audit(observations, True)
+    monkeypatch.setattr(provenance_module, "PLAN_NODES", 2)
+    monkeypatch.setattr(provenance_module, "PLAN_BYTES", byte_budget)
+    monkeypatch.setattr(provenance_module, "NODE_REUSE_CACHE", 0)
+    pipeline.provenance._published.clear()
+    batches = []
+    flush = provenance_module._NodePlan.flush
+
+    def checked(plan):
+        assert len(plan.pending) <= 2
+        assert plan.bytes <= byte_budget
+        if plan.pending:
+            batches.append(len(plan.pending))
+        return flush(plan)
+
+    monkeypatch.setattr(provenance_module._NodePlan, "flush", checked)
+    before = pipeline.history.metrics["put_requests"]
+    actual = pipeline.provenance.audit(observations, True)
+    assert actual == expected
+    assert batches and max(batches) <= 2
+    assert pipeline.history.metrics["put_requests"] == before
+    assert reference_ids(pipeline, actual) == sorted(row.observation_id for row in observations)
+
+
+@pytest.mark.integration
+def test_bulk_reuse_rejects_descriptor_mismatch_before_republishing(pipeline, monkeypatch):
+    cutoff, _records, _datasets = seed(pipeline)
+    observations, _manifests = pipeline.history.observations(cutoff, True)
+    root = pipeline.provenance.audit(observations, True)["root"]
+    pipeline.catalog.execute(
+        "UPDATE derived_publications SET object_sha256=%s WHERE object_key=%s",
+        ("0" * 64, root["key"]),
+    )
+    monkeypatch.setattr(provenance_module, "NODE_REUSE_CACHE", 0)
+    pipeline.provenance._published.clear()
+    before = pipeline.history.metrics["put_requests"]
+    with pytest.raises(ValueError, match="descriptor collision"):
+        pipeline.provenance.audit(observations, True)
+    assert pipeline.history.metrics["put_requests"] == before
+
+
+@pytest.mark.integration
+def test_retirement_after_reuse_lookup_cannot_publish_memoized_invalid_roots(pipeline, monkeypatch):
+    cutoff, _records, datasets = seed(pipeline)
+    pipeline.assess(cutoff, True)
+    # Exercise provenance reuse rather than the higher-level feature hit, which
+    # legitimately skips this lookup and has its own retirement-fencing test.
+    pipeline.catalog.execute("DELETE FROM feature_product_projections WHERE product_id='p0'")
+    pipeline.provenance._published.clear()
+    original = pipeline.catalog.all
+    retired = False
+
+    def intercepted(query, params=()):
+        nonlocal retired
+        rows = original(query, params)
+        if query.startswith("SELECT object_key,state,object_sha256") and not retired:
+            retired = True
+            pipeline.catalog.invalidate_dataset(datasets[0], "retired-after-bulk-reuse-lookup")
+        return rows
+
+    monkeypatch.setattr(pipeline.catalog, "all", intercepted)
+    with pytest.raises(ValueError, match="invalidated|retired|unavailable"):
+        pipeline.assess(cutoff + timedelta(seconds=1), True)
+    assert retired
+    assert pipeline.assessment("p0", True) is None

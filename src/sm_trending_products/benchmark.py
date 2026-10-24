@@ -183,6 +183,8 @@ def benchmark(
         start, cpu_start = time.perf_counter(), time.process_time()
         before = dict(pipeline.history.metrics)
         extra_metrics: dict[str, int] = defaultdict(int)
+        analysis_before = dict(pipeline.history.analysis_metrics)
+        extra_analysis: dict[str, int] = defaultdict(int)
         metrics_lock = threading.Lock()
         samples: deque[dict] = deque(maxlen=1000)
         sample_count = 0
@@ -235,6 +237,8 @@ def benchmark(
                 "Queue samples retain the latest 1000 samples; maxima cover every sample",
                 "Spool usage covers the configured directory, not child anonymous temporary files",
                 "Compaction active files exclude older objects retained for lineage",
+                "Cold analytical phases clear both owned product projections and raw-window "
+                "pointers, then use an empty owned file cache; warm phases retain all three",
             ],
             "operating_envelope": "measured_sample_only",
             "cost_model": {
@@ -262,6 +266,7 @@ def benchmark(
             child = resource.getrusage(resource.RUSAGE_CHILDREN)
             child_cpu = child.ru_utime + child.ru_stime
             metrics = dict(application.history.metrics)
+            analysis_metrics = dict(application.history.analysis_metrics)
             cache_before = _disk_usage(application.settings.cache_dir)
             report["active_phase"] = name
             checkpoint()
@@ -277,6 +282,10 @@ def benchmark(
                         key: value - metrics[key]
                         for key, value in application.history.metrics.items()
                     },
+                    "analysis_work": {
+                        key: value - analysis_metrics[key]
+                        for key, value in application.history.analysis_metrics.items()
+                    },
                     "cache_before": cache_before,
                     "cache_usage": _disk_usage(application.settings.cache_dir),
                     "spool_usage": _disk_usage(application.settings.spool_dir),
@@ -284,6 +293,8 @@ def benchmark(
                 if application is not pipeline:
                     for key, value in phases[name]["storage_traffic"].items():
                         extra_metrics[key] += value
+                    for key, value in phases[name]["analysis_work"].items():
+                        extra_analysis[key] += value
                 elif name == "collection" and workers > 1:
                     for key, value in extra_metrics.items():
                         phases[name]["storage_traffic"][key] += value
@@ -406,15 +417,41 @@ def benchmark(
         def analyze_pair(label, cutoff, cache_root):
             settings = pipeline.settings.model_copy(update={"cache_dir": cache_root})
             with Pipeline(settings) as application:
+                product_ids = [f"{run_id}-product-{index}" for index in range(product_count)]
+                # The synthetic workspace is isolated, and these exact products
+                # belong to this run. An empty directory alone no longer means a
+                # cold computation: SQL feature hits can bypass it completely.
+                with application.catalog.transaction() as connection:
+                    connection.execute(
+                        "DELETE FROM feature_product_projections WHERE product_id=ANY(%s)",
+                        (product_ids,),
+                    )
+                    connection.execute(
+                        "DELETE FROM feature_product_windows WHERE product_id=ANY(%s)",
+                        (product_ids,),
+                    )
+                compute_cache_before = application.catalog.one(
+                    "SELECT (SELECT count(*) FROM feature_product_projections "
+                    "WHERE product_id=ANY(%s)) AS feature_projections,"
+                    "(SELECT count(*) FROM feature_product_windows "
+                    "WHERE product_id=ANY(%s)) AS raw_windows",
+                    (product_ids, product_ids),
+                )
                 with phase(f"analysis_{label}_cold", application):
                     cold = application.assess(cutoff, synthetic=True)
+                phases[f"analysis_{label}_cold"].update(
+                    cache_regime="cold_files_and_computation",
+                    compute_cache_before=compute_cache_before,
+                )
                 with phase(f"analysis_{label}_warm", application):
                     warm = application.assess(cutoff, synthetic=True)
+                phases[f"analysis_{label}_warm"]["cache_regime"] = "warm_files_and_computation"
             report["checks"][f"{label}_cold_warm_same_run"] = cold["run_id"] == warm["run_id"]
             report.setdefault("analysis_runs", {})[label] = {
                 "cold": cold["run_id"],
                 "warm": warm["run_id"],
                 "owned_cache": True,
+                "cold_computation_reset": True,
                 "cold_initial_file_bytes": phases[f"analysis_{label}_cold"]["cache_before"][
                     "file_bytes"
                 ],
@@ -573,6 +610,12 @@ def benchmark(
                 "disk_free_bytes": disk.free,
                 "disk_total_bytes": disk.total,
                 "storage_traffic": traffic,
+                "analysis_work": {
+                    key: pipeline.history.analysis_metrics[key]
+                    - analysis_before[key]
+                    + extra_analysis[key]
+                    for key in analysis_before
+                },
                 "task_latency_seconds": latency,
                 "quota_waiting_tasks": pipeline.catalog.quota_waiting(synthetic=True),
                 "quota_deferred_tasks": deferred,

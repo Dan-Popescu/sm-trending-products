@@ -27,6 +27,12 @@ All loaded raw inputs acquire provenance, including rows excluded by metrics,
 market, capabilities, and incomplete corrections that censor an outcome. This
 input provenance is separate from the displayed evidence that establishes a
 measured result. Per-product scopes combine without materializing their leaves.
+Publication preparation constructs its combined input root together with the
+minimal exposed attachment set. A product root already included under that
+combined root needs no duplicate direct edge from every assessment run; a
+different displayed subset root remains attached. The cover follows directly
+from constructing the immutable combination, without another graph query.
+
 The existing globally resolved ownership context partitions products once per
 cutoff, so an owner outside a requested partition still prevents false ownership.
 
@@ -64,8 +70,9 @@ upgrade. SQL025's bounded relation collector continues deleting by the new IDs
 while preserving public object-key progress, tombstones and publication metadata.
 
 The leaf/edge registration happens before immutable upload. A second fenced
-check commits the publication after upload; no provenance-node upload holds a
-SQL transaction across the network. Parents may acquire only committed children
+check commits the publication after upload. Staging and final-commit transactions
+do not span upload; the existing history writer holds its separate shared
+retention/tombstone fence through each immutable object request. Parents may acquire only committed children
 while staged. Final analytical attachment and evaluation association recheck root
 state under the shared retention fence. Reverse artifact closure invalidates all
 ancestors on source removal, so checking the small exposed root set suffices for
@@ -78,6 +85,15 @@ closure. Sharding does not imply unlimited removal fanout. A blocked single-root
 closure requires a deliberately designed continuation protocol rather than a
 partial invalidation that could leave readable descendants. The bounded local publication memo is a performance hint; final publish
 and detail reads still check authoritative root state.
+
+Node construction uses a bounded postorder plan: at most 1,000 nodes and
+4,000,000 encoded bytes per admission batch. A batched SQL lookup reuses only
+committed descriptors with the exact expected SHA and size. This per-plan reuse
+is independent of the process memo capacity. Plans flush at their budget; an
+individual object exceeding the plan budget follows the ordinary fenced writer.
+Missing/staged nodes retain their existing staging, guarded upload and final
+commit path. Final publication/page guards remain authoritative if retention
+changes state after the lookup.
 
 ## Read contract and compatibility
 

@@ -1,0 +1,152 @@
+{
+  "baseline_revision": "3c417e46b8cf72e897a94fb92f4b4ab44cfb95fc",
+  "scope": {
+    "products": 2,
+    "videos_each": 20,
+    "samples_each": 120,
+    "memo": "cleared before each product; planned globalmemo0",
+    "measurement_boundary": "Provenance.audit only, excludes source selection/import and assessmentheader"
+  },
+  "phases": {
+    "old_reuse_product0": {
+      "seconds": 0.1778921899967827,
+      "catalog_transactions": 39,
+      "history": {
+        "get_requests": 0,
+        "put_requests": 0,
+        "head_requests": 0,
+        "download_bytes": 0,
+        "upload_bytes": 0,
+        "cache_hits": 0,
+        "http_attempts": 0
+      },
+      "root": {
+        "format": "sharded-provenance-v1",
+        "root": {
+          "key": "provenance/synthetic/e629559bfc228f6f1f5345b50a5fc525cc08dd5eb46c4d30482fab692f4de3a3.json",
+          "sha256": "e629559bfc228f6f1f5345b50a5fc525cc08dd5eb46c4d30482fab692f4de3a3",
+          "bytes": 2678,
+          "count": 2400
+        },
+        "count": 2400
+      }
+    },
+    "planned_reuse_product0": {
+      "seconds": 0.011810959003923927,
+      "catalog_transactions": 1,
+      "history": {
+        "get_requests": 0,
+        "put_requests": 0,
+        "head_requests": 0,
+        "download_bytes": 0,
+        "upload_bytes": 0,
+        "cache_hits": 0,
+        "http_attempts": 0
+      },
+      "root": {
+        "format": "sharded-provenance-v1",
+        "root": {
+          "key": "provenance/synthetic/e629559bfc228f6f1f5345b50a5fc525cc08dd5eb46c4d30482fab692f4de3a3.json",
+          "sha256": "e629559bfc228f6f1f5345b50a5fc525cc08dd5eb46c4d30482fab692f4de3a3",
+          "bytes": 2678,
+          "count": 2400
+        },
+        "count": 2400
+      }
+    },
+    "old_reuse_product1": {
+      "seconds": 0.10490328400192084,
+      "catalog_transactions": 39,
+      "history": {
+        "get_requests": 0,
+        "put_requests": 0,
+        "head_requests": 0,
+        "download_bytes": 0,
+        "upload_bytes": 0,
+        "cache_hits": 0,
+        "http_attempts": 0
+      },
+      "root": {
+        "format": "sharded-provenance-v1",
+        "root": {
+          "key": "provenance/synthetic/3e70381e52871fe157af09d00f28a5b6ee4716b8710958e9a763b763a76413a6.json",
+          "sha256": "3e70381e52871fe157af09d00f28a5b6ee4716b8710958e9a763b763a76413a6",
+          "bytes": 2678,
+          "count": 2400
+        },
+        "count": 2400
+      }
+    },
+    "planned_reuse_product1": {
+      "seconds": 0.011365682999894489,
+      "catalog_transactions": 1,
+      "history": {
+        "get_requests": 0,
+        "put_requests": 0,
+        "head_requests": 0,
+        "download_bytes": 0,
+        "upload_bytes": 0,
+        "cache_hits": 0,
+        "http_attempts": 0
+      },
+      "root": {
+        "format": "sharded-provenance-v1",
+        "root": {
+          "key": "provenance/synthetic/3e70381e52871fe157af09d00f28a5b6ee4716b8710958e9a763b763a76413a6.json",
+          "sha256": "3e70381e52871fe157af09d00f28a5b6ee4716b8710958e9a763b763a76413a6",
+          "bytes": 2678,
+          "count": 2400
+        },
+        "count": 2400
+      }
+    },
+    "old_append_product0": {
+      "seconds": 0.11754904600093141,
+      "catalog_transactions": 45,
+      "history": {
+        "get_requests": 0,
+        "put_requests": 3,
+        "head_requests": 0,
+        "download_bytes": 0,
+        "upload_bytes": 6896,
+        "cache_hits": 0,
+        "http_attempts": 3
+      },
+      "root": {
+        "format": "sharded-provenance-v1",
+        "root": {
+          "key": "provenance/synthetic/1f338f254372e7172068242fa5dd5542e7cab0f8ead644700c2164ac1adaf9ee.json",
+          "sha256": "1f338f254372e7172068242fa5dd5542e7cab0f8ead644700c2164ac1adaf9ee",
+          "bytes": 2678,
+          "count": 2420
+        },
+        "count": 2420
+      }
+    },
+    "planned_append_product1": {
+      "seconds": 0.03769672100315802,
+      "catalog_transactions": 10,
+      "history": {
+        "get_requests": 0,
+        "put_requests": 3,
+        "head_requests": 0,
+        "download_bytes": 0,
+        "upload_bytes": 6896,
+        "cache_hits": 0,
+        "http_attempts": 3
+      },
+      "root": {
+        "format": "sharded-provenance-v1",
+        "root": {
+          "key": "provenance/synthetic/d15e2a2b2c1532b763b8296c34122d1bfb10f8fe2f011c38a2566135c006455a.json",
+          "sha256": "d15e2a2b2c1532b763b8296c34122d1bfb10f8fe2f011c38a2566135c006455a",
+          "bytes": 2678,
+          "count": 2420
+        },
+        "count": 2420
+      }
+    }
+  },
+  "candidate_base": "3c417e46b8cf72e897a94fb92f4b4ab44cfb95fc",
+  "candidate_change": "bounded node plan; exact source commit recorded by containing Git revision"
+}
