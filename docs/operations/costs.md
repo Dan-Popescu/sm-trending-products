@@ -114,8 +114,16 @@ must be replaced by actual metered values for billing acceptance.
   local/attached disk **in addition** to its offsite copy. A remote POSIX volume
   needs its own explicit price; changing a fraction to zero does not make an
   unsupported S3-mounted backup path valid.
-- One monthly isolated restore is assumed. Its GETs and egress are billed, and
-  simultaneous restored payload and database copies reserve local disk. Set these
+- One monthly isolated restore with a **cold offsite fetch to POSIX** is assumed.
+  This fetch materializes one selected base/delta chain before running the local
+  restore. The real resolver hashes every ancestor-owned payload, including keys
+  omitted from the latest inventory after expiry. Therefore GETs and transfer
+  include one full base, every intervening payload delta, every chain inventory
+  and ancestor `snapshot.json`. Only the target SQL dumps are needed. Unrelated
+  retained families are excluded; local hashing and upload of the latest live
+  inventory do not cause a second offsite GET. The archive-fetch transport is an
+  explicit planning assumption, not a network operation in `restore-check.sh`.
+  Simultaneous restored payload and database copies reserve local disk. Set these
   coefficients to the actual separate rehearsal host when applicable; that host's
   compute and storage bill then belongs in `other_monthly_cost`.
 - Backup HEAD/LIST inventory work is explicit. An unchanged payload delta may
@@ -131,6 +139,15 @@ starts at a full capture and counts only actual captures. Retained-family storag
 uses the worst calendar phase independently: for `N` retained captures and a full
 every `K` captures, reserve `ceil((N-1)/K)+1` bases and `N+K-1` total captured
 directories. Parent catalogs and inventories are retained as well as payloads.
+
+Cold recovery independently reserves the longest valid **single** chain of `K`
+captures: payload `S + (K-1) * capture_days * new_bytes_per_day`, corresponding
+owned-object GETs, `K` inventories, and one target dump. Each ancestor adds two
+metadata requests (its inventory and snapshot JSON); the existing declared target
+metadata-file allocation is applied once. Profiles explicitly assume 4 KiB per
+ancestor snapshot JSON; this is not a measured size or guaranteed upper bound.
+An unknown ancestor size keeps incremental recovery bytes unknown, while a
+single full restore and zero monthly rehearsals retain their known budgets.
 
 Source refresh requests are a **lower bound**, assuming distinct videos and full
 compatible groups of 20. Discovery, pagination, fragmented accounts, failed
@@ -150,12 +167,12 @@ and backup store and no account free allowance:
 
 | Products | Retained days | Modeled R2 infrastructure/month | Modeled B2 infrastructure/month | Planned peak disk |
 | ---: | ---: | ---: | ---: | ---: |
-| 5,000 | 30 | $220.48 | $116.72 | 861 GB |
-| 5,000 | 90 | $427.54 | $200.91 | 1,716 GB |
-| 10,000 | 30 | $402.96 | $199.94 | 1,708 GB |
-| 10,000 | 90 | $821.20 | $368.32 | 3,418 GB |
-| 50,000 | 30 | $1,867.54 | $866.30 | 8,484 GB |
-| 50,000 | 90 | $3,973.78 | $1,715.73 | 17,029 GB |
+| 5,000 | 30 | $221.92 | $116.72 | 861 GB |
+| 5,000 | 90 | $428.62 | $200.91 | 1,716 GB |
+| 10,000 | 30 | $405.48 | $199.94 | 1,708 GB |
+| 10,000 | 90 | $823.72 | $368.32 | 3,418 GB |
+| 50,000 | 30 | $1,880.50 | $866.30 | 8,484 GB |
+| 50,000 | 90 | $3,986.74 | $1,715.73 | 17,029 GB |
 
 Amounts exclude tax, unknown source API fees and other unknown services. The
 complete bill is therefore `null`; the separately named infrastructure estimate
@@ -191,7 +208,7 @@ other captures. It never replaces every HEAD with zero merely because unchanged
 payload GETs are zero. The [second matrix](../verification/massive-cost-scenarios-optimized-checkpoint.json)
 uses identical bytes and prices; only request work changes. At the illustrative
 10,000-product/90-day DO 8 GiB shape, modeled R2 infrastructure changes from
-$821.20 to $590.44/month. The corresponding B2 amount stays $368.32 because
+$823.72 to $592.96/month. The corresponding B2 amount stays $368.32 because
 its standard API calls are already priced at zero. These are scenario
 comparisons outside the measured inventory shape. The
 [native 1,001-object checkpoint measurement](../verification/cost-checkpoint-native-1001.json)
@@ -229,3 +246,7 @@ backup families and rehearsal disk, account-wide R2 quotas and rounded billing,
 B2 shared egress, allocated volume minimums, unknown handling, currency and tax,
 bad numeric inputs, configuration typos and the credential-free CLI. Scenario
 generation is pure offline arithmetic; no cloud resources are created.
+`tests/test_cost_restore_chain.py` runs the real filesystem resolver: an expired
+parent-owned payload and its inventory remain required even when absent from
+the final live inventory. The arithmetic regression prices that single chain
+without charging ancestor SQL dumps or unrelated retained families.

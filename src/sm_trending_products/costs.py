@@ -80,6 +80,7 @@ class Coefficients(Contract):
     backup_full_base_heads_per_object: Quantity = None
     backup_new_object_heads_per_object: Quantity = None
     backup_metadata_objects_per_capture: Nonnegative = Decimal(5)
+    restore_ancestor_snapshot_metadata_bytes: Quantity = None
     backup_list_page_size: int = Field(default=1000, gt=0, le=1000)
     offsite_backup_egress_fraction: Nonnegative = Decimal(1)
     local_backup_family_fraction: Quantity = None
@@ -284,14 +285,12 @@ def usage(workload: Workload, coefficients: Coefficients) -> dict[str, Quantity]
     # are actual members of this bounded capture count, not phantom calendar jobs.
     full_captures_month = _ceiling(captures_month / chain_snapshots)
     delta_capture_days = (captures_month - full_captures_month) * c.backup_every_days
-    new_objects_month = _multiply(
-        _sum(
-            _multiply(_sum(datasets_day, compacted_datasets_day), Decimal(3)),
-            nodes_day,
-            w.assessment_runs_per_day,
-        ),
-        delta_capture_days,
+    new_objects_day = _sum(
+        _multiply(_sum(datasets_day, compacted_datasets_day), Decimal(3)),
+        nodes_day,
+        w.assessment_runs_per_day,
     )
+    new_objects_month = _multiply(new_objects_day, delta_capture_days)
     heads = _sum(
         _multiply(
             objects,
@@ -335,10 +334,37 @@ def usage(workload: Workload, coefficients: Coefficients) -> dict[str, Quantity]
     local_backups = _multiply(backup_bytes, c.local_backup_family_fraction)
     restore_disk = _multiply(_sum(stored, sql), c.restore_local_copy_fraction)
     disk = _multiply(_sum(live_disk, local_backups, restore_disk), 1 + c.disk_headroom_fraction)
-    restore_reads = _multiply(
-        _sum(objects, c.backup_metadata_objects_per_capture), c.restore_rehearsals_per_month
+    # A cold offsite fetch must materialize one selected chain before local
+    # verification. The resolver checks ancestor-owned payloads even after their
+    # keys expire from the final inventory. Only the target's SQL dumps are used.
+    ancestors = Decimal(chain_snapshots - 1)
+    ancestor_days = ancestors * c.backup_every_days
+    restore_payload = _sum(stored, _multiply(daily_new, ancestor_days))
+    restore_objects = _sum(objects, _multiply(new_objects_day, ancestor_days))
+    restore_inventories = _multiply(inventories, Decimal(chain_snapshots))
+    ancestor_snapshot_bytes = (
+        Decimal(0)
+        if ancestors == 0
+        else _multiply(ancestors, c.restore_ancestor_snapshot_metadata_bytes)
     )
-    restore_bytes = _multiply(_sum(stored, dump, inventories), c.restore_rehearsals_per_month)
+    # snapshot.json + objects.jsonl per ancestor, plus the declared target-file
+    # allocation. Hashing and uploading locally staged bytes adds no remote GET.
+    restore_metadata_requests = c.backup_metadata_objects_per_capture + 2 * ancestors
+    restore_reads = (
+        Decimal(0)
+        if c.restore_rehearsals_per_month == 0
+        else _multiply(
+            _sum(restore_objects, restore_metadata_requests), c.restore_rehearsals_per_month
+        )
+    )
+    restore_bytes = (
+        Decimal(0)
+        if c.restore_rehearsals_per_month == 0
+        else _multiply(
+            _sum(restore_payload, dump, restore_inventories, ancestor_snapshot_bytes),
+            c.restore_rehearsals_per_month,
+        )
+    )
     return {
         "observations_per_day": daily,
         "observations_per_month": monthly,
@@ -383,6 +409,13 @@ def usage(workload: Workload, coefficients: Coefficients) -> dict[str, Quantity]
         "backup_max_family_snapshots": Decimal(chain_snapshots),
         "backup_reserved_families": families,
         "backup_reserved_captures": captures,
+        "restore_chain_captures": Decimal(chain_snapshots),
+        "restore_chain_owned_objects": restore_objects,
+        "restore_chain_payload_bytes": restore_payload,
+        "restore_chain_inventory_bytes": restore_inventories,
+        "restore_chain_ancestor_snapshot_metadata_bytes": ancestor_snapshot_bytes,
+        "restore_chain_target_sql_dump_bytes": dump,
+        "restore_chain_metadata_requests": restore_metadata_requests,
         "sql_dump_bytes": dump,
         "wal_bytes": wal,
         "vps_working_disk_bytes": disk,

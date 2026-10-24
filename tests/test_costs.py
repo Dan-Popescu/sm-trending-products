@@ -189,12 +189,82 @@ def test_allocated_volume_rounding_and_minimum_are_applied_to_excess_only():
 def test_restore_rehearsal_reads_and_transfer_are_explicit_in_billing():
     s = scenario()
     u = usage(s.workload, s.coefficients)
-    assert u["backup_read_requests"] == u["source_objects"] + 5
+    assert u["backup_read_requests"] == (
+        u["restore_chain_owned_objects"] + u["restore_chain_metadata_requests"]
+    )
     assert u["backup_store_egress_bytes"] > u["source_store_bytes"]
     s.coefficients.restore_rehearsals_per_month = Decimal(0)
     no_restore = usage(s.workload, s.coefficients)
     assert no_restore["backup_read_requests"] == 0
     assert no_restore["backup_store_egress_bytes"] == 0
+
+
+def test_cold_restore_fetches_one_required_chain_and_only_the_target_sql_dump():
+    s = scenario()
+    s.workload = Workload(
+        products=1,
+        videos_per_product=1,
+        refreshes_per_day=1,
+        history_days=2,
+        assessment_runs_per_day=1,
+        assessment_retention_days=2,
+    )
+    c = s.coefficients
+    c.raw_bytes_per_observation = Decimal(10)
+    c.normalized_bytes_per_observation = Decimal(20)
+    c.manifest_bytes_per_dataset = Decimal(1)
+    c.observations_per_dataset = Decimal(1)
+    c.retained_compacted_copy_fraction = Decimal(0)
+    c.compacted_output_datasets_per_input = Decimal(0)
+    c.provenance_bytes_per_product_refresh = Decimal(0)
+    c.provenance_nodes_per_product_refresh = Decimal(0)
+    c.assessment_bytes_per_product_run = Decimal(0)
+    c.backup_full_every_days = 3
+    c.backup_inventory_bytes_per_object = Decimal(2)
+    c.restore_ancestor_snapshot_metadata_bytes = Decimal(8)
+    c.sql_dump_bytes = Decimal(100)
+    u = usage(s.workload, c)
+    # Two retained observations: 62 payload bytes, eight live objects. Each
+    # additional day creates 31 bytes and four objects. One base + two deltas
+    # needs 124 bytes/16 objects even when old keys leave the latest inventory.
+    assert u["source_store_bytes"] == 62
+    assert u["source_objects"] == 8
+    assert u["restore_chain_captures"] == 3
+    assert u["restore_chain_payload_bytes"] == 124
+    assert u["restore_chain_owned_objects"] == 16
+    assert u["restore_chain_inventory_bytes"] == 48
+    assert u["restore_chain_ancestor_snapshot_metadata_bytes"] == 16
+    assert u["restore_chain_target_sql_dump_bytes"] == 100
+    assert u["backup_read_requests"] == 16 + 5 + 2 * 2
+    assert u["backup_store_egress_bytes"] == 124 + 48 + 16 + 100
+    # Unrelated retained families increase storage, not the selected chain fetch.
+    c.backup_retention_days = 365
+    longer_retention = usage(s.workload, c)
+    assert longer_retention["backup_store_bytes"] > u["backup_store_bytes"]
+    assert longer_retention["backup_read_requests"] == u["backup_read_requests"]
+    assert longer_retention["backup_store_egress_bytes"] == u["backup_store_egress_bytes"]
+
+
+def test_full_restore_keeps_existing_budget_without_unknown_ancestor_bytes():
+    s = scenario()
+    s.coefficients.backup_full_every_days = 1
+    s.coefficients.restore_ancestor_snapshot_metadata_bytes = None
+    u = usage(s.workload, s.coefficients)
+    assert u["restore_chain_captures"] == 1
+    assert u["backup_read_requests"] == u["source_objects"] + 5
+    assert u["backup_store_egress_bytes"] == (
+        u["source_store_bytes"]
+        + u["sql_dump_bytes"]
+        + u["source_objects"] * s.coefficients.backup_inventory_bytes_per_object
+    )
+    s.coefficients.backup_full_every_days = 2
+    incremental = usage(s.workload, s.coefficients)
+    assert incremental["restore_chain_payload_bytes"] is not None
+    assert incremental["backup_store_egress_bytes"] is None
+    s.coefficients.restore_rehearsals_per_month = Decimal(0)
+    disabled = usage(s.workload, s.coefficients)
+    assert disabled["restore_chain_ancestor_snapshot_metadata_bytes"] is None
+    assert disabled["backup_read_requests"] == disabled["backup_store_egress_bytes"] == 0
 
 
 def test_fewer_backup_full_bases_reduce_remote_reads_without_removing_dumps():

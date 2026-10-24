@@ -236,9 +236,15 @@
       "classification": "unknown",
       "reference": "docs/operations/costs.md",
       "scope": "Wire bytes of upstream HTTP response are not compressed raw object bytes. Supply a measured response-body/transport allocation; API monetary fees remain separate."
+    },
+    "restore_ancestor_snapshot_metadata_bytes": {
+      "classification": "assumed",
+      "reference": "docs/operations/costs.md",
+      "scope": "4 KiB per required ancestor snapshot.json for a cold offsite chain fetch; inventories are separate. Planning allocation, not a measured size or upper bound. Only target SQL dumps are fetched."
     }
   },
   "backup_full_base_heads_per_object": "1",
   "backup_new_object_heads_per_object": "1",
-  "upstream_response_bytes_per_observation": null
+  "upstream_response_bytes_per_observation": null,
+  "restore_ancestor_snapshot_metadata_bytes": "4096"
 }

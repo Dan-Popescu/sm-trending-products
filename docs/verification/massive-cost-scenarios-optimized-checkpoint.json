@@ -21,8 +21,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "123.2150000000000000000000000",
-          "known_subtotal_excluding_tax": "123.2150000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "124.6550000000000000000000000",
+          "known_subtotal_excluding_tax": "124.6550000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -31,8 +31,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "167.0400000000000000000000000",
-          "known_subtotal_excluding_tax": "167.0400000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "168.4800000000000000000000000",
+          "known_subtotal_excluding_tax": "168.4800000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -41,8 +41,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "254.7050000000000000000000000",
-          "known_subtotal_excluding_tax": "254.7050000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "256.1450000000000000000000000",
+          "known_subtotal_excluding_tax": "256.1450000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -71,13 +71,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "7321664.00",
+        "restore_chain_payload_bytes": "137578076200.00",
+        "restore_chain_inventory_bytes": "22337280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "4224576000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "7321727.00",
+        "backup_store_egress_bytes": "164140050984.00"
       },
       "base_monthly_charges": {
         "machine": "24",
         "object_account_storage": "9.540",
         "object_account_writes_and_lists": "54.00",
-        "object_account_reads_and_heads": "7.20",
+        "object_account_reads_and_heads": "8.64",
         "object_account_egress": "0",
         "extra_disk": "72.30000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -143,7 +152,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "7321664.00",
+        "restore_chain_payload_bytes": "137578076200.00",
+        "restore_chain_inventory_bytes": "22337280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "4224576000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "7321727.00",
+        "backup_store_egress_bytes": "164140050984.00"
       },
       "base_monthly_charges": {
         "machine": "24",
@@ -165,8 +183,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "139.2150000000000000000000000",
-          "known_subtotal_excluding_tax": "139.2150000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "140.6550000000000000000000000",
+          "known_subtotal_excluding_tax": "140.6550000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -175,8 +193,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "183.0400000000000000000000000",
-          "known_subtotal_excluding_tax": "183.0400000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "184.4800000000000000000000000",
+          "known_subtotal_excluding_tax": "184.4800000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -185,8 +203,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "270.7050000000000000000000000",
-          "known_subtotal_excluding_tax": "270.7050000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "272.1450000000000000000000000",
+          "known_subtotal_excluding_tax": "272.1450000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -215,13 +233,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "7321664.00",
+        "restore_chain_payload_bytes": "137578076200.00",
+        "restore_chain_inventory_bytes": "22337280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "4224576000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "7321727.00",
+        "backup_store_egress_bytes": "164140050984.00"
       },
       "base_monthly_charges": {
         "machine": "48",
         "object_account_storage": "9.540",
         "object_account_writes_and_lists": "54.00",
-        "object_account_reads_and_heads": "7.20",
+        "object_account_reads_and_heads": "8.64",
         "object_account_egress": "0",
         "extra_disk": "64.30000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -287,7 +314,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "7321664.00",
+        "restore_chain_payload_bytes": "137578076200.00",
+        "restore_chain_inventory_bytes": "22337280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "4224576000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "7321727.00",
+        "backup_store_egress_bytes": "164140050984.00"
       },
       "base_monthly_charges": {
         "machine": "48",
@@ -309,8 +345,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "171.2150000000000000000000000",
-          "known_subtotal_excluding_tax": "171.2150000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "172.6550000000000000000000000",
+          "known_subtotal_excluding_tax": "172.6550000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -319,8 +355,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "215.0400000000000000000000000",
-          "known_subtotal_excluding_tax": "215.0400000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "216.4800000000000000000000000",
+          "known_subtotal_excluding_tax": "216.4800000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -329,8 +365,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "302.7050000000000000000000000",
-          "known_subtotal_excluding_tax": "302.7050000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "304.1450000000000000000000000",
+          "known_subtotal_excluding_tax": "304.1450000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -359,13 +395,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "7321664.00",
+        "restore_chain_payload_bytes": "137578076200.00",
+        "restore_chain_inventory_bytes": "22337280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "4224576000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "7321727.00",
+        "backup_store_egress_bytes": "164140050984.00"
       },
       "base_monthly_charges": {
         "machine": "96",
         "object_account_storage": "9.540",
         "object_account_writes_and_lists": "54.00",
-        "object_account_reads_and_heads": "7.20",
+        "object_account_reads_and_heads": "8.64",
         "object_account_egress": "0",
         "extra_disk": "48.30000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -431,7 +476,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "7321664.00",
+        "restore_chain_payload_bytes": "137578076200.00",
+        "restore_chain_inventory_bytes": "22337280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "4224576000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "7321727.00",
+        "backup_store_egress_bytes": "164140050984.00"
       },
       "base_monthly_charges": {
         "machine": "96",
@@ -454,7 +508,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "126.2150000000",
+          "known_subtotal_excluding_tax": "127.6550000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -465,7 +519,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "172.9400000000",
+          "known_subtotal_excluding_tax": "174.3800000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -476,7 +530,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "266.4050000000",
+          "known_subtotal_excluding_tax": "267.8450000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -506,13 +560,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "7321664.00",
+        "restore_chain_payload_bytes": "137578076200.00",
+        "restore_chain_inventory_bytes": "22337280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "4224576000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "7321727.00",
+        "backup_store_egress_bytes": "164140050984.00"
       },
       "base_monthly_charges": {
         "machine": "24",
         "object_account_storage": "9.540",
         "object_account_writes_and_lists": "54.00",
-        "object_account_reads_and_heads": "7.20",
+        "object_account_reads_and_heads": "8.64",
         "object_account_egress": "0",
         "extra_disk": "78.2000000000",
         "vps_transfer_overage": null,
@@ -581,7 +644,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "7321664.00",
+        "restore_chain_payload_bytes": "137578076200.00",
+        "restore_chain_inventory_bytes": "22337280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "4224576000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "7321727.00",
+        "backup_store_egress_bytes": "164140050984.00"
       },
       "base_monthly_charges": {
         "machine": "24",
@@ -604,7 +676,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "138.2150000000",
+          "known_subtotal_excluding_tax": "139.6550000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -615,7 +687,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "184.9400000000",
+          "known_subtotal_excluding_tax": "186.3800000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -626,7 +698,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "278.4050000000",
+          "known_subtotal_excluding_tax": "279.8450000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -656,13 +728,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "7321664.00",
+        "restore_chain_payload_bytes": "137578076200.00",
+        "restore_chain_inventory_bytes": "22337280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "4224576000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "7321727.00",
+        "backup_store_egress_bytes": "164140050984.00"
       },
       "base_monthly_charges": {
         "machine": "44",
         "object_account_storage": "9.540",
         "object_account_writes_and_lists": "54.00",
-        "object_account_reads_and_heads": "7.20",
+        "object_account_reads_and_heads": "8.64",
         "object_account_egress": "0",
         "extra_disk": "70.2000000000",
         "vps_transfer_overage": null,
@@ -731,7 +812,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "7321664.00",
+        "restore_chain_payload_bytes": "137578076200.00",
+        "restore_chain_inventory_bytes": "22337280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "4224576000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "7321727.00",
+        "backup_store_egress_bytes": "164140050984.00"
       },
       "base_monthly_charges": {
         "machine": "44",
@@ -754,7 +844,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "162.2150000000",
+          "known_subtotal_excluding_tax": "163.6550000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -765,7 +855,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "208.9400000000",
+          "known_subtotal_excluding_tax": "210.3800000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -776,7 +866,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "302.4050000000",
+          "known_subtotal_excluding_tax": "303.8450000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -806,13 +896,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "7321664.00",
+        "restore_chain_payload_bytes": "137578076200.00",
+        "restore_chain_inventory_bytes": "22337280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "4224576000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "7321727.00",
+        "backup_store_egress_bytes": "164140050984.00"
       },
       "base_monthly_charges": {
         "machine": "84",
         "object_account_storage": "9.540",
         "object_account_writes_and_lists": "54.00",
-        "object_account_reads_and_heads": "7.20",
+        "object_account_reads_and_heads": "8.64",
         "object_account_egress": "0",
         "extra_disk": "54.2000000000",
         "vps_transfer_overage": null,
@@ -881,7 +980,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "7321664.00",
+        "restore_chain_payload_bytes": "137578076200.00",
+        "restore_chain_inventory_bytes": "22337280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "4224576000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "7321727.00",
+        "backup_store_egress_bytes": "164140050984.00"
       },
       "base_monthly_charges": {
         "machine": "84",
@@ -903,8 +1011,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "207.8450000000000000000000000",
-          "known_subtotal_excluding_tax": "207.8450000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "209.2850000000000000000000000",
+          "known_subtotal_excluding_tax": "209.2850000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -913,8 +1021,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "295.9750000000000000000000000",
-          "known_subtotal_excluding_tax": "295.9750000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "297.4150000000000000000000000",
+          "known_subtotal_excluding_tax": "297.4150000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -923,8 +1031,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "472.2200000000000000000000000",
-          "known_subtotal_excluding_tax": "472.2200000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "473.6600000000000000000000000",
+          "known_subtotal_excluding_tax": "473.6600000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -953,13 +1061,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14767424.00",
+        "restore_chain_payload_bytes": "277487984200.00",
+        "restore_chain_inventory_bytes": "67011840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "6815040000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14767487.00",
+        "backup_store_egress_bytes": "351314982984.00"
       },
       "base_monthly_charges": {
         "machine": "24",
         "object_account_storage": "19.455",
         "object_account_writes_and_lists": "85.50",
-        "object_account_reads_and_heads": "15.12",
+        "object_account_reads_and_heads": "16.56",
         "object_account_egress": "0",
         "extra_disk": "151.9000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -1025,7 +1142,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14767424.00",
+        "restore_chain_payload_bytes": "277487984200.00",
+        "restore_chain_inventory_bytes": "67011840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "6815040000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14767487.00",
+        "backup_store_egress_bytes": "351314982984.00"
       },
       "base_monthly_charges": {
         "machine": "24",
@@ -1047,8 +1173,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "223.8450000000000000000000000",
-          "known_subtotal_excluding_tax": "223.8450000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "225.2850000000000000000000000",
+          "known_subtotal_excluding_tax": "225.2850000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1057,8 +1183,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "311.9750000000000000000000000",
-          "known_subtotal_excluding_tax": "311.9750000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "313.4150000000000000000000000",
+          "known_subtotal_excluding_tax": "313.4150000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1067,8 +1193,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "488.2200000000000000000000000",
-          "known_subtotal_excluding_tax": "488.2200000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "489.6600000000000000000000000",
+          "known_subtotal_excluding_tax": "489.6600000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1097,13 +1223,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14767424.00",
+        "restore_chain_payload_bytes": "277487984200.00",
+        "restore_chain_inventory_bytes": "67011840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "6815040000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14767487.00",
+        "backup_store_egress_bytes": "351314982984.00"
       },
       "base_monthly_charges": {
         "machine": "48",
         "object_account_storage": "19.455",
         "object_account_writes_and_lists": "85.50",
-        "object_account_reads_and_heads": "15.12",
+        "object_account_reads_and_heads": "16.56",
         "object_account_egress": "0",
         "extra_disk": "143.9000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -1169,7 +1304,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14767424.00",
+        "restore_chain_payload_bytes": "277487984200.00",
+        "restore_chain_inventory_bytes": "67011840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "6815040000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14767487.00",
+        "backup_store_egress_bytes": "351314982984.00"
       },
       "base_monthly_charges": {
         "machine": "48",
@@ -1191,8 +1335,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "255.8450000000000000000000000",
-          "known_subtotal_excluding_tax": "255.8450000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "257.2850000000000000000000000",
+          "known_subtotal_excluding_tax": "257.2850000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1201,8 +1345,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "343.9750000000000000000000000",
-          "known_subtotal_excluding_tax": "343.9750000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "345.4150000000000000000000000",
+          "known_subtotal_excluding_tax": "345.4150000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1211,8 +1355,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "520.2200000000000000000000000",
-          "known_subtotal_excluding_tax": "520.2200000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "521.6600000000000000000000000",
+          "known_subtotal_excluding_tax": "521.6600000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1241,13 +1385,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14767424.00",
+        "restore_chain_payload_bytes": "277487984200.00",
+        "restore_chain_inventory_bytes": "67011840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "6815040000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14767487.00",
+        "backup_store_egress_bytes": "351314982984.00"
       },
       "base_monthly_charges": {
         "machine": "96",
         "object_account_storage": "19.455",
         "object_account_writes_and_lists": "85.50",
-        "object_account_reads_and_heads": "15.12",
+        "object_account_reads_and_heads": "16.56",
         "object_account_egress": "0",
         "extra_disk": "127.9000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -1313,7 +1466,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14767424.00",
+        "restore_chain_payload_bytes": "277487984200.00",
+        "restore_chain_inventory_bytes": "67011840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "6815040000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14767487.00",
+        "backup_store_egress_bytes": "351314982984.00"
       },
       "base_monthly_charges": {
         "machine": "96",
@@ -1336,7 +1498,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "213.8450000000",
+          "known_subtotal_excluding_tax": "215.2850000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1347,7 +1509,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "307.7750000000",
+          "known_subtotal_excluding_tax": "309.2150000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1358,7 +1520,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "495.6200000000",
+          "known_subtotal_excluding_tax": "497.0600000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1388,13 +1550,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14767424.00",
+        "restore_chain_payload_bytes": "277487984200.00",
+        "restore_chain_inventory_bytes": "67011840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "6815040000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14767487.00",
+        "backup_store_egress_bytes": "351314982984.00"
       },
       "base_monthly_charges": {
         "machine": "24",
         "object_account_storage": "19.455",
         "object_account_writes_and_lists": "85.50",
-        "object_account_reads_and_heads": "15.12",
+        "object_account_reads_and_heads": "16.56",
         "object_account_egress": "0",
         "extra_disk": "163.7000000000",
         "vps_transfer_overage": null,
@@ -1463,7 +1634,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14767424.00",
+        "restore_chain_payload_bytes": "277487984200.00",
+        "restore_chain_inventory_bytes": "67011840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "6815040000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14767487.00",
+        "backup_store_egress_bytes": "351314982984.00"
       },
       "base_monthly_charges": {
         "machine": "24",
@@ -1486,7 +1666,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "225.8450000000",
+          "known_subtotal_excluding_tax": "227.2850000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1497,7 +1677,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "319.7750000000",
+          "known_subtotal_excluding_tax": "321.2150000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1508,7 +1688,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "507.6200000000",
+          "known_subtotal_excluding_tax": "509.0600000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1538,13 +1718,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14767424.00",
+        "restore_chain_payload_bytes": "277487984200.00",
+        "restore_chain_inventory_bytes": "67011840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "6815040000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14767487.00",
+        "backup_store_egress_bytes": "351314982984.00"
       },
       "base_monthly_charges": {
         "machine": "44",
         "object_account_storage": "19.455",
         "object_account_writes_and_lists": "85.50",
-        "object_account_reads_and_heads": "15.12",
+        "object_account_reads_and_heads": "16.56",
         "object_account_egress": "0",
         "extra_disk": "155.7000000000",
         "vps_transfer_overage": null,
@@ -1613,7 +1802,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14767424.00",
+        "restore_chain_payload_bytes": "277487984200.00",
+        "restore_chain_inventory_bytes": "67011840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "6815040000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14767487.00",
+        "backup_store_egress_bytes": "351314982984.00"
       },
       "base_monthly_charges": {
         "machine": "44",
@@ -1636,7 +1834,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "249.8450000000",
+          "known_subtotal_excluding_tax": "251.2850000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1647,7 +1845,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "343.7750000000",
+          "known_subtotal_excluding_tax": "345.2150000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1658,7 +1856,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "531.6200000000",
+          "known_subtotal_excluding_tax": "533.0600000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1688,13 +1886,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14767424.00",
+        "restore_chain_payload_bytes": "277487984200.00",
+        "restore_chain_inventory_bytes": "67011840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "6815040000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14767487.00",
+        "backup_store_egress_bytes": "351314982984.00"
       },
       "base_monthly_charges": {
         "machine": "84",
         "object_account_storage": "19.455",
         "object_account_writes_and_lists": "85.50",
-        "object_account_reads_and_heads": "15.12",
+        "object_account_reads_and_heads": "16.56",
         "object_account_egress": "0",
         "extra_disk": "139.7000000000",
         "vps_transfer_overage": null,
@@ -1763,7 +1970,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14767424.00",
+        "restore_chain_payload_bytes": "277487984200.00",
+        "restore_chain_inventory_bytes": "67011840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "6815040000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14767487.00",
+        "backup_store_egress_bytes": "351314982984.00"
       },
       "base_monthly_charges": {
         "machine": "84",
@@ -1785,8 +2001,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "224.4300000000000000000000000",
-          "known_subtotal_excluding_tax": "224.4300000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "226.9500000000000000000000000",
+          "known_subtotal_excluding_tax": "226.9500000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1795,8 +2011,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "312.0800000000000000000000000",
-          "known_subtotal_excluding_tax": "312.0800000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "314.6000000000000000000000000",
+          "known_subtotal_excluding_tax": "314.6000000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1805,8 +2021,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "487.4950000000000000000000000",
-          "known_subtotal_excluding_tax": "487.4950000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "490.0150000000000000000000000",
+          "known_subtotal_excluding_tax": "490.0150000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1835,13 +2051,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14637664.00",
+        "restore_chain_payload_bytes": "275156152400.00",
+        "restore_chain_inventory_bytes": "44657280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "8449152000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14637727.00",
+        "backup_store_egress_bytes": "328262703184.00"
       },
       "base_monthly_charges": {
         "machine": "24",
         "object_account_storage": "19.080",
         "object_account_writes_and_lists": "103.50",
-        "object_account_reads_and_heads": "14.40",
+        "object_account_reads_and_heads": "16.92",
         "object_account_egress": "0",
         "extra_disk": "151.1000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -1907,7 +2132,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14637664.00",
+        "restore_chain_payload_bytes": "275156152400.00",
+        "restore_chain_inventory_bytes": "44657280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "8449152000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14637727.00",
+        "backup_store_egress_bytes": "328262703184.00"
       },
       "base_monthly_charges": {
         "machine": "24",
@@ -1929,8 +2163,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "240.4300000000000000000000000",
-          "known_subtotal_excluding_tax": "240.4300000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "242.9500000000000000000000000",
+          "known_subtotal_excluding_tax": "242.9500000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1939,8 +2173,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "328.0800000000000000000000000",
-          "known_subtotal_excluding_tax": "328.0800000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "330.6000000000000000000000000",
+          "known_subtotal_excluding_tax": "330.6000000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1949,8 +2183,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "503.4950000000000000000000000",
-          "known_subtotal_excluding_tax": "503.4950000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "506.0150000000000000000000000",
+          "known_subtotal_excluding_tax": "506.0150000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -1979,13 +2213,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14637664.00",
+        "restore_chain_payload_bytes": "275156152400.00",
+        "restore_chain_inventory_bytes": "44657280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "8449152000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14637727.00",
+        "backup_store_egress_bytes": "328262703184.00"
       },
       "base_monthly_charges": {
         "machine": "48",
         "object_account_storage": "19.080",
         "object_account_writes_and_lists": "103.50",
-        "object_account_reads_and_heads": "14.40",
+        "object_account_reads_and_heads": "16.92",
         "object_account_egress": "0",
         "extra_disk": "143.1000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -2051,7 +2294,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14637664.00",
+        "restore_chain_payload_bytes": "275156152400.00",
+        "restore_chain_inventory_bytes": "44657280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "8449152000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14637727.00",
+        "backup_store_egress_bytes": "328262703184.00"
       },
       "base_monthly_charges": {
         "machine": "48",
@@ -2073,8 +2325,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "272.4300000000000000000000000",
-          "known_subtotal_excluding_tax": "272.4300000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "274.9500000000000000000000000",
+          "known_subtotal_excluding_tax": "274.9500000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2083,8 +2335,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "360.0800000000000000000000000",
-          "known_subtotal_excluding_tax": "360.0800000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "362.6000000000000000000000000",
+          "known_subtotal_excluding_tax": "362.6000000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2093,8 +2345,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "535.4950000000000000000000000",
-          "known_subtotal_excluding_tax": "535.4950000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "538.0150000000000000000000000",
+          "known_subtotal_excluding_tax": "538.0150000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2123,13 +2375,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14637664.00",
+        "restore_chain_payload_bytes": "275156152400.00",
+        "restore_chain_inventory_bytes": "44657280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "8449152000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14637727.00",
+        "backup_store_egress_bytes": "328262703184.00"
       },
       "base_monthly_charges": {
         "machine": "96",
         "object_account_storage": "19.080",
         "object_account_writes_and_lists": "103.50",
-        "object_account_reads_and_heads": "14.40",
+        "object_account_reads_and_heads": "16.92",
         "object_account_egress": "0",
         "extra_disk": "127.1000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -2195,7 +2456,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14637664.00",
+        "restore_chain_payload_bytes": "275156152400.00",
+        "restore_chain_inventory_bytes": "44657280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "8449152000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14637727.00",
+        "backup_store_egress_bytes": "328262703184.00"
       },
       "base_monthly_charges": {
         "machine": "96",
@@ -2218,7 +2488,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "230.4300000000",
+          "known_subtotal_excluding_tax": "232.9500000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2229,7 +2499,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "323.8800000000",
+          "known_subtotal_excluding_tax": "326.4000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2240,7 +2510,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "510.7950000000",
+          "known_subtotal_excluding_tax": "513.3150000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2270,13 +2540,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14637664.00",
+        "restore_chain_payload_bytes": "275156152400.00",
+        "restore_chain_inventory_bytes": "44657280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "8449152000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14637727.00",
+        "backup_store_egress_bytes": "328262703184.00"
       },
       "base_monthly_charges": {
         "machine": "24",
         "object_account_storage": "19.080",
         "object_account_writes_and_lists": "103.50",
-        "object_account_reads_and_heads": "14.40",
+        "object_account_reads_and_heads": "16.92",
         "object_account_egress": "0",
         "extra_disk": "162.9000000000",
         "vps_transfer_overage": null,
@@ -2345,7 +2624,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14637664.00",
+        "restore_chain_payload_bytes": "275156152400.00",
+        "restore_chain_inventory_bytes": "44657280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "8449152000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14637727.00",
+        "backup_store_egress_bytes": "328262703184.00"
       },
       "base_monthly_charges": {
         "machine": "24",
@@ -2368,7 +2656,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "242.4300000000",
+          "known_subtotal_excluding_tax": "244.9500000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2379,7 +2667,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "335.8800000000",
+          "known_subtotal_excluding_tax": "338.4000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2390,7 +2678,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "522.7950000000",
+          "known_subtotal_excluding_tax": "525.3150000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2420,13 +2708,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14637664.00",
+        "restore_chain_payload_bytes": "275156152400.00",
+        "restore_chain_inventory_bytes": "44657280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "8449152000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14637727.00",
+        "backup_store_egress_bytes": "328262703184.00"
       },
       "base_monthly_charges": {
         "machine": "44",
         "object_account_storage": "19.080",
         "object_account_writes_and_lists": "103.50",
-        "object_account_reads_and_heads": "14.40",
+        "object_account_reads_and_heads": "16.92",
         "object_account_egress": "0",
         "extra_disk": "154.9000000000",
         "vps_transfer_overage": null,
@@ -2495,7 +2792,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14637664.00",
+        "restore_chain_payload_bytes": "275156152400.00",
+        "restore_chain_inventory_bytes": "44657280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "8449152000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14637727.00",
+        "backup_store_egress_bytes": "328262703184.00"
       },
       "base_monthly_charges": {
         "machine": "44",
@@ -2518,7 +2824,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "266.4300000000",
+          "known_subtotal_excluding_tax": "268.9500000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2529,7 +2835,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "359.8800000000",
+          "known_subtotal_excluding_tax": "362.4000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2540,7 +2846,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "546.7950000000",
+          "known_subtotal_excluding_tax": "549.3150000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2570,13 +2876,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14637664.00",
+        "restore_chain_payload_bytes": "275156152400.00",
+        "restore_chain_inventory_bytes": "44657280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "8449152000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14637727.00",
+        "backup_store_egress_bytes": "328262703184.00"
       },
       "base_monthly_charges": {
         "machine": "84",
         "object_account_storage": "19.080",
         "object_account_writes_and_lists": "103.50",
-        "object_account_reads_and_heads": "14.40",
+        "object_account_reads_and_heads": "16.92",
         "object_account_egress": "0",
         "extra_disk": "138.9000000000",
         "vps_transfer_overage": null,
@@ -2645,7 +2960,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "14637664.00",
+        "restore_chain_payload_bytes": "275156152400.00",
+        "restore_chain_inventory_bytes": "44657280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "8449152000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "14637727.00",
+        "backup_store_egress_bytes": "328262703184.00"
       },
       "base_monthly_charges": {
         "machine": "84",
@@ -2667,8 +2991,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "398.1900000000000000000000000",
-          "known_subtotal_excluding_tax": "398.1900000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "400.7100000000000000000000000",
+          "known_subtotal_excluding_tax": "400.7100000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2677,8 +3001,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "574.4350000000000000000000000",
-          "known_subtotal_excluding_tax": "574.4350000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "576.9550000000000000000000000",
+          "known_subtotal_excluding_tax": "576.9550000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2687,8 +3011,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "927.0400000000000000000000000",
-          "known_subtotal_excluding_tax": "927.0400000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "929.5600000000000000000000000",
+          "known_subtotal_excluding_tax": "929.5600000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2717,13 +3041,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "29523424.00",
+        "restore_chain_payload_bytes": "554975968400.00",
+        "restore_chain_inventory_bytes": "133971840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "13630080000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "29523487.00",
+        "backup_store_egress_bytes": "702578007184.00"
       },
       "base_monthly_charges": {
         "machine": "24",
         "object_account_storage": "38.895",
         "object_account_writes_and_lists": "171.00",
-        "object_account_reads_and_heads": "30.24",
+        "object_account_reads_and_heads": "32.76",
         "object_account_egress": "0",
         "extra_disk": "310.3000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -2789,7 +3122,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "29523424.00",
+        "restore_chain_payload_bytes": "554975968400.00",
+        "restore_chain_inventory_bytes": "133971840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "13630080000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "29523487.00",
+        "backup_store_egress_bytes": "702578007184.00"
       },
       "base_monthly_charges": {
         "machine": "24",
@@ -2811,8 +3153,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "414.1900000000000000000000000",
-          "known_subtotal_excluding_tax": "414.1900000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "416.7100000000000000000000000",
+          "known_subtotal_excluding_tax": "416.7100000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2821,8 +3163,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "590.4350000000000000000000000",
-          "known_subtotal_excluding_tax": "590.4350000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "592.9550000000000000000000000",
+          "known_subtotal_excluding_tax": "592.9550000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2831,8 +3173,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "943.0400000000000000000000000",
-          "known_subtotal_excluding_tax": "943.0400000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "945.5600000000000000000000000",
+          "known_subtotal_excluding_tax": "945.5600000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2861,13 +3203,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "29523424.00",
+        "restore_chain_payload_bytes": "554975968400.00",
+        "restore_chain_inventory_bytes": "133971840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "13630080000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "29523487.00",
+        "backup_store_egress_bytes": "702578007184.00"
       },
       "base_monthly_charges": {
         "machine": "48",
         "object_account_storage": "38.895",
         "object_account_writes_and_lists": "171.00",
-        "object_account_reads_and_heads": "30.24",
+        "object_account_reads_and_heads": "32.76",
         "object_account_egress": "0",
         "extra_disk": "302.3000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -2933,7 +3284,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "29523424.00",
+        "restore_chain_payload_bytes": "554975968400.00",
+        "restore_chain_inventory_bytes": "133971840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "13630080000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "29523487.00",
+        "backup_store_egress_bytes": "702578007184.00"
       },
       "base_monthly_charges": {
         "machine": "48",
@@ -2955,8 +3315,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "446.1900000000000000000000000",
-          "known_subtotal_excluding_tax": "446.1900000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "448.7100000000000000000000000",
+          "known_subtotal_excluding_tax": "448.7100000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2965,8 +3325,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "622.4350000000000000000000000",
-          "known_subtotal_excluding_tax": "622.4350000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "624.9550000000000000000000000",
+          "known_subtotal_excluding_tax": "624.9550000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -2975,8 +3335,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "975.0400000000000000000000000",
-          "known_subtotal_excluding_tax": "975.0400000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "977.5600000000000000000000000",
+          "known_subtotal_excluding_tax": "977.5600000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3005,13 +3365,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "29523424.00",
+        "restore_chain_payload_bytes": "554975968400.00",
+        "restore_chain_inventory_bytes": "133971840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "13630080000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "29523487.00",
+        "backup_store_egress_bytes": "702578007184.00"
       },
       "base_monthly_charges": {
         "machine": "96",
         "object_account_storage": "38.895",
         "object_account_writes_and_lists": "171.00",
-        "object_account_reads_and_heads": "30.24",
+        "object_account_reads_and_heads": "32.76",
         "object_account_egress": "0",
         "extra_disk": "286.3000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -3077,7 +3446,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "29523424.00",
+        "restore_chain_payload_bytes": "554975968400.00",
+        "restore_chain_inventory_bytes": "133971840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "13630080000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "29523487.00",
+        "backup_store_egress_bytes": "702578007184.00"
       },
       "base_monthly_charges": {
         "machine": "96",
@@ -3100,7 +3478,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "410.0900000000",
+          "known_subtotal_excluding_tax": "412.6100000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3111,7 +3489,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "597.9350000000",
+          "known_subtotal_excluding_tax": "600.4550000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3122,7 +3500,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "973.6400000000",
+          "known_subtotal_excluding_tax": "976.1600000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3152,13 +3530,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "29523424.00",
+        "restore_chain_payload_bytes": "554975968400.00",
+        "restore_chain_inventory_bytes": "133971840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "13630080000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "29523487.00",
+        "backup_store_egress_bytes": "702578007184.00"
       },
       "base_monthly_charges": {
         "machine": "24",
         "object_account_storage": "38.895",
         "object_account_writes_and_lists": "171.00",
-        "object_account_reads_and_heads": "30.24",
+        "object_account_reads_and_heads": "32.76",
         "object_account_egress": "0",
         "extra_disk": "333.8000000000",
         "vps_transfer_overage": null,
@@ -3227,7 +3614,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "29523424.00",
+        "restore_chain_payload_bytes": "554975968400.00",
+        "restore_chain_inventory_bytes": "133971840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "13630080000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "29523487.00",
+        "backup_store_egress_bytes": "702578007184.00"
       },
       "base_monthly_charges": {
         "machine": "24",
@@ -3250,7 +3646,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "422.0900000000",
+          "known_subtotal_excluding_tax": "424.6100000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3261,7 +3657,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "609.9350000000",
+          "known_subtotal_excluding_tax": "612.4550000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3272,7 +3668,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "985.6400000000",
+          "known_subtotal_excluding_tax": "988.1600000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3302,13 +3698,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "29523424.00",
+        "restore_chain_payload_bytes": "554975968400.00",
+        "restore_chain_inventory_bytes": "133971840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "13630080000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "29523487.00",
+        "backup_store_egress_bytes": "702578007184.00"
       },
       "base_monthly_charges": {
         "machine": "44",
         "object_account_storage": "38.895",
         "object_account_writes_and_lists": "171.00",
-        "object_account_reads_and_heads": "30.24",
+        "object_account_reads_and_heads": "32.76",
         "object_account_egress": "0",
         "extra_disk": "325.8000000000",
         "vps_transfer_overage": null,
@@ -3377,7 +3782,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "29523424.00",
+        "restore_chain_payload_bytes": "554975968400.00",
+        "restore_chain_inventory_bytes": "133971840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "13630080000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "29523487.00",
+        "backup_store_egress_bytes": "702578007184.00"
       },
       "base_monthly_charges": {
         "machine": "44",
@@ -3400,7 +3814,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "446.0900000000",
+          "known_subtotal_excluding_tax": "448.6100000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3411,7 +3825,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "633.9350000000",
+          "known_subtotal_excluding_tax": "636.4550000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3422,7 +3836,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "1009.6400000000",
+          "known_subtotal_excluding_tax": "1012.1600000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3452,13 +3866,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "29523424.00",
+        "restore_chain_payload_bytes": "554975968400.00",
+        "restore_chain_inventory_bytes": "133971840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "13630080000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "29523487.00",
+        "backup_store_egress_bytes": "702578007184.00"
       },
       "base_monthly_charges": {
         "machine": "84",
         "object_account_storage": "38.895",
         "object_account_writes_and_lists": "171.00",
-        "object_account_reads_and_heads": "30.24",
+        "object_account_reads_and_heads": "32.76",
         "object_account_egress": "0",
         "extra_disk": "309.8000000000",
         "vps_transfer_overage": null,
@@ -3527,7 +3950,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "29523424.00",
+        "restore_chain_payload_bytes": "554975968400.00",
+        "restore_chain_inventory_bytes": "133971840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "13630080000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "29523487.00",
+        "backup_store_egress_bytes": "702578007184.00"
       },
       "base_monthly_charges": {
         "machine": "84",
@@ -3549,8 +3981,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "1037.810000000000000000000000",
-          "known_subtotal_excluding_tax": "1037.810000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "1050.770000000000000000000000",
+          "known_subtotal_excluding_tax": "1050.770000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3559,8 +3991,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "1476.060000000000000000000000",
-          "known_subtotal_excluding_tax": "1476.060000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "1489.020000000000000000000000",
+          "known_subtotal_excluding_tax": "1489.020000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3569,8 +4001,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "2378.848892184197902241744380",
-          "known_subtotal_excluding_tax": "2378.848892184197902241744380",
+          "modeled_infrastructure_excluding_tax": "2391.808892184197902241744380",
+          "known_subtotal_excluding_tax": "2391.808892184197902241744380",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3599,13 +4031,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "73165664.00",
+        "restore_chain_payload_bytes": "1375780762000.00",
+        "restore_chain_inventory_bytes": "223217280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "42245760000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "73165727.00",
+        "backup_store_egress_bytes": "1641243920784.00"
       },
       "base_monthly_charges": {
         "machine": "24",
         "object_account_storage": "95.400",
         "object_account_writes_and_lists": "504.00",
-        "object_account_reads_and_heads": "70.56",
+        "object_account_reads_and_heads": "83.52",
         "object_account_egress": "0",
         "extra_disk": "782.1000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -3671,7 +4112,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "73165664.00",
+        "restore_chain_payload_bytes": "1375780762000.00",
+        "restore_chain_inventory_bytes": "223217280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "42245760000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "73165727.00",
+        "backup_store_egress_bytes": "1641243920784.00"
       },
       "base_monthly_charges": {
         "machine": "24",
@@ -3693,8 +4143,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "1053.810000000000000000000000",
-          "known_subtotal_excluding_tax": "1053.810000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "1066.770000000000000000000000",
+          "known_subtotal_excluding_tax": "1066.770000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3703,8 +4153,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "1492.060000000000000000000000",
-          "known_subtotal_excluding_tax": "1492.060000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "1505.020000000000000000000000",
+          "known_subtotal_excluding_tax": "1505.020000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3713,8 +4163,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "2384.848892184197902409516540",
-          "known_subtotal_excluding_tax": "2384.848892184197902409516540",
+          "modeled_infrastructure_excluding_tax": "2397.808892184197902409516540",
+          "known_subtotal_excluding_tax": "2397.808892184197902409516540",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3743,13 +4193,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "73165664.00",
+        "restore_chain_payload_bytes": "1375780762000.00",
+        "restore_chain_inventory_bytes": "223217280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "42245760000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "73165727.00",
+        "backup_store_egress_bytes": "1641243920784.00"
       },
       "base_monthly_charges": {
         "machine": "48",
         "object_account_storage": "95.400",
         "object_account_writes_and_lists": "504.00",
-        "object_account_reads_and_heads": "70.56",
+        "object_account_reads_and_heads": "83.52",
         "object_account_egress": "0",
         "extra_disk": "774.1000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -3815,7 +4274,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "73165664.00",
+        "restore_chain_payload_bytes": "1375780762000.00",
+        "restore_chain_inventory_bytes": "223217280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "42245760000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "73165727.00",
+        "backup_store_egress_bytes": "1641243920784.00"
       },
       "base_monthly_charges": {
         "machine": "48",
@@ -3837,8 +4305,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "1085.810000000000000000000000",
-          "known_subtotal_excluding_tax": "1085.810000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "1098.770000000000000000000000",
+          "known_subtotal_excluding_tax": "1098.770000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3847,8 +4315,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "1524.060000000000000000000000",
-          "known_subtotal_excluding_tax": "1524.060000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "1537.020000000000000000000000",
+          "known_subtotal_excluding_tax": "1537.020000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3857,8 +4325,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "2406.848892184197902577288700",
-          "known_subtotal_excluding_tax": "2406.848892184197902577288700",
+          "modeled_infrastructure_excluding_tax": "2419.808892184197902577288700",
+          "known_subtotal_excluding_tax": "2419.808892184197902577288700",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3887,13 +4355,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "73165664.00",
+        "restore_chain_payload_bytes": "1375780762000.00",
+        "restore_chain_inventory_bytes": "223217280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "42245760000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "73165727.00",
+        "backup_store_egress_bytes": "1641243920784.00"
       },
       "base_monthly_charges": {
         "machine": "96",
         "object_account_storage": "95.400",
         "object_account_writes_and_lists": "504.00",
-        "object_account_reads_and_heads": "70.56",
+        "object_account_reads_and_heads": "83.52",
         "object_account_egress": "0",
         "extra_disk": "758.1000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -3959,7 +4436,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "73165664.00",
+        "restore_chain_payload_bytes": "1375780762000.00",
+        "restore_chain_inventory_bytes": "223217280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "42245760000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "73165727.00",
+        "backup_store_egress_bytes": "1641243920784.00"
       },
       "base_monthly_charges": {
         "machine": "96",
@@ -3982,7 +4468,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "1067.2100000000",
+          "known_subtotal_excluding_tax": "1080.1700000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -3993,7 +4479,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "1534.3600000000",
+          "known_subtotal_excluding_tax": "1547.3200000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4004,7 +4490,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "2468.7600000000",
+          "known_subtotal_excluding_tax": "2481.7200000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4034,13 +4520,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "73165664.00",
+        "restore_chain_payload_bytes": "1375780762000.00",
+        "restore_chain_inventory_bytes": "223217280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "42245760000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "73165727.00",
+        "backup_store_egress_bytes": "1641243920784.00"
       },
       "base_monthly_charges": {
         "machine": "24",
         "object_account_storage": "95.400",
         "object_account_writes_and_lists": "504.00",
-        "object_account_reads_and_heads": "70.56",
+        "object_account_reads_and_heads": "83.52",
         "object_account_egress": "0",
         "extra_disk": "840.4000000000",
         "vps_transfer_overage": null,
@@ -4109,7 +4604,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "73165664.00",
+        "restore_chain_payload_bytes": "1375780762000.00",
+        "restore_chain_inventory_bytes": "223217280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "42245760000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "73165727.00",
+        "backup_store_egress_bytes": "1641243920784.00"
       },
       "base_monthly_charges": {
         "machine": "24",
@@ -4132,7 +4636,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "1079.2100000000",
+          "known_subtotal_excluding_tax": "1092.1700000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4143,7 +4647,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "1546.3600000000",
+          "known_subtotal_excluding_tax": "1559.3200000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4154,7 +4658,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "2480.7600000000",
+          "known_subtotal_excluding_tax": "2493.7200000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4184,13 +4688,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "73165664.00",
+        "restore_chain_payload_bytes": "1375780762000.00",
+        "restore_chain_inventory_bytes": "223217280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "42245760000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "73165727.00",
+        "backup_store_egress_bytes": "1641243920784.00"
       },
       "base_monthly_charges": {
         "machine": "44",
         "object_account_storage": "95.400",
         "object_account_writes_and_lists": "504.00",
-        "object_account_reads_and_heads": "70.56",
+        "object_account_reads_and_heads": "83.52",
         "object_account_egress": "0",
         "extra_disk": "832.4000000000",
         "vps_transfer_overage": null,
@@ -4259,7 +4772,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "73165664.00",
+        "restore_chain_payload_bytes": "1375780762000.00",
+        "restore_chain_inventory_bytes": "223217280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "42245760000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "73165727.00",
+        "backup_store_egress_bytes": "1641243920784.00"
       },
       "base_monthly_charges": {
         "machine": "44",
@@ -4282,7 +4804,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "1103.2100000000",
+          "known_subtotal_excluding_tax": "1116.1700000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4293,7 +4815,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "1570.3600000000",
+          "known_subtotal_excluding_tax": "1583.3200000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4304,7 +4826,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "2504.7600000000",
+          "known_subtotal_excluding_tax": "2517.7200000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4334,13 +4856,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "73165664.00",
+        "restore_chain_payload_bytes": "1375780762000.00",
+        "restore_chain_inventory_bytes": "223217280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "42245760000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "73165727.00",
+        "backup_store_egress_bytes": "1641243920784.00"
       },
       "base_monthly_charges": {
         "machine": "84",
         "object_account_storage": "95.400",
         "object_account_writes_and_lists": "504.00",
-        "object_account_reads_and_heads": "70.56",
+        "object_account_reads_and_heads": "83.52",
         "object_account_egress": "0",
         "extra_disk": "816.4000000000",
         "vps_transfer_overage": null,
@@ -4409,7 +4940,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "73165664.00",
+        "restore_chain_payload_bytes": "1375780762000.00",
+        "restore_chain_inventory_bytes": "223217280000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "42245760000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "73165727.00",
+        "backup_store_egress_bytes": "1641243920784.00"
       },
       "base_monthly_charges": {
         "machine": "84",
@@ -4431,8 +4971,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "1916.545000000000000000000000",
-          "known_subtotal_excluding_tax": "1916.545000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "1929.505000000000000000000000",
+          "known_subtotal_excluding_tax": "1929.505000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4441,8 +4981,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "2815.420765727609395684955910",
-          "known_subtotal_excluding_tax": "2815.420765727609395684955910",
+          "modeled_infrastructure_excluding_tax": "2828.380765727609395684955910",
+          "known_subtotal_excluding_tax": "2828.380765727609395684955910",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4451,8 +4991,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "4635.096463200747965512823180",
-          "known_subtotal_excluding_tax": "4635.096463200747965512823180",
+          "modeled_infrastructure_excluding_tax": "4648.056463200747965512823180",
+          "known_subtotal_excluding_tax": "4648.056463200747965512823180",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4481,13 +5021,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "147571424.00",
+        "restore_chain_payload_bytes": "2774879842000.00",
+        "restore_chain_inventory_bytes": "669651840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "68150400000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "147571487.00",
+        "backup_store_egress_bytes": "3512682200784.00"
       },
       "base_monthly_charges": {
         "machine": "24",
         "object_account_storage": "194.445",
         "object_account_writes_and_lists": "850.50",
-        "object_account_reads_and_heads": "150.84",
+        "object_account_reads_and_heads": "163.80",
         "object_account_egress": "0",
         "extra_disk": "1578.000000000000000000000000",
         "vps_transfer_overage": "17.63576572760939568495591000",
@@ -4553,7 +5102,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "147571424.00",
+        "restore_chain_payload_bytes": "2774879842000.00",
+        "restore_chain_inventory_bytes": "669651840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "68150400000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "147571487.00",
+        "backup_store_egress_bytes": "3512682200784.00"
       },
       "base_monthly_charges": {
         "machine": "24",
@@ -4575,8 +5133,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "1932.545000000000000000000000",
-          "known_subtotal_excluding_tax": "1932.545000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "1945.505000000000000000000000",
+          "known_subtotal_excluding_tax": "1945.505000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4585,8 +5143,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "2821.420765727609395852728070",
-          "known_subtotal_excluding_tax": "2821.420765727609395852728070",
+          "modeled_infrastructure_excluding_tax": "2834.380765727609395852728070",
+          "known_subtotal_excluding_tax": "2834.380765727609395852728070",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4595,8 +5153,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "4641.096463200747965680595340",
-          "known_subtotal_excluding_tax": "4641.096463200747965680595340",
+          "modeled_infrastructure_excluding_tax": "4654.056463200747965680595340",
+          "known_subtotal_excluding_tax": "4654.056463200747965680595340",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4625,13 +5183,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "147571424.00",
+        "restore_chain_payload_bytes": "2774879842000.00",
+        "restore_chain_inventory_bytes": "669651840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "68150400000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "147571487.00",
+        "backup_store_egress_bytes": "3512682200784.00"
       },
       "base_monthly_charges": {
         "machine": "48",
         "object_account_storage": "194.445",
         "object_account_writes_and_lists": "850.50",
-        "object_account_reads_and_heads": "150.84",
+        "object_account_reads_and_heads": "163.80",
         "object_account_egress": "0",
         "extra_disk": "1570.000000000000000000000000",
         "vps_transfer_overage": "7.635765727609395852728070000",
@@ -4697,7 +5264,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "147571424.00",
+        "restore_chain_payload_bytes": "2774879842000.00",
+        "restore_chain_inventory_bytes": "669651840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "68150400000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "147571487.00",
+        "backup_store_egress_bytes": "3512682200784.00"
       },
       "base_monthly_charges": {
         "machine": "48",
@@ -4719,8 +5295,8 @@
       "store": "cloudflare-r2-standard",
       "byte_sensitivity": {
         "0.5": {
-          "modeled_infrastructure_excluding_tax": "1964.545000000000000000000000",
-          "known_subtotal_excluding_tax": "1964.545000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "1977.505000000000000000000000",
+          "known_subtotal_excluding_tax": "1977.505000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4729,8 +5305,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "1": {
-          "modeled_infrastructure_excluding_tax": "2845.785000000000000000000000",
-          "known_subtotal_excluding_tax": "2845.785000000000000000000000",
+          "modeled_infrastructure_excluding_tax": "2858.745000000000000000000000",
+          "known_subtotal_excluding_tax": "2858.745000000000000000000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4739,8 +5315,8 @@
           "working_disk_fits_advertised_capacity": false
         },
         "2": {
-          "modeled_infrastructure_excluding_tax": "4663.096463200747965848367500",
-          "known_subtotal_excluding_tax": "4663.096463200747965848367500",
+          "modeled_infrastructure_excluding_tax": "4676.056463200747965848367500",
+          "known_subtotal_excluding_tax": "4676.056463200747965848367500",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4769,13 +5345,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "147571424.00",
+        "restore_chain_payload_bytes": "2774879842000.00",
+        "restore_chain_inventory_bytes": "669651840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "68150400000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "147571487.00",
+        "backup_store_egress_bytes": "3512682200784.00"
       },
       "base_monthly_charges": {
         "machine": "96",
         "object_account_storage": "194.445",
         "object_account_writes_and_lists": "850.50",
-        "object_account_reads_and_heads": "150.84",
+        "object_account_reads_and_heads": "163.80",
         "object_account_egress": "0",
         "extra_disk": "1554.000000000000000000000000",
         "vps_transfer_overage": "0",
@@ -4841,7 +5426,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "147571424.00",
+        "restore_chain_payload_bytes": "2774879842000.00",
+        "restore_chain_inventory_bytes": "669651840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "68150400000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "147571487.00",
+        "backup_store_egress_bytes": "3512682200784.00"
       },
       "base_monthly_charges": {
         "machine": "96",
@@ -4864,7 +5458,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "1975.6450000000",
+          "known_subtotal_excluding_tax": "1988.6050000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4875,7 +5469,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "2914.7850000000",
+          "known_subtotal_excluding_tax": "2927.7450000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4886,7 +5480,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "4793.0800000000",
+          "known_subtotal_excluding_tax": "4806.0400000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -4916,13 +5510,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "147571424.00",
+        "restore_chain_payload_bytes": "2774879842000.00",
+        "restore_chain_inventory_bytes": "669651840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "68150400000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "147571487.00",
+        "backup_store_egress_bytes": "3512682200784.00"
       },
       "base_monthly_charges": {
         "machine": "24",
         "object_account_storage": "194.445",
         "object_account_writes_and_lists": "850.50",
-        "object_account_reads_and_heads": "150.84",
+        "object_account_reads_and_heads": "163.80",
         "object_account_egress": "0",
         "extra_disk": "1695.0000000000",
         "vps_transfer_overage": null,
@@ -4991,7 +5594,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "147571424.00",
+        "restore_chain_payload_bytes": "2774879842000.00",
+        "restore_chain_inventory_bytes": "669651840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "68150400000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "147571487.00",
+        "backup_store_egress_bytes": "3512682200784.00"
       },
       "base_monthly_charges": {
         "machine": "24",
@@ -5014,7 +5626,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "1987.6450000000",
+          "known_subtotal_excluding_tax": "2000.6050000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -5025,7 +5637,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "2926.7850000000",
+          "known_subtotal_excluding_tax": "2939.7450000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -5036,7 +5648,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "4805.0800000000",
+          "known_subtotal_excluding_tax": "4818.0400000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -5066,13 +5678,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "147571424.00",
+        "restore_chain_payload_bytes": "2774879842000.00",
+        "restore_chain_inventory_bytes": "669651840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "68150400000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "147571487.00",
+        "backup_store_egress_bytes": "3512682200784.00"
       },
       "base_monthly_charges": {
         "machine": "44",
         "object_account_storage": "194.445",
         "object_account_writes_and_lists": "850.50",
-        "object_account_reads_and_heads": "150.84",
+        "object_account_reads_and_heads": "163.80",
         "object_account_egress": "0",
         "extra_disk": "1687.0000000000",
         "vps_transfer_overage": null,
@@ -5141,7 +5762,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "147571424.00",
+        "restore_chain_payload_bytes": "2774879842000.00",
+        "restore_chain_inventory_bytes": "669651840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "68150400000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "147571487.00",
+        "backup_store_egress_bytes": "3512682200784.00"
       },
       "base_monthly_charges": {
         "machine": "44",
@@ -5164,7 +5794,7 @@
       "byte_sensitivity": {
         "0.5": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "2011.6450000000",
+          "known_subtotal_excluding_tax": "2024.6050000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -5175,7 +5805,7 @@
         },
         "1": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "2950.7850000000",
+          "known_subtotal_excluding_tax": "2963.7450000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -5186,7 +5816,7 @@
         },
         "2": {
           "modeled_infrastructure_excluding_tax": null,
-          "known_subtotal_excluding_tax": "4829.0800000000",
+          "known_subtotal_excluding_tax": "4842.0400000000",
           "monthly_total_excluding_tax": null,
           "unknown_costs": [
             "other",
@@ -5216,13 +5846,22 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "147571424.00",
+        "restore_chain_payload_bytes": "2774879842000.00",
+        "restore_chain_inventory_bytes": "669651840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "68150400000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "147571487.00",
+        "backup_store_egress_bytes": "3512682200784.00"
       },
       "base_monthly_charges": {
         "machine": "84",
         "object_account_storage": "194.445",
         "object_account_writes_and_lists": "850.50",
-        "object_account_reads_and_heads": "150.84",
+        "object_account_reads_and_heads": "163.80",
         "object_account_egress": "0",
         "extra_disk": "1671.0000000000",
         "vps_transfer_overage": null,
@@ -5291,7 +5930,16 @@
         "backup_effective_full_period_days": "30",
         "backup_max_family_snapshots": "30",
         "backup_reserved_families": "2",
-        "backup_reserved_captures": "59"
+        "backup_reserved_captures": "59",
+        "restore_chain_captures": "30",
+        "restore_chain_owned_objects": "147571424.00",
+        "restore_chain_payload_bytes": "2774879842000.00",
+        "restore_chain_inventory_bytes": "669651840000.00",
+        "restore_chain_ancestor_snapshot_metadata_bytes": "118784",
+        "restore_chain_target_sql_dump_bytes": "68150400000.00",
+        "restore_chain_metadata_requests": "63",
+        "backup_read_requests": "147571487.00",
+        "backup_store_egress_bytes": "3512682200784.00"
       },
       "base_monthly_charges": {
         "machine": "84",

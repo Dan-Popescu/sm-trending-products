@@ -66,6 +66,7 @@ def main() -> int:
         "source_download_bytes_per_product_refresh",
         "upstream_response_bytes_per_observation",
         "backup_inventory_bytes_per_object",
+        "restore_ancestor_snapshot_metadata_bytes",
         "sql_bytes_per_retired_artifact",
         "sql_bytes_per_retired_dataset",
         "sql_dump_bytes_per_retired_marker",
@@ -165,6 +166,15 @@ def main() -> int:
                         "backup_max_family_snapshots",
                         "backup_reserved_families",
                         "backup_reserved_captures",
+                        "restore_chain_captures",
+                        "restore_chain_owned_objects",
+                        "restore_chain_payload_bytes",
+                        "restore_chain_inventory_bytes",
+                        "restore_chain_ancestor_snapshot_metadata_bytes",
+                        "restore_chain_target_sql_dump_bytes",
+                        "restore_chain_metadata_requests",
+                        "backup_read_requests",
+                        "backup_store_egress_bytes",
                     )
                 }
                 group["base_monthly_charges"] = report["monthly_charges_excluding_tax"]
