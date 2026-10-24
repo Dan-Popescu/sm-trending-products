@@ -1,6 +1,7 @@
 """Repeated historical observations retain every fact without repeated frontier writes."""
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -93,3 +94,26 @@ def test_equal_timestamp_last_input_wins_and_older_input_cannot_replace_frontier
         "last_observed_at": cutoff,
         "origin": {"dataset_id": dataset, "source": "entity_import_fixture"},
     }
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_daylight_saving_fold_uses_absolute_entity_frontier_time(pipeline, reverse):
+    timezone = ZoneInfo("America/New_York")
+    earlier = datetime(2026, 11, 1, 1, 30, tzinfo=timezone, fold=0)
+    later = datetime(2026, 11, 1, 1, 15, tzinfo=timezone, fold=1)
+    assert earlier > later  # Python compares wall time for the same ZoneInfo.
+    assert earlier.astimezone(UTC) < later.astimezone(UTC)
+    records = [record("dst", earlier, "earlier"), record("dst", later, "later")]
+    for row, timestamp in zip(records, [earlier, later], strict=True):
+        # Programmatic imports preserve ZoneInfo through contract validation.
+        row["observed_at"] = timestamp
+        row["available_at"] = timestamp
+    if reverse:
+        records.reverse()
+    dataset = pipeline.import_records(records, True)[0]
+    row = pipeline.catalog.one("SELECT title,last_observed_at,attributes,origin FROM entities")
+    assert row["title"] == "later"
+    assert row["attributes"]["title"] == "later"
+    assert row["last_observed_at"] == later.astimezone(UTC)
+    assert row["origin"]["dataset_id"] == dataset
+    assert pipeline.catalog.one("SELECT count(*) AS n FROM observation_deliveries")["n"] == 2

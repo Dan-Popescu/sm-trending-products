@@ -620,7 +620,7 @@ class Catalog:
             previous = selected.get(key)
             if previous is None:
                 selected[key] = (observation, observation, False)
-            elif observation.observed_at >= previous[1].observed_at:
+            elif utc(observation.observed_at) >= utc(previous[1].observed_at):
                 selected[key] = (previous[0], observation, True)
         result = []
         for first, latest, has_later_maximum in selected.values():
