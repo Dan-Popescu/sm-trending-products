@@ -1,0 +1,705 @@
+{
+  "checks": {
+    "cache_budget": true,
+    "cold_warm_exact_publication": true,
+    "evicted_exact_publication": true,
+    "sampled_complete_oracle": true
+  },
+  "cleanup": {
+    "schema_removed": true,
+    "working_directory_removed": true
+  },
+  "commit": "9ed3c44e8435f65abd6126787a011b721a3e1719",
+  "current_phase": "evicted",
+  "cutoff": "2026-10-24T19:41:05.624937+00:00",
+  "evidence": {
+    "acceptance": "ACCEPTED for this declared native synthetic case: all four import waves, assessments and sampled oracles completed, then the fully cache-evicted assessment reproduced the last canonical publication exactly. This is not a deployed-provider or larger-workload capacity certificate.",
+    "completed_oracle_refresh_waves": 4,
+    "format": "retained-history-condensed-v1",
+    "independent_checks": {
+      "cache_evicted_body_sha256_equals_fourth_refresh": true,
+      "cold_and_refresh_derived_inventory_deltas_equal_upload_bytes_and_puts": true,
+      "dataset_source_payload_bytes_equal_all_successful_import_upload_bytes": true,
+      "existing_publication_attempts": {
+        "evicted": {
+          "head_requests": 1,
+          "new_derived_objects": 0,
+          "put_requests": 1,
+          "upload_bytes": 0
+        },
+        "warm_same_cutoff": {
+          "head_requests": 1,
+          "new_derived_objects": 0,
+          "put_requests": 1,
+          "upload_bytes": 0
+        }
+      },
+      "root_reviewer_count": "retained-1000-90-final-independent-count.json",
+      "source_rows_after_four_imports": 7280000,
+      "source_rows_after_seed": 7200000
+    },
+    "limits": [
+      "RSS and process CPU cover the common application+HTTP Moto child, not application-only usage. PostgreSQL CPU/RSS, Dagster and dashboard resource usage are not measured.",
+      "The seeded 90-day source history physically contains 360 observations/video; analytics selects its inclusive 30-day window of 121 samples/video, not all retained rows. This does not configure a retention TTL or execute a retention job.",
+      "Each seed product uses two normal imports of 5,000 and 2,200 rows; each refresh uses one 20-row import/product. No coefficients are transferred from the distinct 2,400-row seed layout.",
+      "Oracle checks cover complete rows/reference IDs for the homogeneous sampled trajectories and their cohort rank, not arbitrary heterogeneous ranking.",
+      "Cache eviction removes local cache files and feature projections; published immutable derived artifacts remain available for reuse. Warm and evicted existing-publication PUT attempts create no new object or uploaded bytes.",
+      "Source collection/quota/provider latency and richer media extraction are outside this fixture. No 3,000-product full-suite acceptance or 5,000/10,000-product result is inferred.",
+      "WAL positions are server-global, not attributable write bytes. No dump size is inferred. Owned directory bytes are rolling allocated-block observations, not atomic totals."
+    ],
+    "native_cleanup_after_case": {
+      "cgroup_memory_max_bytes": 17179869184,
+      "owned_directory": "retained-5afqqrh1",
+      "owned_directory_present": false,
+      "owned_schema": "retained_probe_d1ef69e4da304ff2b740baf219240bca",
+      "post_cleanup_cgroup_memory_current_bytes": 5322993664,
+      "post_cleanup_free_disk_bytes": 14503723008,
+      "remaining_owned_schema_rows": 0,
+      "worker_pid": 773177,
+      "worker_pid_present": false
+    },
+    "original_report_name": "retained-1000-90-final.json",
+    "original_report_sha256": "067488358eaaadb3e0ac8c401d86acf9589297e91e0bcc514c2126b8e03e1529",
+    "payload_scope": {
+      "attributes": [
+        "creator_id"
+      ],
+      "cumulative_counters": [
+        "view_count"
+      ],
+      "excluded": [
+        "price",
+        "sales",
+        "cost",
+        "description",
+        "transcript",
+        "media"
+      ]
+    },
+    "reproduction": {
+      "clean_at_launch_and_after_stop": true,
+      "complete_git_tree": "bb084d5cd07c5310e74193d0cb35d3550e2f87c0",
+      "harness_sha256": "3ee3f5ddb99fbe247f979acc7ea92a8e3973c4b4a4f2df8200567ae31de197f6",
+      "local_launch_commit": "9ed3c44e8435f65abd6126787a011b721a3e1719",
+      "public_commit": "80696b48dc817eff6aa4c715b4a567ef6a8e8a21",
+      "src_git_tree": "fb5b4b9b6c3272d5215f83a0045775b318d12625"
+    }
+  },
+  "final_inventory": {
+    "datasets": {
+      "count": 6000,
+      "observations": 7280000
+    },
+    "derivations": {
+      "bytes": 235796312,
+      "objects": 60243
+    },
+    "manifests": {
+      "canonical_bytes": 11367800,
+      "objects": 6000
+    },
+    "normalized": {
+      "bytes": 317470560,
+      "objects": 6000
+    },
+    "raw": {
+      "bytes": 347183940,
+      "objects": 6000
+    },
+    "sql": {
+      "total_bytes": 6099189760
+    },
+    "wal_lsn": "1D/50C3E9E0"
+  },
+  "hardware": {
+    "affinity_cpus": 5,
+    "architecture": "x86_64",
+    "cgroup": {
+      "cpu.max": "400000 100000",
+      "cpu.stat": "usage_usec 33776706982\nuser_usec 28245198535\nsystem_usec 5531508447\nnice_usec 0\nnr_periods 284109\nnr_throttled 735\nthrottled_usec 25810778\nnr_bursts 0\nburst_usec 0",
+      "memory.current": "5241581568",
+      "memory.max": "17179869184",
+      "pids.max": "max"
+    },
+    "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "disk_free_bytes": 14630445056,
+    "disk_total_bytes": 33770192896,
+    "filesystem": "overlayfs",
+    "kernel": "6.18.55",
+    "logical_cpus": 5,
+    "memory_headroom_bytes": 11938287616,
+    "os": "Linux",
+    "python": "3.12.14"
+  },
+  "harness_sha256": "3ee3f5ddb99fbe247f979acc7ea92a8e3973c4b4a4f2df8200567ae31de197f6",
+  "ok": true,
+  "oracle": {
+    "products": [
+      "p0",
+      "p500",
+      "p999"
+    ],
+    "scope": "complete rows and reference IDs; equal trajectory fixture makes sampled cohort rank identical"
+  },
+  "phases": {
+    "cold": {
+      "analysis_work": {
+        "delta_windows": 0,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 1000,
+        "projection_hits": 0,
+        "projection_misses": 1000
+      },
+      "assessment_bytes": 3997524,
+      "cache_bytes": 387495504,
+      "cpu_process_seconds": 488.2340246130002,
+      "inventory": {
+        "datasets": {
+          "count": 2000,
+          "observations": 7200000
+        },
+        "derivations": {
+          "bytes": 180244552,
+          "objects": 40249
+        },
+        "manifests": {
+          "canonical_bytes": 3796600,
+          "objects": 2000
+        },
+        "normalized": {
+          "bytes": 280075207,
+          "objects": 2000
+        },
+        "raw": {
+          "bytes": 341700045,
+          "objects": 2000
+        },
+        "sql": {
+          "total_bytes": 5941854208
+        },
+        "wal_lsn": "1C/E91B2380"
+      },
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 280075207,
+        "get_requests": 2000,
+        "head_requests": 0,
+        "http_attempts": 42249,
+        "put_requests": 40249,
+        "upload_bytes": 180244552
+      },
+      "publication_sha256": "f1750f2a394f4f6b303ce9872ac5646cd2db49abe0ed416db1eeddd5cfd4aa11",
+      "rows": 1000,
+      "seconds": 684.1865057670002,
+      "selected_observations": 2420000
+    },
+    "evicted": {
+      "analysis_work": {
+        "delta_windows": 0,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 1000,
+        "projection_hits": 0,
+        "projection_misses": 1000
+      },
+      "assessment_bytes": 3997524,
+      "cache_bytes": 425036260,
+      "cpu_process_seconds": 477.82452769500014,
+      "inventory": {
+        "datasets": {
+          "count": 6000,
+          "observations": 7280000
+        },
+        "derivations": {
+          "bytes": 235796312,
+          "objects": 60243
+        },
+        "manifests": {
+          "canonical_bytes": 11367800,
+          "objects": 6000
+        },
+        "normalized": {
+          "bytes": 317470560,
+          "objects": 6000
+        },
+        "raw": {
+          "bytes": 347183940,
+          "objects": 6000
+        },
+        "sql": {
+          "total_bytes": 6099189760
+        },
+        "wal_lsn": "1D/50C3E9E0"
+      },
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 317470560,
+        "get_requests": 6000,
+        "head_requests": 1,
+        "http_attempts": 6002,
+        "put_requests": 1,
+        "upload_bytes": 0
+      },
+      "publication_sha256": "95d99a2270694a1fc793a1876470f7f78fd28ad09ca5b9ccbd1f92028da88736",
+      "rows": 1000,
+      "seconds": 487.5398633349978,
+      "selected_observations": 2420000
+    },
+    "refresh_1": {
+      "analysis_work": {
+        "delta_windows": 1000,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 0,
+        "projection_hits": 0,
+        "projection_misses": 1000
+      },
+      "assessment_bytes": 3997524,
+      "cache_bytes": 397376682,
+      "cpu_process_seconds": 278.67972720299986,
+      "inventory": {
+        "datasets": {
+          "count": 3000,
+          "observations": 7220000
+        },
+        "derivations": {
+          "bytes": 190034446,
+          "objects": 44503
+        },
+        "manifests": {
+          "canonical_bytes": 5689400,
+          "objects": 3000
+        },
+        "normalized": {
+          "bytes": 289423487,
+          "objects": 3000
+        },
+        "raw": {
+          "bytes": 343071518,
+          "objects": 3000
+        },
+        "sql": {
+          "total_bytes": 5979332608
+        },
+        "wal_lsn": "1D/101E8F8"
+      },
+      "metrics": {
+        "cache_hits": 1000,
+        "download_bytes": 9348280,
+        "get_requests": 1000,
+        "head_requests": 0,
+        "http_attempts": 5254,
+        "put_requests": 4254,
+        "upload_bytes": 9789894
+      },
+      "publication_sha256": "3c876c05616c8cb62bb3a064f28719b352f9f46c4f3cf327ccd7a61af1f39d67",
+      "rows": 1000,
+      "seconds": 310.657152836,
+      "selected_observations": 2420000
+    },
+    "refresh_2": {
+      "analysis_work": {
+        "delta_windows": 1000,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 0,
+        "projection_hits": 0,
+        "projection_misses": 1000
+      },
+      "assessment_bytes": 3997524,
+      "cache_bytes": 406836542,
+      "cpu_process_seconds": 329.2216134,
+      "inventory": {
+        "datasets": {
+          "count": 4000,
+          "observations": 7240000
+        },
+        "derivations": {
+          "bytes": 205220190,
+          "objects": 49745
+        },
+        "manifests": {
+          "canonical_bytes": 7582200,
+          "objects": 4000
+        },
+        "normalized": {
+          "bytes": 298772838,
+          "objects": 4000
+        },
+        "raw": {
+          "bytes": 344443260,
+          "objects": 4000
+        },
+        "sql": {
+          "total_bytes": 6034579456
+        },
+        "wal_lsn": "1D/1AE0C0A0"
+      },
+      "metrics": {
+        "cache_hits": 1000,
+        "download_bytes": 9349351,
+        "get_requests": 1000,
+        "head_requests": 0,
+        "http_attempts": 6242,
+        "put_requests": 5242,
+        "upload_bytes": 15185744
+      },
+      "publication_sha256": "eeb66b9ca2105c7e7a34c370c9af815283b3c81ce3ccf9bcf87a13840390fd6b",
+      "rows": 1000,
+      "seconds": 370.97958829500567,
+      "selected_observations": 2420000
+    },
+    "refresh_3": {
+      "analysis_work": {
+        "delta_windows": 1000,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 0,
+        "projection_hits": 0,
+        "projection_misses": 1000
+      },
+      "assessment_bytes": 3997524,
+      "cache_bytes": 416196813,
+      "cpu_process_seconds": 359.89232486799983,
+      "inventory": {
+        "datasets": {
+          "count": 5000,
+          "observations": 7260000
+        },
+        "derivations": {
+          "bytes": 220474216,
+          "objects": 54992
+        },
+        "manifests": {
+          "canonical_bytes": 9475000,
+          "objects": 5000
+        },
+        "normalized": {
+          "bytes": 308122227,
+          "objects": 5000
+        },
+        "raw": {
+          "bytes": 345815056,
+          "objects": 5000
+        },
+        "sql": {
+          "total_bytes": 6063005696
+        },
+        "wal_lsn": "1D/35880880"
+      },
+      "metrics": {
+        "cache_hits": 1000,
+        "download_bytes": 9349389,
+        "get_requests": 1000,
+        "head_requests": 0,
+        "http_attempts": 6247,
+        "put_requests": 5247,
+        "upload_bytes": 15254026
+      },
+      "publication_sha256": "e318f26e9e4cd79c5c94ddb5191dcbde10b11fb28a7b74e6faa18774c9af44ce",
+      "rows": 1000,
+      "seconds": 403.3648108749985,
+      "selected_observations": 2420000
+    },
+    "refresh_4": {
+      "analysis_work": {
+        "delta_windows": 1000,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 0,
+        "projection_hits": 0,
+        "projection_misses": 1000
+      },
+      "assessment_bytes": 3997524,
+      "cache_bytes": 425646487,
+      "cpu_process_seconds": 398.786354201,
+      "inventory": {
+        "datasets": {
+          "count": 6000,
+          "observations": 7280000
+        },
+        "derivations": {
+          "bytes": 235796312,
+          "objects": 60243
+        },
+        "manifests": {
+          "canonical_bytes": 11367800,
+          "objects": 6000
+        },
+        "normalized": {
+          "bytes": 317470560,
+          "objects": 6000
+        },
+        "raw": {
+          "bytes": 347183940,
+          "objects": 6000
+        },
+        "sql": {
+          "total_bytes": 6100221952
+        },
+        "wal_lsn": "1D/4F996740"
+      },
+      "metrics": {
+        "cache_hits": 1000,
+        "download_bytes": 9348333,
+        "get_requests": 1000,
+        "head_requests": 0,
+        "http_attempts": 6251,
+        "put_requests": 5251,
+        "upload_bytes": 15322096
+      },
+      "publication_sha256": "95d99a2270694a1fc793a1876470f7f78fd28ad09ca5b9ccbd1f92028da88736",
+      "rows": 1000,
+      "seconds": 446.58401559800404,
+      "selected_observations": 2420000
+    },
+    "warm_same_cutoff": {
+      "analysis_work": {
+        "delta_windows": 0,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 0,
+        "projection_hits": 1000,
+        "projection_misses": 0
+      },
+      "assessment_bytes": 3997524,
+      "cache_bytes": 387495504,
+      "cpu_process_seconds": 1.754270830999758,
+      "inventory": {
+        "datasets": {
+          "count": 2000,
+          "observations": 7200000
+        },
+        "derivations": {
+          "bytes": 180244552,
+          "objects": 40249
+        },
+        "manifests": {
+          "canonical_bytes": 3796600,
+          "objects": 2000
+        },
+        "normalized": {
+          "bytes": 280075207,
+          "objects": 2000
+        },
+        "raw": {
+          "bytes": 341700045,
+          "objects": 2000
+        },
+        "sql": {
+          "total_bytes": 5945212928
+        },
+        "wal_lsn": "1C/E9554630"
+      },
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 1,
+        "http_attempts": 2,
+        "put_requests": 1,
+        "upload_bytes": 0
+      },
+      "publication_sha256": "f1750f2a394f4f6b303ce9872ac5646cd2db49abe0ed416db1eeddd5cfd4aa11",
+      "rows": 1000,
+      "seconds": 2.69636132800224,
+      "selected_observations": 2420000
+    }
+  },
+  "postgresql": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+  "refresh_imports": {
+    "refresh_1": {
+      "completed_products": 1000,
+      "cpu_process_seconds": 26.050328209000327,
+      "imported_observations": 20000,
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 3000,
+        "put_requests": 3000,
+        "upload_bytes": 12612553
+      },
+      "requested_observations": 20000,
+      "requested_products": 1000,
+      "seconds": 42.48728552200191
+    },
+    "refresh_2": {
+      "completed_products": 1000,
+      "cpu_process_seconds": 25.268063225999867,
+      "imported_observations": 20000,
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 3000,
+        "put_requests": 3000,
+        "upload_bytes": 12613893
+      },
+      "requested_observations": 20000,
+      "requested_products": 1000,
+      "seconds": 39.72985400199832
+    },
+    "refresh_3": {
+      "completed_products": 1000,
+      "cpu_process_seconds": 26.473743375999675,
+      "imported_observations": 20000,
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 3000,
+        "put_requests": 3000,
+        "upload_bytes": 12613985
+      },
+      "requested_observations": 20000,
+      "requested_products": 1000,
+      "seconds": 41.51261326199892
+    },
+    "refresh_4": {
+      "completed_products": 1000,
+      "cpu_process_seconds": 28.641844611000124,
+      "imported_observations": 20000,
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 3000,
+        "put_requests": 3000,
+        "upload_bytes": 12610017
+      },
+      "requested_observations": 20000,
+      "requested_products": 1000,
+      "seconds": 49.007740510001895
+    }
+  },
+  "refresh_waves_completed": 4,
+  "requested": {
+    "analysis_product_batch_size": 10,
+    "cache_bytes": 2000000000,
+    "deadline_seconds": 14400.0,
+    "history_days": 90,
+    "hot_product_batch_rows": 100,
+    "hot_products": 0,
+    "max_owned_disk_bytes": 12884901888,
+    "max_rss_bytes": 4294967296,
+    "min_disk_free_bytes": 2147483648,
+    "products": 1000,
+    "profile": false,
+    "refresh_waves": 4,
+    "refreshes_per_day": 4,
+    "seed_batch_rows": 5000,
+    "shared_products_per_import": 1,
+    "videos_per_product": 20
+  },
+  "scope": {
+    "analytical_lookback_days": 30,
+    "layout": "bounded product-major retained timelines; configured groups share imports; not one object per upstream request",
+    "object_store": "HTTP Moto, 32 KiB RAM/spool threshold; no provider latency claim",
+    "observed_history_span_hours": 2154,
+    "postgresql_resources": "schema relation bytes measured; database server CPU/RSS and per-schema WAL attribution unavailable",
+    "source": "synthetic explicit imports, not live HTTP collection",
+    "stack": "application and Moto same child; PostgreSQL resources separately reported; Dagster/dashboard not running",
+    "wal_lsn_scope": "server-global position; concurrent schemas may contribute"
+  },
+  "seed_inventory": {
+    "datasets": {
+      "count": 2000,
+      "observations": 7200000
+    },
+    "derivations": {
+      "bytes": 0,
+      "objects": 0
+    },
+    "manifests": {
+      "canonical_bytes": 3796600,
+      "objects": 2000
+    },
+    "normalized": {
+      "bytes": 280075207,
+      "objects": 2000
+    },
+    "raw": {
+      "bytes": 341700045,
+      "objects": 2000
+    },
+    "sql": {
+      "total_bytes": 5897560064
+    },
+    "wal_lsn": "1C/E1AD2000"
+  },
+  "seed_metrics": {
+    "cache_hits": 0,
+    "download_bytes": 0,
+    "get_requests": 0,
+    "head_requests": 0,
+    "http_attempts": 6002,
+    "put_requests": 6000,
+    "upload_bytes": 625571852
+  },
+  "seed_seconds": 1986.635644302005,
+  "seeded_observations": 7200000,
+  "seeded_products": 1000,
+  "status": "complete",
+  "supervisor": {
+    "elapsed_seconds": 4888.331660392003,
+    "exit_code": 0,
+    "peak_discovered_rss_bytes": 1190187008,
+    "peak_owned_disk_bytes": 443908096,
+    "sample_summary": {
+      "descendant_discovery_complete": false,
+      "last": {
+        "database": {
+          "queue": [],
+          "schema_bytes": 6099206144
+        },
+        "elapsed_seconds": 4887.325133776998,
+        "free_disk_bytes": 7929376768,
+        "open_file_descriptors": 6,
+        "owned_disk_bytes": 430981120,
+        "owned_disk_observer": {
+          "bytes": 430981120,
+          "complete_pass_age_seconds": 23.366522477997933,
+          "scan_in_progress": false,
+          "scope": "rolling allocated blocks; not an atomic current snapshot"
+        },
+        "process": {
+          "descendant_discovery_complete": false,
+          "discovered_rss_bytes": 1182892032,
+          "live_discovered_cpu_seconds": 4112.69,
+          "process_count": 1,
+          "session_rss_bytes": null
+        },
+        "unlinked_object_spool_bytes": 0
+      },
+      "minimum_free_disk_bytes": 7211499520,
+      "peak_open_file_descriptors": 4019,
+      "peak_unlinked_object_spool_bytes": 646676480,
+      "samples": 4631
+    }
+  },
+  "synthetic": true,
+  "test_adapter_budget": {
+    "estimated_source_datasets": 2000,
+    "estimated_spill_fd_upper_bound": 7024,
+    "hard_fd_limit": 16384,
+    "key_buffer_bytes": 32768,
+    "soft_fd_limit": 16384
+  },
+  "total_storage_metrics": {
+    "cache_hits": 5995,
+    "download_bytes": 635584512,
+    "get_requests": 12177,
+    "head_requests": 2,
+    "http_attempts": 90426,
+    "put_requests": 78245,
+    "upload_bytes": 911818612
+  },
+  "updated_at": "2026-10-24T17:02:29.007428+00:00",
+  "versions": {
+    "boto3": "1.43.117",
+    "moto": "5.2.4",
+    "polars": "2.0.0",
+    "psycopg": "3.3.6",
+    "pyarrow": "26.0.0",
+    "pydantic": "2.14.1"
+  }
+}
