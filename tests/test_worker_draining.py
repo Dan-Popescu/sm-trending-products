@@ -2,6 +2,7 @@
 
 import json
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -29,7 +30,7 @@ def queued(pipeline, suffix):
     )
 
 
-def start_worker_process(pipeline):
+def start_worker_process(pipeline, poll_seconds="0.1"):
     settings = pipeline.settings.model_dump(mode="json")
     settings["database_url"] = pipeline.settings.database_url.get_secret_value()
     settings["worker_id"] = "process-worker"
@@ -44,7 +45,8 @@ def start_worker_process(pipeline):
             "settings=Settings.model_validate_json(sys.stdin.read());"
             "application=Pipeline(settings);"
             "dispatch(application,parser().parse_args(['worker','--loop','--synthetic',"
-            "'--batch-size','20','--poll-seconds','0.1']));application.close()",
+            "'--batch-size','20','--poll-seconds',sys.argv[1]]));application.close()",
+            poll_seconds,
         ],
         env=dict(os.environ),
         stdin=subprocess.PIPE,
@@ -55,6 +57,32 @@ def start_worker_process(pipeline):
     process.stdin.close()
     process.stdin = None
     return process
+
+
+def test_idle_worker_refreshes_heartbeat_during_a_sixty_second_poll(pipeline):
+    process = start_worker_process(pipeline, "60")
+    try:
+        assert select.select([process.stdout], [], [], 15)[0]
+        assert json.loads(process.stdout.readline())["processed"] == 0
+        control = WorkerControl(pipeline.catalog)
+        initial = control.status("process-worker")["heartbeat_at"]
+        deadline = time.monotonic() + 12
+        while time.monotonic() < deadline:
+            current = control.status("process-worker")
+            if (current["heartbeat_at"] - initial).total_seconds() >= 5:
+                break
+            time.sleep(0.05)
+        assert (current["heartbeat_at"] - initial).total_seconds() >= 5
+        assert process.poll() is None
+        with pytest.raises(ValueError, match="already registered"):
+            control.register("process-worker", synthetic=True)
+        process.send_signal(signal.SIGTERM)
+        _, errors = process.communicate(timeout=5)
+        assert process.returncode == 0, errors.decode()
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
 
 
 def test_acknowledged_drain_rejects_new_claims_but_allows_the_current_checkpoint(pipeline):

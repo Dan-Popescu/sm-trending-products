@@ -7,6 +7,7 @@ import json
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -295,6 +296,16 @@ def dispatch(pipeline, args):
                 number: signal.signal(number, lambda *_: stop.set())
                 for number in (signal.SIGTERM, signal.SIGINT)
             }
+
+            def wait(seconds: float) -> None:
+                # A long poll must not look like a crashed fixed worker slot.
+                deadline = time.monotonic() + seconds
+                while (remaining := deadline - time.monotonic()) > 0:
+                    if stop.wait(min(remaining, 10)):
+                        return
+                    if control.heartbeat(pipeline.worker_id, generation)["state"] != "running":
+                        return
+
             try:
                 while not stop.is_set():
                     state = control.heartbeat(pipeline.worker_id, generation)["state"]
@@ -304,7 +315,7 @@ def dispatch(pipeline, args):
                         control.acknowledge_drain(pipeline.worker_id, generation)
                         if not args.loop:
                             return {"status": "drained"}
-                        stop.wait(min(args.poll_seconds, 1))
+                        wait(min(args.poll_seconds, 1))
                         continue
                     try:
                         result = pipeline.collect_batch(
@@ -320,11 +331,11 @@ def dispatch(pipeline, args):
                         return result
                     print(canonical(result), flush=True)
                     if state != "running":
-                        stop.wait(min(args.poll_seconds, 1))
+                        wait(min(args.poll_seconds, 1))
                         continue
                     if result.get("status") == "invalidation_pending":
                         progress = result["invalidations"]
-                        stop.wait(0.01 if progress["processed"] else min(args.poll_seconds, 0.25))
+                        wait(0.01 if progress["processed"] else min(args.poll_seconds, 0.25))
                         continue
                     # Drain busy work without delaying full batches. Signals are
                     # also checked before every task, inside collect_batch.
@@ -334,7 +345,7 @@ def dispatch(pipeline, args):
                         or result.get("waiting")
                         or result.get("quota_waiting")
                     ):
-                        stop.wait(args.poll_seconds)
+                        wait(args.poll_seconds)
                 return {"status": "stopped"}
             finally:
                 try:
