@@ -232,6 +232,67 @@ def _wait_signal(path: Path, deadline: float, connection=None) -> None:
         time.sleep(0.1)
 
 
+def _checkpoint_record(item: dict[str, Any], expected: tuple | None) -> dict[str, Any]:
+    """Freeze LIST identity without a per-object remote round trip."""
+    size = item["Size"]
+    if expected and expected[1] is not None and size != expected[1]:
+        raise ValueError("Catalog checkpoint object size mismatch")
+    return {
+        "key": item["Key"],
+        "size": size,
+        "etag": item["ETag"],
+        "last_modified": item["LastModified"].isoformat(),
+        "expected_sha256": expected[0] if expected else None,
+    }
+
+
+def _reuse_catalog_record(record: dict[str, Any], old: dict[str, Any] | None) -> bool:
+    """Only authoritative catalog hashes can replace fresh metadata inspection.
+
+    A legacy or unmanaged record still needs HEAD after the checkpoint. ETags
+    alone are not a content hash, and old snapshots without a LIST timestamp
+    acquire that fingerprint through the normal inspection path once.
+    """
+    return bool(
+        old is not None
+        and record["expected_sha256"]
+        and record["expected_sha256"] == old.get("sha256")
+        and record["expected_sha256"] == old.get("metadata", {}).get("sha256")
+        and all(record.get(field) == old.get(field) for field in ("size", "etag", "last_modified"))
+    )
+
+
+def _inspect_checkpoint_record(s3, bucket: str, record: dict[str, Any]) -> None:
+    """Inspect after writers resume; a changed LIST identity fails closed."""
+    head = s3.head_object(Bucket=bucket, Key=record["key"], IfMatch=record["etag"])
+    # HEAD's HTTP date has whole-second precision; LIST can retain fractions.
+    # Keep LIST's original precision in the persisted/reuse fingerprint.
+    head_modified = head["LastModified"].astimezone(UTC).replace(microsecond=0)
+    checkpoint_modified = (
+        datetime.fromisoformat(record["last_modified"]).astimezone(UTC).replace(microsecond=0)
+    )
+    if any(
+        left != right
+        for left, right in (
+            (head["ContentLength"], record["size"]),
+            (head["ETag"], record["etag"]),
+            (head_modified, checkpoint_modified),
+        )
+    ):
+        raise ValueError("Checkpoint object changed before metadata inspection")
+    if record["expected_sha256"] and (
+        head.get("Metadata", {}).get("sha256") != record["expected_sha256"]
+    ):
+        raise ValueError("Catalog checkpoint object checksum metadata mismatch")
+    record.update(
+        version_id=head.get("VersionId"),
+        metadata=head.get("Metadata", {}),
+        content_type=head.get("ContentType", "application/octet-stream"),
+        content_encoding=head.get("ContentEncoding"),
+        expected_sha256=record["expected_sha256"] or head.get("Metadata", {}).get("sha256"),
+    )
+
+
 def capture(
     output: Path,
     *,
@@ -248,6 +309,7 @@ def capture(
     if (checkpoint_signal is None) != (continue_signal is None):
         raise ValueError("Checkpoint and continuation signals are required together")
     deadline = time.monotonic() + deadline_seconds
+    checkpoint_started = time.monotonic()
     bucket = os.environ["S3_BUCKET"]
     s3 = client()
     output = output.resolve()
@@ -272,20 +334,22 @@ def capture(
         )
         db = sqlite3.connect(Path(temporary) / "checkpoint.sqlite")
         stack.callback(db.close)
-        count = total_size = 0
+        count = total_size = list_requests = 0
         with _checkpoint_guard(checkpoint_signal is not None) as connection:
             if connection is not None:
                 _expected_objects(connection, db)
             with (output / "checkpoint.jsonl").open("x") as inventory:
                 for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket):
+                    list_requests += 1
                     for item in page.get("Contents", []):
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("Backup inventory deadline exceeded")
                         key = item["Key"]
                         if (
                             connection is not None
                             and db.execute("SELECT 1 FROM retired WHERE key=?", (key,)).fetchone()
                         ):
                             continue
-                        head = s3.head_object(Bucket=bucket, Key=key)
                         expected = (
                             db.execute(
                                 "SELECT sha,bytes FROM expected WHERE key=?", (key,)
@@ -293,24 +357,7 @@ def capture(
                             if connection is not None
                             else None
                         )
-                        if (
-                            expected
-                            and expected[1] is not None
-                            and head["ContentLength"] != expected[1]
-                        ):
-                            raise ValueError("Catalog checkpoint object size mismatch")
-                        record: dict[str, Any] = {
-                            "key": key,
-                            "size": head["ContentLength"],
-                            "etag": head["ETag"],
-                            "version_id": head.get("VersionId"),
-                            "metadata": head.get("Metadata", {}),
-                            "content_type": head.get("ContentType", "application/octet-stream"),
-                            "content_encoding": head.get("ContentEncoding"),
-                            "expected_sha256": expected[0]
-                            if expected and expected[0] is not None
-                            else head.get("Metadata", {}).get("sha256"),
-                        }
+                        record = _checkpoint_record(item, expected)
                         inventory.write(json.dumps(record, sort_keys=True) + "\n")
                         count += 1
                         total_size += record["size"]
@@ -327,6 +374,7 @@ def capture(
                 _write_json(checkpoint_signal, {"ready": True, "object_count": count})
                 assert continue_signal is not None
                 _wait_signal(continue_signal, deadline, connection)
+        checkpoint_seconds = time.monotonic() - checkpoint_started
         previous = (
             stack.enter_context(ResolvedSnapshot(base, scratch_dir=output))
             if base is not None
@@ -352,7 +400,7 @@ def capture(
         # The catalog/inventory checkpoint is fixed. Writers can now resume.
         # Missing/deleted/changed source versions fail closed instead of completing
         # a recovery set containing bytes from a different checkpoint.
-        downloaded = copied = reused = 0
+        downloaded = copied = reused = head_requests = catalog_reused = 0
         with (
             (output / "checkpoint.jsonl").open() as source_inventory,
             (output / "objects.jsonl").open("x") as inventory,
@@ -362,9 +410,21 @@ def capture(
                     raise TimeoutError("Backup copy deadline exceeded")
                 record = json.loads(line)
                 key = record["key"]
+                old = previous.get(key) if previous else None
+                if copy_objects and _reuse_catalog_record(record, old[0] if old else None):
+                    assert old is not None
+                    record.update(
+                        version_id=old[0].get("version_id"),
+                        metadata=old[0].get("metadata", {}),
+                        content_type=old[0].get("content_type", "application/octet-stream"),
+                        content_encoding=old[0].get("content_encoding"),
+                    )
+                    catalog_reused += 1
+                else:
+                    head_requests += 1
+                    _inspect_checkpoint_record(s3, bucket, record)
                 if copy_objects:
                     name = hashlib.sha256(key.encode()).hexdigest()
-                    old = previous.get(key) if previous else None
                     same = (
                         old is not None
                         and all(
@@ -420,6 +480,10 @@ def capture(
             copied_object_count=copied,
             reused_object_count=reused,
             downloaded_bytes=downloaded,
+            list_requests=list_requests,
+            head_requests=head_requests,
+            catalog_reused_object_count=catalog_reused,
+            checkpoint_seconds=checkpoint_seconds,
         )
         _write_json(metadata_path, metadata)
     return metadata
@@ -437,6 +501,16 @@ def restore(snapshot: Path, *, bucket: str, create_bucket: bool) -> dict[str, An
         metadata = resolved.metadata
         if metadata["copied_objects"] is not True:
             raise ValueError("Object copies are required for restore")
+        # Old snapshots can contain verified bytes alongside incompatible source
+        # checksum headers. Reject those before creating a destination: restoring
+        # the header would break the application's later immutable-write checks.
+        for item, _owner in resolved.records():
+            declared = item.get("metadata", {}).get("sha256")
+            expected = item.get("expected_sha256")
+            if (declared is not None and declared != item["sha256"]) or (
+                expected is not None and (expected != item["sha256"] or declared != expected)
+            ):
+                raise ValueError("Snapshot checksum metadata mismatch")
         endpoint = os.environ.get("S3_ENDPOINT_URL") or "aws"
         if bucket == metadata["source_bucket"] and endpoint == metadata["source_endpoint"]:
             raise ValueError("Refusing restore over source bucket")

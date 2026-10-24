@@ -113,7 +113,8 @@ docker compose exec -T postgres sh -c \
   'exec pg_dump --format=custom --no-owner --username="$POSTGRES_USER" --dbname=dagster' \
   > "$backup_directory/dagster.dump.partial"
 mv "$backup_directory/dagster.dump.partial" "$backup_directory/dagster.dump"
-# Conditional GETs and catalog content hashes fix the checkpoint's bytes. Retention
+# LIST identity and catalog hashes fix the checkpoint's bytes. Per-object HEADs,
+# conditional GETs and local base verification happen after writer resumption. Retention
 # can now run. A disappearing uncopied source object leaves this backup incomplete;
 # no long retention lock queues collection behind an exclusive maintenance waiter.
 resume_writers

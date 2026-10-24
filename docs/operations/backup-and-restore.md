@@ -33,8 +33,9 @@ SQL dumps, new bytes and temporary indexes, then copy the complete required fami
 off the VPS. Restrict access and encrypt copies.
 
 The script pauses the running worker, Dagster daemon, webserver and dashboard only
-while it captures the object inventory, logical catalog fingerprints and database
-dumps. A session-level shared PostgreSQL retention fence protects this checkpoint
+while it captures the object LIST inventory, logical catalog fingerprints and database
+dumps. No per-object HEAD or payload GET runs during this pause. A session-level
+shared PostgreSQL retention fence protects this checkpoint
 without keeping an MVCC transaction open. Other deployments and external importers
 sharing these stores must be stopped during the checkpoint. The inventory excludes
 keys already tombstoned by retention, including pending object deletions, and
@@ -43,14 +44,45 @@ publication to be present, including transitive provenance nodes. Known catalog
 checksums and byte sizes remain authoritative; legacy derived rows without those
 fields still require existence and receive content hashes during copying.
 
-After the SQL checkpoint, the original services resume **before copying or
-verifying inherited base bytes**. The retention fence is released before the copy,
+After the SQL checkpoint, the original services resume **before per-object metadata
+inspection, copying or verifying inherited base bytes**. The retention fence is released before the copy,
 so an exclusive maintenance waiter cannot hold later collection behind the backup.
-New object GETs pin the checkpoint's version ID where available and use `If-Match`.
+LIST freezes each key's size, ETag and last-modified fingerprint. A conditional
+HEAD after resumption must match that fingerprint before a new object's GET pins
+the inspected version ID where available and uses `If-Match`.
 Copies are hashed against catalog checksums or source checksum metadata. Base files
-are locally hash-verified before reuse. An unchanged incremental backup downloads
-zero object payloads; inventories still require source LIST/HEAD requests and local
-chain hashing. The previous full remote verification pass is folded into the copy.
+are locally hash-verified before reuse. For a catalog-owned object, an unchanged
+LIST fingerprint and authoritative catalog SHA matching the verified base allow
+reuse of its bytes and immutable application metadata without HEAD or GET. An
+unchanged managed incremental backup therefore issues zero HEADs and payload
+GETs; it still lists every key, reads the SQL catalog and verifies the local chain.
+Legacy inventories without a LIST fingerprint acquire it through HEAD once.
+Unmanaged objects or legacy catalog rows without an authoritative checksum always
+need metadata inspection after resumption; they may reuse verified bytes without
+GET when their inspected identity still matches. ETags alone never replace the
+authoritative checksum or local base verification.
+
+For known catalog hashes, the restorable `Metadata.sha256` must also match that
+hash. Correct payload bytes with a missing or wrong restored checksum header
+would break later immutable-write verification, so fresh inspection rejects them.
+A base record with incompatible checksum metadata cannot take the zero-HEAD path;
+fresh valid source metadata can repair its inventory before verified bytes are reused.
+Direct restore rejects incompatible checksum metadata before creating a destination,
+including older inventories whose payload files themselves still verify.
+
+Application object keys and metadata are immutable. The catalog-based fast path
+restores their already verified base metadata; it does not remotely re-audit every
+header on every run. Source mutation before deferred HEAD may make capture fail
+rather than recovering a historical provider version. Mutation after HEAD is
+covered by the version/conditional GET. Inventory-only captures still HEAD every
+key after resumption and do not verify payload content.
+
+Snapshot summaries expose logical `list_requests`, `head_requests`,
+`catalog_reused_object_count` and `checkpoint_seconds` alongside copied/reused
+counts and downloaded bytes. The checkpoint duration includes the SQL-dump/restart
+handshake when used. These SDK operation counts exclude transport retry attempts;
+listing, SQL reads and base-chain hashing remain proportional to retained inventory.
+The previous full remote verification pass is folded into the copy.
 
 This does not reserve source versions against a provider lifecycle rule or later
 retention. If required new bytes disappear or change before copying finishes, the
