@@ -1,0 +1,25 @@
+{
+  "target": "pilot",
+  "repository": "OWNER/REPOSITORY",
+  "image_repository": "ghcr.io/owner/repository",
+  "certificate_identity": "https://github.com/OWNER/REPOSITORY/.github/workflows/release.yml@refs/heads/main",
+  "compose_file": "/opt/sm-trends/runtime/compose.yaml",
+  "env_file": "/etc/sm-trends/runtime.env",
+  "database_url_file": "/etc/sm-trends/controller-database-url",
+  "state_directory": "/var/lib/sm-trends/release",
+  "docker_data_dir": "/var/lib/docker",
+  "spool_dir": "/var/lib/docker/volumes/pilot_spool/_data",
+  "capacity_budget": {
+    "candidate_memory_bytes": 805306368,
+    "candidate_cpus": 0.75,
+    "memory_reserve_bytes": 1073741824,
+    "cpu_reserve": 0.25,
+    "image_unpack_bytes": 4294967296,
+    "docker_free_reserve_bytes": 4294967296,
+    "spool_growth_bytes": 268435456,
+    "spool_free_reserve_bytes": 805306368
+  },
+  "docker": "/usr/bin/docker",
+  "cosign": "/usr/local/bin/cosign",
+  "freshness_seconds": 300
+}

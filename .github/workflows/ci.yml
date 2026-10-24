@@ -16,7 +16,8 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Native source/restore checks and the actual two-image campaign run here.
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:17.11-bookworm
@@ -83,6 +84,8 @@ jobs:
       - name: Verify native PostgreSQL behavior
         # Includes bounded 12k-dataset and 50k-artifact retirement regressions.
         timeout-minutes: 15
+        env:
+          TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: uv run --locked pytest -vv -ra --durations=15 --junitxml=output/test-results.xml
       - name: Verify controlled benchmark and quota exhaustion
         timeout-minutes: 5
@@ -96,6 +99,9 @@ jobs:
         run: |
           docker compose config --quiet
           docker compose build
+      - name: Qualify actual two-image acquisition handover
+        timeout-minutes: 5
+        run: bash scripts/ci-continuity.sh
       - name: Rehearse isolated synthetic backup and restore
         run: scripts/ci-recovery.sh
       - uses: actions/upload-artifact@v4
@@ -109,4 +115,7 @@ jobs:
             output/offline-benchmark.log
             output/offline-quota.json
             output/offline-quota.log
+            output/continuity-docker-tests.xml
+            output/continuity-fixture-images.json
+            output/continuity-evidence/*.json
           if-no-files-found: ignore

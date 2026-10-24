@@ -1,5 +1,21 @@
 # Bounded backup metadata amplification
 
+Logical evidence fingerprints include populated capture policies, original
+obligations, scoped spool-removal journals and lawful-retirement certificates.
+Optional relations are discovered and read through the existing imported
+repeatable-read snapshot; absent or empty relations preserve legacy fingerprints.
+Their canonical row hashes use the same server-side cursor batch of 256 as other
+evidence tables. Mutable worker heartbeats and deployment coordination remain
+outside this logical summary; the full PostgreSQL dump still contains operational
+tables.
+
+`tests/test_capture_evidence_fingerprint.py` verifies exact populated semantic
+rows, independent inclusion of each relation, and pre-migration compatibility.
+Its native custom-dump restore retains an immutable retirement certificate and
+the original obligation from an actual exported snapshot, while legal evidence
+created after that cut remains absent from both the imported fingerprint and the
+restored database.
+
 Issue [#71](https://github.com/Dan-Popescu/sm-trending-products/issues/71) follows
 the approved retained-history and priced-cost work. The previous checkpoint
 issued one HEAD per retained key while application writers were paused.

@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll requested SM Trends deployment and resume interrupted handover
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=30s
+RandomizedDelaySec=5s
+Unit=sm-trends-release.service
+
+[Install]
+WantedBy=timers.target

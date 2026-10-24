@@ -66,7 +66,7 @@ pub enum Operation {
     Query,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CollectionRequest {
     pub source: Source,
@@ -284,6 +284,13 @@ impl Quota {
 }
 
 pub async fn fetch(request: &CollectionRequest) -> Result<FetchedPage> {
+    fetch_observed(request, |_, _, _| Ok(())).await
+}
+
+pub async fn fetch_observed<F>(request: &CollectionRequest, mut complete: F) -> Result<FetchedPage>
+where
+    F: FnMut(&[u8], DateTime<Utc>, usize) -> Result<()>,
+{
     let token = std::env::var(request.source.token_name()).unwrap_or_default();
     if token.is_empty() {
         return Err(CollectorError::new("authorization", "missing_access_token"));
@@ -380,6 +387,7 @@ pub async fn fetch(request: &CollectionRequest) -> Result<FetchedPage> {
             bytes.extend_from_slice(&chunk);
         }
         let observed_at = request.observed_at.unwrap_or_else(Utc::now);
+        complete(&bytes, observed_at, attempt + 1)?;
         let mut raw: Value =
             match serde_json::from_slice(&bytes) {
                 Ok(raw) => raw,
@@ -395,34 +403,8 @@ pub async fn fetch(request: &CollectionRequest) -> Result<FetchedPage> {
                         )));
                 }
             };
-        if let Some(code) = raw.get("error").and_then(|v| v.get("code")) {
-            let okay = code == "ok" || code == 0;
-            if !okay {
-                let text = code.as_str().unwrap_or("");
-                let source_status = raw
-                    .get("error")
-                    .and_then(|v| v.get("http_status_code"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0);
-                let category = if source_status == 401
-                    || source_status == 403
-                    || text.contains("token")
-                    || text.contains("scope")
-                    || text.contains("auth")
-                    || text.contains("permission")
-                {
-                    "authorization"
-                } else if source_status == 429 || text.contains("rate_limit") {
-                    "rate_limit"
-                } else {
-                    "source"
-                };
-                return Err(if category == "rate_limit" {
-                    CollectorError::retry(category, "source_error_response", 60.0)
-                } else {
-                    CollectorError::new(category, "source_error_response")
-                });
-            }
+        if let Some(error) = source_error(&raw) {
+            return Err(error);
         }
         redact(&mut raw, &token);
         return Ok(FetchedPage {
@@ -432,6 +414,36 @@ pub async fn fetch(request: &CollectionRequest) -> Result<FetchedPage> {
         });
     }
     Err(CollectorError::new("transport", "retry_limit_reached"))
+}
+
+pub fn source_error(raw: &Value) -> Option<CollectorError> {
+    let code = raw.get("error")?.get("code")?;
+    if code == "ok" || code == 0 {
+        return None;
+    }
+    let text = code.as_str().unwrap_or("");
+    let status = raw
+        .get("error")
+        .and_then(|error| error.get("http_status_code"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let category = if status == 401
+        || status == 403
+        || ["token", "scope", "auth", "permission"]
+            .iter()
+            .any(|part| text.contains(part))
+    {
+        "authorization"
+    } else if status == 429 || text.contains("rate_limit") {
+        "rate_limit"
+    } else {
+        "source"
+    };
+    Some(if category == "rate_limit" {
+        CollectorError::retry(category, "source_error_response", 60.0)
+    } else {
+        CollectorError::new(category, "source_error_response")
+    })
 }
 
 pub fn schema_artifact(

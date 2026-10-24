@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from itertools import batched
 from typing import Any, Literal
 
+import psycopg
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -127,13 +129,26 @@ class Scheduler:
         self.catalog = catalog
 
     def schedule(
-        self, budget: int = 100, synthetic: bool = False, policy: dict | None = None
+        self,
+        budget: int = 100,
+        synthetic: bool = False,
+        policy: dict | None = None,
+        *,
+        connection: psycopg.Connection[dict[str, Any]] | None = None,
     ) -> dict:
-        """Queue at most ``budget`` tasks and explain every selection atomically."""
+        """Queue bounded tasks atomically, optionally within the cadence owner's transaction."""
         if isinstance(budget, bool) or not isinstance(budget, int) or not 0 <= budget <= 10000:
             raise ValueError("Scheduling budget must be an integer between 0 and 10000")
+        if connection is not None and (
+            connection.autocommit
+            or connection.info.transaction_status != psycopg.pq.TransactionStatus.INTRANS
+        ):
+            raise ValueError("Borrowed planning connection requires an active transaction")
         supplied = SchedulerPolicy.model_validate(policy) if policy is not None else None
-        with self.catalog.transaction() as connection:
+        transaction = (
+            nullcontext(connection) if connection is not None else self.catalog.transaction()
+        )
+        with transaction as connection:
             self.catalog.guard_namespace(connection, synthetic)
             # One planner per workspace; collectors retain independent row leases.
             connection.execute("SELECT pg_advisory_xact_lock(%s)", (492371210 + int(synthetic),))
@@ -142,7 +157,7 @@ class Scheduler:
                 raise RuntimeError("Database did not provide its clock")
             checked_at = clock["checked_at"]
             prior = connection.execute(
-                "SELECT p.policy_id,p.payload FROM scheduler_policy_activations a "
+                "SELECT p.policy_id,p.payload,a.available_at FROM scheduler_policy_activations a "
                 "JOIN scheduler_policies p USING(policy_id) WHERE a.synthetic=%s "
                 "ORDER BY a.available_at DESC,a.activation_id DESC LIMIT 1",
                 (synthetic,),
@@ -163,10 +178,16 @@ class Scheduler:
                 (policy_id, Jsonb(policy_body)),
             )
             if prior is None or prior["policy_id"] != policy_id:
-                connection.execute(
-                    "INSERT INTO scheduler_policy_activations(policy_id,synthetic) VALUES(%s,%s)",
+                activation = connection.execute(
+                    "INSERT INTO scheduler_policy_activations(policy_id,synthetic) VALUES(%s,%s) "
+                    "RETURNING available_at",
                     (policy_id, synthetic),
-                )
+                ).fetchone()
+                if activation is None:
+                    raise RuntimeError("Database did not record policy activation")
+                activated_at = activation["available_at"]
+            else:
+                activated_at = prior["available_at"]
             warnings: set[tuple[str, str, str]] = set()
             pending_row = connection.execute(
                 "SELECT count(*) AS count FROM collection_tasks "
@@ -413,6 +434,8 @@ class Scheduler:
             query_history = connection.execute(
                 "SELECT schedule_reason->>'query_id' AS query_id,"
                 "max(created_at) AS last_created_at,"
+                "max(COALESCE((schedule_reason->>'original_due_at')::timestamptz,created_at)) "
+                "AS last_original_due_at,"
                 "bool_or(state IN ('pending','leased')) AS active FROM collection_tasks "
                 "WHERE synthetic=%s AND schedule_reason->>'query_id'=ANY(%s) "
                 "GROUP BY schedule_reason->>'query_id'",
@@ -427,7 +450,8 @@ class Scheduler:
                 prior = query_state.get(query.query_id)
                 if prior and (
                     prior["active"]
-                    or prior["last_created_at"] + timedelta(hours=query.interval_hours) > checked_at
+                    or prior["last_original_due_at"] + timedelta(hours=query.interval_hours)
+                    > checked_at
                 ):
                     continue
                 queries.append(
@@ -501,6 +525,12 @@ class Scheduler:
             decisions = []
             entity_updates = []
             for query, _ in selected_queries:
+                previous_query = query_state.get(query.query_id)
+                original_due = (
+                    previous_query["last_original_due_at"] + timedelta(hours=query.interval_hours)
+                    if previous_query
+                    else activated_at
+                )
                 reason = {
                     "policy_id": policy_id,
                     "policy_version": config.version,
@@ -510,6 +540,7 @@ class Scheduler:
                     "scope": "explicit_discovery_query",
                     "planned_interval_hours": query.interval_hours,
                     "scheduled_at": checked_at.isoformat(),
+                    "original_due_at": original_due.isoformat(),
                     "execution_priority": 1000.0,
                 }
                 task_id = self._insert(
@@ -542,12 +573,16 @@ class Scheduler:
                         "priority_inputs": member["inputs"],
                         "planned_interval_hours": member["interval_hours"],
                         "scheduled_at": checked_at.isoformat(),
+                        "original_due_at": member_entity["next_due_at"].isoformat(),
                         "execution_priority": member["priority"]
                         + (1000 if bucket == "exploration_entity" else 0),
                     }
                     entity_reasons.append(member_reason)
                 reason = {
                     **entity_reasons[0],
+                    "original_due_at": min(
+                        member["entity"]["next_due_at"] for member in candidate["members"]
+                    ).isoformat(),
                     "entity_keys": [row["entity_key"] for row in entity_reasons],
                     "entity_reasons": entity_reasons,
                     "request_signature": candidate["request_signature"],

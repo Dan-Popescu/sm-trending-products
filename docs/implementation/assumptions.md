@@ -38,8 +38,9 @@ implementation choices from external acceptance that software cannot grant.
 - Advance prospective outcomes through a persistent, leased due queue rather than
   repeatedly selecting the newest decisions. Retry missing observations through
   the configured polling grace, then retain terminal censored results.
-- Start all four Dagster schedules automatically. Collection authorization and
-  verified retention policies still determine which work can actually execute.
+- Historical default: start all four Dagster schedules automatically. Production
+  collection now uses the [independent acquisition runtime](../operations/independent-acquisition.md);
+  Dagster's legacy collection schedule is disabled in that mode.
 - Default controls bound collector requests, import batches, analytical product
   batches, row materialization, cache use, and DuckDB memory. Oversized work fails
   explicitly and requires repartitioning instead of claiming unlimited scale.
@@ -52,8 +53,11 @@ implementation choices from external acceptance that software cannot grant.
 - Use a test-only Moto HTTP service locally and external S3 in production. A
   pullable maintained MinIO image was not available from the examined official
   image location; this does not substitute Moto for durable production storage.
-- Bind operator services to loopback and document SSH access. A single VPS is the
-  initial deployment target; cloud provisioning and paid subscriptions are excluded.
+- Historical SSH-access guidance is superseded by the
+  [Tailscale-only runbook](../operations/runbook.md#private-access) and
+  [private host controller](../operations/private-release-controller.md).
+  Operator services retain loopback bindings. A single VPS is the initial target;
+  these implementation choices do not provision infrastructure or subscriptions.
 - Keep a recoverable source archive and Git history when remote publication is
   unavailable. GitHub integration writes returned 403, and a terminal push dry run
   could not authenticate. Those historical blockers were later resolved through

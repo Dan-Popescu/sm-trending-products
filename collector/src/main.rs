@@ -1,3 +1,4 @@
+mod capture;
 mod error;
 mod normalize;
 mod request;
@@ -24,6 +25,13 @@ struct Cli {
 enum Command {
     /// Re-normalize an archived response without making an HTTP request.
     Normalize,
+    /// Persist one complete response before any record normalization.
+    Capture {
+        #[arg(long)]
+        spool_dir: std::path::PathBuf,
+        #[arg(long, default_value_t = 268_435_456)]
+        max_spool_bytes: u64,
+    },
 }
 
 #[derive(Deserialize)]
@@ -49,6 +57,10 @@ async fn run(cli: Cli) -> Result<Value> {
         return Err(CollectorError::new("configuration", "input_too_large"));
     }
     match cli.command {
+        Some(Command::Capture {
+            spool_dir,
+            max_spool_bytes,
+        }) => capture::capture(&bytes, &spool_dir, max_spool_bytes).await,
         Some(Command::Normalize) => {
             let mut replay: ReplayRequest = serde_json::from_slice(&bytes)
                 .map_err(|_| CollectorError::new("configuration", "invalid_replay_request"))?;

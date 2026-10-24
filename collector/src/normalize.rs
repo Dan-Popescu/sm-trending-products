@@ -357,7 +357,10 @@ fn unmapped_source_fields(source: Source, row: &Value) -> Result<BTreeSet<String
     Ok(fields.paths)
 }
 
-fn continuation(request: &CollectionRequest, data: &Map<String, Value>) -> Result<Value> {
+pub(crate) fn continuation(
+    request: &CollectionRequest,
+    data: &Map<String, Value>,
+) -> Result<Value> {
     if matches!(
         (request.source, request.operation),
         (Source::Display, Operation::Query)

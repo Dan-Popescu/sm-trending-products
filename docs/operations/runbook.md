@@ -1,10 +1,21 @@
 # Operations runbook
 
-The supported production target is a VPS running Docker Compose with PostgreSQL and an external S3 bucket. Rust collection, Dagster batch orchestration, native columnar analysis, and the private review interface use one application image. No service is deployed by checking in this configuration.
+The production target is a VPS running Docker Compose with PostgreSQL and external
+S3 storage. A shared application image runs separate planning, raw-capture,
+normalization, analytical and operator-interface containers; PostgreSQL has its
+own image. The independent host controller installs signed releases. This
+configuration does not establish an actual VPS deployment or live-source access.
 
 ## Prerequisites
 
-Use Docker Engine with Compose v2.20 or newer, a dedicated S3 bucket, and access to the target VPS. Allow outbound HTTPS to the granted TikTok endpoints and the chosen object store. Configure the VPS firewall and SSH access before rollout.
+Use Docker Engine with Compose v2.20 or newer, a dedicated S3 bucket, the trusted
+host controller and private Tailscale access. Initial host installation uses the
+Hostinger management console; SSH is not part of this deployment. Keep application
+and administrative ports closed to the public internet. Permit the connectivity
+required by Tailscale and outbound HTTPS for GitHub/GHCR, Sigstore trust material,
+the chosen object store and granted TikTok endpoints. See the
+[controller installation guide](private-release-controller.md) for trust and
+private-file prerequisites.
 
 The checked-in image versions are explicit: PostgreSQL 17.11, Python 3.12.14, Rust 1.99.1, uv 0.12.23, and Moto 5.2.4 for tests. Review upstream security updates before each deployment and update the pins deliberately. Python and Rust dependencies are locked separately.
 
@@ -38,32 +49,48 @@ Keep TikTok token fields empty until approval exists. A developer key is not a g
 
 The database, Dagster storage, spool, and cache use separate named volumes. These are local state, not a replacement for backups or S3 durability. The namespace setting identifies the environment; real/synthetic flags enforce evidence separation. Separate production and development databases/buckets as well.
 
-## Build and start
+## Initial provisioning
 
-From the repository root:
+Follow the [private controller guide](private-release-controller.md) for the first
+installation. Initial provisioning and later code updates are distinct operations:
 
-```sh
-docker compose config --quiet
-docker compose build
-docker compose up -d
-docker compose ps
-docker compose run --rm --no-deps initialize sm-trends status --json
-docker compose run --rm --no-deps initialize sm-trends verify --json
-```
+1. Publish a compatible main revision through the release workflow with deployment
+   disabled. Verify its signed manifest and use the immutable published image
+   digest for the initial application roles. Build images in CI, outside the VPS.
+2. Prepare the root-owned runtime configuration, private credentials and external
+   bucket. Apply the documented [4-vCPU/16-GiB starting profile](../../deploy/production-4cpu.env.example)
+   when appropriate, then qualify actual host headroom and provider behavior.
+3. Initialize PostgreSQL/application state and start the initial planner, blue
+   capture slot, normalizer and downstream roles. The initialization container
+   must finish successfully first. New PostgreSQL volumes create the separate
+   Dagster database automatically; existing volumes need that database provisioned.
+4. Verify the initial signed container identity and registered worker, adopt that
+   baseline with the host controller, then enable its private polling timer.
+   Bootstrap adoption does not qualify source coverage.
 
-Use `config --quiet`: printing the interpolated Compose configuration can reveal credentials. The initialization container must finish successfully before workers and interfaces start. New PostgreSQL volumes create the separate Dagster database automatically; an existing database volume needs that database provisioned before starting Dagster.
+Validate private configuration with `config --quiet`: printing interpolated
+Compose settings can reveal credentials. Keep the actual image/worker pins and
+controller state private. Use the controller procedure below for subsequent
+updates rather than repeating initial stack startup.
 
 The default application user is unprivileged, root filesystems are read-only, temporary and persistent write locations are explicit, capabilities are dropped, and logs rotate. Resource limits are configurable starting settings, not a tested capacity guarantee. Measure the declared workload and leave memory/disk headroom.
 
 ## Private access
 
-Only loopback addresses expose the dashboard and Dagster interfaces. Use an SSH tunnel:
+The dashboard and Dagster bind to host loopback ports 8501 and 3000. Configure
+[Tailscale Serve](https://tailscale.com/kb/1312/serve) on the VPS to forward private
+HTTPS access to those existing loopback HTTP services. Restrict access to the
+intended operators through tailnet policy and validate application routing on the
+actual target. This is the supported application-access boundary; no SSH tunnel
+or public Funnel endpoint is required.
 
-```sh
-ssh -L 8501:127.0.0.1:8501 -L 3000:127.0.0.1:3000 user@vps
-```
+Keep actual tailnet names, host addresses and Serve routing in private host
+configuration, outside this public repository. These instructions do not claim
+that Serve or HTTPS has already been configured on the VPS.
 
-Open `http://127.0.0.1:8501` for review and `http://127.0.0.1:3000` for orchestration. These interfaces have operational privileges; loopback binding plus a trusted SSH tunnel is the supported access boundary. Do not change bindings to public addresses without a separately configured authenticated TLS proxy. PostgreSQL has no published host port.
+PostgreSQL publishes only `127.0.0.1:${POSTGRES_HOST_PORT:-5432}` for the host-local
+controller. Its private host DSN uses that address and port; application containers
+use `postgres:5432`. Keep PostgreSQL off public interfaces and outside Serve.
 
 ## Local synthetic execution
 
@@ -92,7 +119,14 @@ filesystem; inaccessible measurements remain unavailable. Shared volumes can
 report the same capacity, so do not sum these values. The health view exposes the
 same measurements without publishing local paths or filesystem error text.
 
-The application scheduler decides which candidate tasks are due and how the budget is split. Dagster coordinates batches and downstream assessments. A Dagster run is not created for every individual video.
+The independent capture planner uses the application scheduler to admit due
+tasks within shared budgets. Capture workers remain running and process that
+queue; actual sampling follows the declared source policies and due intervals.
+The separate normalizer consumes saved responses. In production independent
+mode, Dagster coordinates downstream analysis and maintenance and disables its
+legacy automatic collection schedule. See
+[independent acquisition](independent-acquisition.md) and
+[capture contracts](capture-contracts.md) for cadence and coverage boundaries.
 
 Source retry windows take precedence over the desired refresh interval, including
 valid waits longer than a day. Workers persist the due time and release their
@@ -134,7 +168,26 @@ See [backup and restore](backup-and-restore.md). Run an isolated restore exercis
 
 ## Updates and maintenance
 
-Before upgrading, record the current image/dependency revisions, pause writers, create a complete backup, and validate the new image against a restored copy. Apply database initialization/migrations through the initialization command before restarting workers. Do not assume an old application is compatible with a newer schema.
+For independent acquisition, take an [online checkpoint](backup-and-restore.md)
+without stopping capture. Validate the candidate against an isolated restored
+copy, then follow the [signed private release controller](private-release-controller.md).
+The release workflow's deployment request authorizes the application update;
+the host polls it over outbound HTTPS. It starts a compatible replacement,
+requires committed raw capture
+evidence from that worker generation, drains the predecessor and retires it
+only after acknowledgement. Missing evidence or unsafe compatibility blocks
+the update. The controller then refreshes planning, normalization, analytical
+and operator roles through the [processing release procedure](processing-releases.md).
+Schema expansion must support both revisions; contraction belongs
+to a later separately qualified release. Keep the actual host configuration and
+credentials outside this public repository.
+
+The legacy offline checkpoint pauses every application writer and is suitable
+only for an inactive deployment or a source window whose recovery has been
+explicitly qualified. It is not the production update procedure for unknown or
+ephemeral source data. See [independent acquisition](independent-acquisition.md)
+and the [controller operations guide](private-release-controller.md) for initial
+bring-up and rolling updates.
 
 Compaction publishes a completed replacement before changing the catalog's read frontier, preserves original observation/availability/provenance, and retains raw evidence subject to policy. Retention preview is read-only; applying retention invalidates dependent assessments/evaluations before deleting restricted objects. Versioned or suspended-versioning S3 buckets require listing and deleting every affected version and delete marker; a simple delete marker is insufficient. The service identity therefore needs bucket versioning inspection, version listing, and version deletion permissions in addition to ordinary object reads/writes/deletes. Object Lock or denied deletion leaves explicit pending work for retry. Review source policies and backup retention together: a backup can also contain data that must expire.
 

@@ -1,0 +1,114 @@
+"""Durable capture planning cadence, independent of analytical orchestration."""
+
+from __future__ import annotations
+
+import argparse
+import signal
+import socket
+import threading
+from datetime import datetime, timedelta
+
+from .catalog import InvalidationPending
+from .contracts import canonical
+from .pipeline import Pipeline
+from .scheduler import Scheduler
+
+
+class CaptureCoordinator:
+    def __init__(self, pipeline: Pipeline):
+        self.pipeline = pipeline
+        self.catalog = pipeline.catalog
+        self.planner_id = socket.gethostname()
+
+    def status(self, synthetic: bool = False) -> dict | None:
+        return self.catalog.one(
+            "SELECT * FROM capture_planner_state WHERE synthetic=%s", (synthetic,)
+        )
+
+    def tick(self, synthetic: bool = False, *, budget: int | None = None) -> dict:
+        scope = "true" if synthetic else "false"
+        lock = "hashtextextended(current_schema()||':capture-planner:'||%s,0)"
+        try:
+            with self.catalog.transaction() as owner:
+                acquired = owner.execute(
+                    f"SELECT pg_try_advisory_xact_lock({lock}) AS acquired", (scope,)
+                ).fetchone()
+                if not acquired or not acquired["acquired"]:
+                    return {"status": "coordinator_busy", "synthetic": synthetic}
+                return self._plan(owner, synthetic, budget)
+        except Exception as error:
+            # Roll back both admitted tasks and cadence. A replacement's completed
+            # tick must never be overwritten by a disconnected former owner.
+            self.catalog.execute(
+                "INSERT INTO capture_planner_state(synthetic,last_error) VALUES(%s,%s) "
+                "ON CONFLICT(synthetic) DO UPDATE SET last_error=EXCLUDED.last_error "
+                "WHERE capture_planner_state.next_due_at<=clock_timestamp()",
+                (synthetic, type(error).__name__),
+            )
+            return {
+                "status": "invalidation_pending"
+                if isinstance(error, InvalidationPending)
+                else "planning_failed",
+                "synthetic": synthetic,
+                "error": type(error).__name__,
+            }
+
+    def _plan(self, connection, synthetic: bool, budget: int | None) -> dict:
+        connection.execute(
+            "INSERT INTO capture_planner_state(synthetic) VALUES(%s) ON CONFLICT DO NOTHING",
+            (synthetic,),
+        )
+        due = connection.execute(
+            "UPDATE capture_planner_state SET last_started_at=clock_timestamp(),last_error=NULL "
+            "WHERE synthetic=%s AND next_due_at<=clock_timestamp() RETURNING last_started_at",
+            (synthetic,),
+        ).fetchone()
+        if not due:
+            state = connection.execute(
+                "SELECT last_planner_id,last_completed_at FROM capture_planner_state "
+                "WHERE synthetic=%s",
+                (synthetic,),
+            ).fetchone()
+            return {"status": "not_due", "synthetic": synthetic, **state}
+        result = Scheduler(self.catalog).schedule(
+            self.pipeline.settings.scheduler_request_budget if budget is None else budget,
+            synthetic=synthetic,
+            connection=connection,
+        )
+        started: datetime = due["last_started_at"]
+        period = self.pipeline.settings.collection_schedule_minutes * 60
+        next_due = started + timedelta(seconds=period - started.timestamp() % period)
+        completed = connection.execute(
+            "UPDATE capture_planner_state SET next_due_at=%s,last_completed_at=clock_timestamp(),"
+            "last_planner_id=%s,last_error=NULL,last_scheduled_count=%s WHERE synthetic=%s "
+            "RETURNING last_planner_id,last_completed_at",
+            (next_due, self.planner_id, result["scheduled"], synthetic),
+        ).fetchone()
+        return {"status": "planned", "synthetic": synthetic, "result": result, **completed}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--synthetic", action="store_true")
+    parser.add_argument("--loop", action="store_true")
+    parser.add_argument("--poll-seconds", type=float, default=2)
+    args = parser.parse_args(argv)
+    if not 0 < args.poll_seconds <= 60:
+        parser.error("poll-seconds must be positive and at most 60")
+    stop = threading.Event()
+    if args.loop:
+        signal.signal(signal.SIGTERM, lambda *_: stop.set())
+        signal.signal(signal.SIGINT, lambda *_: stop.set())
+    with Pipeline.from_env() as pipeline:
+        coordinator = CaptureCoordinator(pipeline)
+        while not stop.is_set():
+            result = coordinator.tick(args.synthetic)
+            print(canonical(result), flush=True)
+            if not args.loop:
+                return 1 if result["status"] == "planning_failed" else 0
+            stop.wait(args.poll_seconds)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

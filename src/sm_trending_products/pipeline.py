@@ -16,6 +16,7 @@ from pathlib import Path
 from psycopg.types.json import Jsonb
 
 from .assessment_service import AssessmentService
+from .capture_contracts import CaptureContracts
 from .catalog import Catalog
 from .collection import SourceCollection
 from .collector import Collector, redact
@@ -32,6 +33,7 @@ from .contracts import (
 from .evaluation_service import EvaluationService
 from .history import History, HistoryIndexPending
 from .provenance import Provenance
+from .raw_capture import RawCaptureService
 from .replay import ReplayService
 from .settings import Settings
 from .worker_control import WorkerControl
@@ -70,6 +72,10 @@ class Pipeline:
         self._collection = SourceCollection(
             settings, self.catalog, self.history, self.collector, self.worker_id
         )
+        self.capture_contracts = CaptureContracts(self.catalog)
+        self._raw_capture = RawCaptureService(
+            settings, self.catalog, self.history, self.collector, self.worker_id
+        )
         self._evaluation = EvaluationService(self.catalog, self.history, self.identity)
         self._replay = ReplayService(self.catalog, self.history, self.collector)
 
@@ -87,7 +93,10 @@ class Pipeline:
         try:
             self.history.flush_usage()
         finally:
-            self.catalog.close()
+            try:
+                self._raw_capture.close()
+            finally:
+                self.catalog.close()
 
     @property
     def identity(self):
@@ -128,6 +137,25 @@ class Pipeline:
             ),
             "sources": sources,
             "datasets": datasets,
+            "acquisition": {
+                "independent": self.settings.acquisition_enabled,
+                "workers": self.catalog.all(
+                    "SELECT worker_id,generation,synthetic,state,heartbeat_at,"
+                    "drain_requested_at,drain_acknowledged_at FROM collection_workers "
+                    "ORDER BY registered_at DESC,worker_id LIMIT 200"
+                ),
+                "windows": self.catalog.all(
+                    "SELECT o.synthetic,count(*) AS total,"
+                    "count(*) FILTER(WHERE o.contract_id IS NULL) AS unqualified,"
+                    "count(*) FILTER(WHERE d.state='committed') AS durable,"
+                    "count(*) FILTER(WHERE o.deadline_at<clock_timestamp() AND "
+                    "(o.captured_at IS NULL OR o.captured_at>o.deadline_at)) AS late_or_missed,"
+                    "min(o.original_due_at) FILTER(WHERE o.capture_dataset_id IS NULL) "
+                    "AS oldest_pending_window FROM capture_obligations o "
+                    "LEFT JOIN datasets d ON d.dataset_id=o.capture_dataset_id "
+                    "GROUP BY o.synthetic ORDER BY o.synthetic"
+                ),
+            },
             "capabilities": capabilities,
             "budgets": self.catalog.all("SELECT * FROM request_budgets ORDER BY source,account_id"),
             "storage_metrics": {"scope": "current_process", **self.history.metrics},
@@ -246,7 +274,47 @@ class Pipeline:
     def start_worker(self, synthetic: bool = False) -> dict:
         session = self.worker_control.register(self.worker_id, synthetic=synthetic)
         self._collection.worker_generation = session["generation"]
+        self._raw_capture.worker_generation = session["generation"]
+        self._raw_capture.collection.worker_generation = session["generation"]
         return session
+
+    def capture_batch(
+        self,
+        batch_size: int = 20,
+        synthetic: bool = False,
+        *,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> dict:
+        return self._raw_capture.capture_batch(
+            batch_size, synthetic=synthetic, should_stop=should_stop
+        )
+
+    def publish_captures(
+        self,
+        batch_size: int = 20,
+        synthetic: bool = False,
+        *,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> dict:
+        return self._raw_capture.publish_pending(
+            batch_size, synthetic=synthetic, should_stop=should_stop
+        )
+
+    def maintain_capture_spool(self, limit: int = 20, *, apply: bool = False) -> dict:
+        return self._raw_capture.maintain_spool(limit, apply=apply)
+
+    def revoke_capture_spool(
+        self,
+        source: str,
+        account_id: str,
+        synthetic: bool,
+        reason: str,
+        *,
+        captured_before: datetime | None = None,
+    ) -> dict:
+        return self._raw_capture.request_spool_removal(
+            source, account_id, synthetic, reason, captured_before=captured_before
+        )
 
     def collect_batch(
         self,
@@ -255,6 +323,8 @@ class Pipeline:
         *,
         should_stop: Callable[[], bool] | None = None,
     ) -> dict:
+        if self.settings.acquisition_enabled:
+            raise ValueError("Independent acquisition requires capture and publish-captures")
         self.catalog.resume_invalidations(max_batches=1, max_seconds=0.1, synthetic=synthetic)
         with self.catalog.evidence_transaction(synthetic):
             pass

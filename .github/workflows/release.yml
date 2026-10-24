@@ -1,0 +1,141 @@
+name: Publish verified release
+
+on:
+  workflow_run:
+    workflows: [Verify pipeline]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Full main commit SHA with successful Verify pipeline CI
+        required: true
+        type: string
+      deploy:
+        description: Request this candidate on the private pilot controller
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+      packages: write
+      id-token: write
+    env:
+      RELEASE_REVISION: ${{ inputs.revision || github.event.workflow_run.head_sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: 0.12.23
+      - name: Verify exact trusted main revision
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$RELEASE_REVISION" HEAD
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$RELEASE_REVISION&event=push&branch=main&per_page=100" > "$RUNNER_TEMP/verified-runs.json"
+          uv sync --locked --no-dev --python 3.12
+          uv run --locked python -m sm_trending_products.release_artifacts verify-ci --runs "$RUNNER_TEMP/verified-runs.json" --revision "$RELEASE_REVISION" --repository "$GITHUB_REPOSITORY"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.RELEASE_REVISION }}
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        with:
+          cosign-release: v3.1.4
+      - name: Reuse an already published and verified candidate
+        id: existing
+        run: |
+          set -euo pipefail
+          release_tag="candidate-$RELEASE_REVISION"
+          if gh release view "$release_tag" --json id > /dev/null 2>&1; then
+            mkdir -p output/release
+            gh release download "$release_tag" --pattern manifest.json --pattern bundle.json --dir output/release
+            cosign verify-blob --offline --bundle output/release/bundle.json --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/main" --certificate-oidc-issuer https://token.actions.githubusercontent.com output/release/manifest.json
+            RELEASE_REPOSITORY="ghcr.io/${GITHUB_REPOSITORY,,}" uv run --locked python -c 'import os; from pathlib import Path; from sm_trending_products.release_control import ReleaseManifest,release_manifest_bytes; data=Path("output/release/manifest.json").read_bytes(); manifest=ReleaseManifest.model_validate_json(data); assert data==release_manifest_bytes(manifest); assert manifest.revision==os.environ["RELEASE_REVISION"]; assert manifest.image.split("@",1)[0]==os.environ["RELEASE_REPOSITORY"]'
+            printf 'found=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'found=false\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Set immutable image repository
+        id: image
+        run: |
+          set -euo pipefail
+          printf 'repository=ghcr.io/%s\n' "${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: steps.existing.outputs.found != 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        if: steps.existing.outputs.found != 'true'
+      - name: Build the verified revision outside the VPS
+        id: build
+        if: steps.existing.outputs.found != 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.image.outputs.repository }}:revision-${{ env.RELEASE_REVISION }}
+          labels: org.opencontainers.image.revision=${{ env.RELEASE_REVISION }}
+      - name: Write canonical digest-bound release manifest
+        if: steps.existing.outputs.found != 'true'
+        env:
+          RELEASE_IMAGE: ${{ steps.image.outputs.repository }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          uv sync --locked --no-dev --python 3.12
+          uv run --locked python -m sm_trending_products.release_artifacts manifest --image "$RELEASE_IMAGE" --revision "$RELEASE_REVISION" --compatibility deploy/release-compatibility.json --output output/release/manifest.json
+      - name: Sign the exact manifest with the trusted workflow identity
+        if: steps.existing.outputs.found != 'true'
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --bundle output/release/bundle.json output/release/manifest.json
+          cosign verify-blob --offline --bundle output/release/bundle.json --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/main" --certificate-oidc-issuer https://token.actions.githubusercontent.com output/release/manifest.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ env.RELEASE_REVISION }}
+          path: output/release/
+          if-no-files-found: error
+      - name: Publish immutable candidate files
+        if: steps.existing.outputs.found != 'true'
+        run: |
+          set -euo pipefail
+          release_tag="candidate-$RELEASE_REVISION"
+          gh release create "$release_tag" output/release/manifest.json output/release/bundle.json --target "$RELEASE_REVISION" --prerelease --title "Pilot candidate $RELEASE_REVISION" --notes "Digest-bound release signed by the main publication workflow. Deployment is requested separately through the private host controller."
+      - name: Publish a signed monotonic pilot deployment request
+        if: inputs.deploy
+        run: |
+          set -euo pipefail
+          uv run --locked python -m sm_trending_products.release_artifacts request --manifest output/release/manifest.json --target pilot --sequence "$GITHUB_RUN_NUMBER" --output output/request.json
+          cosign sign-blob --yes --bundle output/request-bundle.json output/request.json
+          cosign verify-blob --offline --bundle output/request-bundle.json --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/main" --certificate-oidc-issuer https://token.actions.githubusercontent.com output/request.json
+          if gh release view pilot-deploy-request --json id > /dev/null 2>&1; then
+            gh release upload pilot-deploy-request output/request.json output/request-bundle.json --clobber
+          else
+            gh release create pilot-deploy-request output/request.json output/request-bundle.json --target "$RELEASE_REVISION" --prerelease --title "Signed pilot deployment request" --notes "The host checks the signature, target and increasing request sequence before applying a candidate."
+          fi

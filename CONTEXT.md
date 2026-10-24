@@ -37,3 +37,16 @@ Identify emerging physical-product opportunities from accessible evidence, then 
 **Backtest**: Historical replay that uses only evidence and rules available at each simulated decision time. Retrospective exploration without such evidence is not a backtest.
 
 **Forward test**: A prospective evaluation that freezes a decision and subsequently measures its predefined outcomes as they mature.
+
+**Capture**: A complete source response preserved durably with its acquisition
+context and time. A capture can exist before its contents become usable evidence.
+
+**Capture obligation**: A declared authorized source scope and observation window
+that must be captured by a recorded deadline. A retry retains the original window.
+
+**Capture gap**: An obligation whose required observation was not secured within
+its permitted window. A later counter value does not silently fill that gap.
+
+**Replayability**: The verified ability to retrieve the same required historical
+source evidence later, within its availability window and permitted request budget.
+An undocumented recovery ability remains unknown.

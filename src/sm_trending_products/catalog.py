@@ -637,8 +637,11 @@ class Catalog:
         *,
         task: dict | None = None,
         supersedes: str | None = None,
+        publication_guard=None,
     ) -> dict:
         with self.transaction() as connection:
+            if publication_guard:
+                publication_guard(connection)
             self.guard_namespace(connection, synthetic)
             if task:
                 self.assert_lease(connection, task)
@@ -724,8 +727,11 @@ class Catalog:
         task: dict | None = None,
         next_payload: dict | None = None,
         advance_task: bool = True,
+        publication_guard=None,
     ) -> None:
         with self.transaction() as connection:
+            if publication_guard:
+                publication_guard(connection)
             self.guard_retention(connection)
             if task:
                 self.assert_lease(connection, task)
@@ -804,7 +810,7 @@ class Catalog:
                     "UPDATE collection_tasks SET "
                     "state=%s,payload=%s,lease_owner=NULL,lease_until=NULL,"
                     "completed_at=CASE WHEN %s THEN clock_timestamp() ELSE NULL END,attempts=0,"
-                    "page_index=page_index+%s,last_error=%s "
+                    "page_index=page_index+%s,capture_attempt=0,last_error=%s "
                     "WHERE task_id=%s",
                     (
                         "quarantined"
@@ -932,6 +938,26 @@ class Catalog:
             # Any persisted job, including a completed tombstone, hashes both.
             if journal and journal["present"]:
                 tables += ("source_invalidations", "source_invalidation_work")
+            # Legal capture contracts and withdrawal certificates affect evidence
+            # interpretation. Keep legacy fingerprints when these newer relations
+            # are absent/empty, and inspect them through the same imported cut.
+            for table in (
+                "capture_policies",
+                "capture_obligations",
+                "capture_spool_revocations",
+                "capture_spool_retirements",
+            ):
+                relation = connection.execute(
+                    "SELECT to_regclass(%s) AS relation", (table,)
+                ).fetchone()
+                if relation and relation["relation"]:
+                    populated = connection.execute(
+                        sql.SQL("SELECT EXISTS(SELECT 1 FROM {}) AS present").format(
+                            sql.Identifier(table)
+                        )
+                    ).fetchone()
+                    if populated and populated["present"]:
+                        tables += (table,)
             for table in tables:
                 hasher = hashlib.sha256(b"[")
                 separator = b""

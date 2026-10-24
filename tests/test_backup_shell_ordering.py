@@ -52,8 +52,11 @@ if args[0]=='compose':
     args=args[1:]
     command=args[0]
     if command=='config': pass
-    elif command=='ps': print('worker\\ndagster-daemon\\ndashboard')
+    elif command=='ps':
+        print('worker\\nworker-green\\ncapture-planner\\nnormalizer\\ndagster-daemon\\ndashboard')
     elif command in ('stop','start'):
+        expected={'worker','worker-green','capture-planner','normalizer','dagster-daemon','dashboard'}
+        assert expected<=set(args[1:])
         state.write_text('stopped' if command=='stop' else 'running')
         note(command)
     elif command=='exec':

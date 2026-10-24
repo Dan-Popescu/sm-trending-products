@@ -276,12 +276,25 @@ class History:
         supersedes: str | None = None,
         quarantine: Sequence[dict] = (),
         advance_task: bool = True,
+        kind: str | None = None,
+        capture: dict | None = None,
+        publication_guard=None,
     ) -> str:
         if any(obs.source != source or obs.synthetic != synthetic for obs in observations):
             raise ValueError("Datasets require one source and one real/synthetic class")
         dataset_id = dataset_id or digest(
             {"raw": raw, "version": transform_version, "synthetic": synthetic}
         )
+        if kind in {"raw_capture", "raw_capture_error"} or capture is not None:
+            if (
+                kind not in {"raw_capture", "raw_capture_error"}
+                or observations
+                or capture is None
+                or raw.get("capture_version") != "1"
+                or raw.get("capture") != capture
+                or capture.get("capture_id") != dataset_id
+            ):
+                raise ValueError("Raw captures require one typed receipt and zero observations")
         existing = self.catalog.one("SELECT * FROM datasets WHERE dataset_id=%s", (dataset_id,))
         if existing and existing["state"] == "committed":
             if task:
@@ -292,6 +305,7 @@ class History:
                     task=task,
                     next_payload=next_payload,
                     advance_task=advance_task,
+                    **({"publication_guard": publication_guard} if publication_guard else {}),
                 )
             return dataset_id
         if existing and existing["state"] in ("invalidated", "deleted"):
@@ -333,6 +347,11 @@ class History:
         }
         manifest_key = f"manifests/{namespace}/{dataset_id}.json"
         manifest["manifest_key"] = manifest_key
+        if kind is not None:
+            manifest["kind"] = kind
+        if capture is not None:
+            manifest["acquisition_protocol"] = "1"
+            manifest["capture"] = capture
         if recorded:
             # Staged evidence is a durable recovery contract. A deployment or
             # settings change cannot rewrite its immutable manifest/layout.
@@ -343,7 +362,13 @@ class History:
             raw_key = manifest["raw"]["key"]
             manifest_key = manifest["manifest_key"]
         self.catalog.stage_dataset(
-            dataset_id, source, synthetic, manifest, task=task, supersedes=supersedes
+            dataset_id,
+            source,
+            synthetic,
+            manifest,
+            task=task,
+            supersedes=supersedes,
+            **({"publication_guard": publication_guard} if publication_guard else {}),
         )
         self.put(raw_key, raw_body, content_type="application/gzip")
         for obj, body in objects:
@@ -357,6 +382,7 @@ class History:
             task=task,
             next_payload=next_payload,
             advance_task=advance_task,
+            **({"publication_guard": publication_guard} if publication_guard else {}),
         )
         return dataset_id
 
