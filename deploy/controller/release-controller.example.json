@@ -10,10 +10,10 @@
   "docker_data_dir": "/var/lib/docker",
   "spool_dir": "/var/lib/docker/volumes/pilot_spool/_data",
   "capacity_budget": {
-    "candidate_memory_bytes": 2147483648,
-    "candidate_cpus": 1,
+    "candidate_memory_bytes": 805306368,
+    "candidate_cpus": 0.75,
     "memory_reserve_bytes": 1073741824,
-    "cpu_reserve": 1,
+    "cpu_reserve": 0.25,
     "image_unpack_bytes": 4294967296,
     "docker_free_reserve_bytes": 4294967296,
     "spool_growth_bytes": 268435456,

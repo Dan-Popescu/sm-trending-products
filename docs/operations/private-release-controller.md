@@ -40,6 +40,10 @@ limits, image/unpack disk headroom and spool growth reserve. Missing or
 insufficient measurements block the update without deleting spool data. The
 example budgets must be confirmed against measured image size and the pilot's
 capture envelope; they are not host qualification evidence.
+The explicit 4-vCPU pilot profile budgets a 768-MiB, 0.75-CPU candidate and
+0.25 CPU reserve. It depends on the matching production Compose resource profile;
+unmodified larger limits on other roles may conservatively block overlap. The
+capacity module's default budget remains more conservative.
 
 Create `/etc/sm-trends` as root, mode 0700. Copy
 `deploy/controller/release-controller.example.json` to
