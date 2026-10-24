@@ -9,6 +9,7 @@ import json
 import uuid
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
+from contextlib import AbstractContextManager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,7 @@ from botocore.exceptions import ClientError
 from psycopg.types.json import Jsonb
 
 from .analysis_batches import RowBudgetExceeded
-from .cache import cached_path, evict_cache, file_digest, pin_cached
+from .cache import cached_path, evict_cache, file_digest, pin_cached, read_session
 from .catalog import Catalog
 from .contracts import Observation, canonical, digest, observation_period, utc
 from .settings import Settings
@@ -50,6 +51,19 @@ class History:
             "cache_hits": 0,
             "http_attempts": 0,
         }
+        # Computation reuse is distinct from filesystem/S3 traffic. A feature
+        # hit can correctly perform zero file-cache reads and zero source GETs.
+        self.analysis_metrics = {
+            "projection_hits": 0,
+            "projection_misses": 0,
+            "delta_windows": 0,
+            "full_windows": 0,
+            "duplicate_rebuild_windows": 0,
+        }
+
+    def read_session(self) -> AbstractContextManager[None]:
+        """Bound verification reuse to this operation without changing retention guards."""
+        return read_session(self)
 
     @property
     def client(self):

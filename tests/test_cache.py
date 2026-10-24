@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -329,3 +330,226 @@ def test_cache_control_symlink_is_rejected(tmp_path):
     history = history_at(tmp_path, Source({"object": b"data"}))
     with pytest.raises(ValueError, match="escaped"):
         history.cached(reference("object", b"data"))
+
+
+def measured_hashes(monkeypatch):
+    from sm_trending_products import cache
+
+    original = cache.file_digest
+    sizes = []
+
+    def measure(path):
+        sizes.append(path.stat().st_size)
+        return original(path)
+
+    monkeypatch.setattr(cache, "file_digest", measure)
+    return sizes
+
+
+def test_operation_session_hashes_twenty_warm_reads_once_then_verifies_again(tmp_path, monkeypatch):
+    body = b"verified" * 4096
+    source = Source({"object": body})
+    history = history_at(tmp_path, source)
+    obj = reference("object", body)
+    history.cached(obj)
+    hashed = measured_hashes(monkeypatch)
+    for _ in range(20):
+        with pin_cached(history, obj) as path:
+            assert path.read_bytes() == body
+    assert sum(hashed) == 20 * len(body)
+    hashed.clear()
+    with history.read_session():
+        for _ in range(20):
+            with pin_cached(history, obj) as path:
+                assert path.read_bytes() == body
+        assert len(list((tmp_path / ".pins").iterdir())) == 1
+    assert sum(hashed) == len(body)
+    assert source.requests == ["object"]
+    assert not list((tmp_path / ".pins").iterdir())
+    with history.read_session():
+        with pin_cached(history, obj):
+            pass
+    assert sum(hashed) == 2 * len(body)
+
+
+@pytest.mark.parametrize("mutation", ["inplace", "replace", "different_expected"])
+def test_session_rechecks_corruption_replacement_and_changed_descriptor(tmp_path, mutation):
+    body = b"valid"
+    source = Source({"object": body})
+    history = history_at(tmp_path, source)
+    obj = reference("object", body)
+    local = history.cached(obj)
+    with history.read_session():
+        with pin_cached(history, obj) as path:
+            assert path.read_bytes() == body
+        previous = local.stat()
+        if mutation == "inplace":
+            local.write_bytes(b"wrong")
+            # Matching size and mtime do not conceal a changed ctime.
+            os.utime(local, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+        elif mutation == "replace":
+            replacement = tmp_path / ".replacement"
+            replacement.write_bytes(b"wrong")
+            os.utime(replacement, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+            os.replace(replacement, local)
+        else:
+            body = b"newly published"
+            source.objects["object"] = body
+            obj = reference("object", body)
+        with pin_cached(history, obj) as path:
+            assert path.read_bytes() == body
+    assert source.requests == ["object", "object"]
+    assert not list((tmp_path / ".pins").iterdir())
+
+
+def test_session_cannot_reopen_a_retired_object_through_its_retained_pin(tmp_path):
+    body = b"valid"
+    source = Source({"object": body})
+    history = history_at(tmp_path, source)
+    obj = reference("object", body)
+    local = history.cached(obj)
+    with history.read_session():
+        with pin_cached(history, obj) as active:
+            with cache_object_lock(history, "object"):
+                source.objects.pop("object")
+                local.unlink()
+            assert active.read_bytes() == body
+            with pytest.raises(KeyError):
+                with pin_cached(history, obj):
+                    pytest.fail("Retained pin reopened a retired object")
+            assert active.read_bytes() == body
+    assert not list((tmp_path / ".pins").iterdir())
+    assert retained_bytes(tmp_path) == 0
+
+
+def test_session_lru_and_oversized_files_respect_bounded_pins(tmp_path, monkeypatch):
+    bodies = {f"object-{index}": bytes([index]) * (70 * 1024) for index in range(5)}
+    source = Source(bodies)
+    history = history_at(tmp_path, source)
+    for key, body in bodies.items():
+        history.cached(reference(key, body))
+    hashed = measured_hashes(monkeypatch)
+    with history.read_session():
+        for key, body in bodies.items():
+            with pin_cached(history, reference(key, body)):
+                pass
+            pins = list((tmp_path / ".pins").iterdir())
+            assert sum(pin.stat().st_size for pin in pins) <= BUDGET // 4
+            assert retained_bytes(tmp_path) <= BUDGET
+        first, body = next(iter(bodies.items()))
+        before = sum(hashed)
+        with pin_cached(history, reference(first, body)):
+            pass
+        assert sum(hashed) == before + len(body)
+    large = b"large" * (LARGE // 5)
+    source.objects["large"] = large
+    history.cached(reference("large", large))
+    hashed.clear()
+    with history.read_session():
+        for _ in range(3):
+            with pin_cached(history, reference("large", large)):
+                pass
+            assert not list((tmp_path / ".pins").iterdir())
+    assert sum(hashed) == 3 * len(large)
+
+
+def test_session_pin_count_is_bounded_and_releases_on_exception(tmp_path):
+    bodies = {f"object-{index}": bytes([index]) for index in range(70)}
+    history = history_at(tmp_path, Source(bodies))
+    for key, body in bodies.items():
+        history.cached(reference(key, body))
+    with pytest.raises(RuntimeError, match="controlled"):
+        with history.read_session():
+            for key, body in bodies.items():
+                with pin_cached(history, reference(key, body)):
+                    pass
+                assert len(list((tmp_path / ".pins").iterdir())) <= 64
+            raise RuntimeError("controlled")
+    assert not list((tmp_path / ".pins").iterdir())
+
+
+def test_session_relinquishes_idle_pins_before_capacity_retry(tmp_path):
+    first, second = b"a" * (BUDGET // 4), b"b" * (7 * BUDGET // 8)
+    source = Source({"first": first, "second": second})
+    history = history_at(tmp_path, source)
+    history.cached(reference("first", first))
+    with history.read_session():
+        with pin_cached(history, reference("first", first)):
+            pass
+        assert list((tmp_path / ".pins").iterdir())
+        with pin_cached(history, reference("second", second)) as path:
+            assert path.read_bytes() == second
+            assert retained_bytes(tmp_path) <= BUDGET
+    assert not list((tmp_path / ".pins").iterdir())
+    assert source.requests == ["first", "second"]
+
+
+def test_nested_session_reuses_outer_pins_and_rejects_invalid_size(tmp_path, monkeypatch):
+    body = b"valid"
+    history = history_at(tmp_path, Source({"object": body}))
+    obj = reference("object", body)
+    history.cached(obj)
+    hashed = measured_hashes(monkeypatch)
+    with history.read_session():
+        with pin_cached(history, obj):
+            pass
+        with history.read_session():
+            with pin_cached(history, obj):
+                pass
+        with pin_cached(history, obj):
+            pass
+        with pytest.raises(ValueError, match="Invalid object size"):
+            with pin_cached(history, {**obj, "bytes": True}):
+                pass
+    assert sum(hashed) == len(body)
+
+
+def test_simultaneous_sessions_keep_independent_reader_fences(tmp_path):
+    body = b"valid"
+    source = Source({"object": body})
+    history = history_at(tmp_path, source)
+    obj = reference("object", body)
+    history.cached(obj)
+    barrier = threading.Barrier(2, timeout=3)
+
+    def read():
+        with history.read_session():
+            for _ in range(3):
+                with pin_cached(history, obj) as path:
+                    barrier.wait()
+                    assert path.read_bytes() == body
+                    barrier.wait()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = [executor.submit(read) for _ in range(2)]
+        for result in results:
+            result.result(timeout=5)
+    assert source.requests == ["object"]
+    assert not list((tmp_path / ".pins").iterdir())
+    assert retained_bytes(tmp_path) <= BUDGET
+
+
+def test_session_does_not_memoize_inode_changed_during_verification(tmp_path, monkeypatch):
+    from sm_trending_products import cache
+
+    body = b"valid"
+    source = Source({"object": body})
+    history = history_at(tmp_path, source)
+    obj = reference("object", body)
+    history.cached(obj)
+    original = cache.file_digest
+
+    def hash_then_change(path):
+        checksum = original(path)
+        path.write_bytes(b"wrong")
+        return checksum
+
+    with history.read_session():
+        with monkeypatch.context() as changes:
+            changes.setattr(cache, "file_digest", hash_then_change)
+            with pin_cached(history, obj):
+                pass
+        assert not list((tmp_path / ".pins").iterdir())
+        with pin_cached(history, obj) as path:
+            assert path.read_bytes() == body
+    assert source.requests == ["object", "object"]

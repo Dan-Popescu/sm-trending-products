@@ -66,6 +66,12 @@ tasks rather than an infinite wait. The wrapper also forwards these options.
 Mandatory check failures now set `ok: false` and a nonzero CLI exit code.
 Reports include cold/warm analysis, optional compaction duration and object counts,
 remaining queue state, cache/disk usage and aggregate worker storage traffic.
+Each cold analysis clears both the owned products' SQL feature/window projections
+and its isolated file cache. `cache_regime` and `compute_cache_before` record these
+preconditions. Warm analysis retains both layers. `analysis_work` reports product
+projection hits/misses and full, delta or duplicate-rebuild windows separately
+from `storage_traffic`: a projection hit can avoid file access entirely and
+therefore produce zero filesystem cache hits as well as zero downloads.
 Process CPU/RSS does not include the full PostgreSQL/object-store service stack.
 The finite workload and separate hard-crash tests do not establish sustained
 queue stability, production capacity, restoration objectives or provider prices.

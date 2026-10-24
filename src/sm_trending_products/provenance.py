@@ -11,6 +11,7 @@ import hashlib
 import json
 from collections import OrderedDict, defaultdict
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from .cache import pin_cached
@@ -23,6 +24,94 @@ BRANCH_CHILDREN = 16
 MAX_NODE_BYTES = 256_000
 MAX_DEPTH = 64
 NODE_REUSE_CACHE = 8192
+PLAN_NODES = 1000
+PLAN_BYTES = 4_000_000
+
+
+@dataclass(frozen=True)
+class PublicationScope:
+    input_provenance: Any
+    roots: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class _PlannedNode:
+    encoded: bytes
+    descriptor: dict[str, Any]
+    synthetic: bool
+    inputs: tuple[str, ...]
+    children: tuple[dict[str, Any], ...]
+
+
+class _NodePlan:
+    """Bounded postorder work, with one SQL reuse lookup per admitted batch."""
+
+    def __init__(self, owner: Provenance):
+        self.owner = owner
+        self.pending: dict[str, _PlannedNode] = {}
+        self.bytes = 0
+
+    def node(
+        self,
+        body: dict[str, Any],
+        synthetic: bool,
+        *,
+        inputs: Sequence[str] = (),
+        children: Sequence[dict[str, Any]] = (),
+    ) -> dict[str, Any]:
+        encoded, descriptor = self.owner._encode_node(body, synthetic)
+        key = descriptor["key"]
+        if key in self.owner._published:
+            self.owner._published.move_to_end(key)
+            return descriptor
+        if key in self.pending:
+            return descriptor
+        if len(self.pending) >= PLAN_NODES or self.bytes + len(encoded) > PLAN_BYTES:
+            self.flush()
+        if PLAN_NODES < 1 or len(encoded) > PLAN_BYTES:
+            return self.owner._publish_node(
+                encoded, descriptor, synthetic, inputs=inputs, children=children
+            )
+        self.pending[key] = _PlannedNode(
+            encoded, descriptor, synthetic, tuple(inputs), tuple(children)
+        )
+        self.bytes += len(encoded)
+        return descriptor
+
+    def flush(self) -> None:
+        if not self.pending:
+            return
+        known = {}
+        keys = list(self.pending)
+        for start in range(0, len(keys), 1000):
+            for row in self.owner.catalog.all(
+                "SELECT object_key,state,object_sha256,object_bytes FROM derived_publications "
+                "WHERE object_key=ANY(%s)",
+                (keys[start : start + 1000],),
+            ):
+                if row["state"] == "committed":
+                    expected = self.pending[row["object_key"]].descriptor
+                    if (row["object_sha256"], row["object_bytes"]) != (
+                        expected["sha256"],
+                        expected["bytes"],
+                    ):
+                        raise ValueError("Immutable provenance descriptor collision")
+                    known[row["object_key"]] = expected
+        # Keep the per-plan lookup independent of the process LRU size. Only
+        # committed, exact descriptors may bypass the existing publication path.
+        for key, node in self.pending.items():
+            if key in known:
+                self.owner._remember(known[key])
+            else:
+                self.owner._publish_node(
+                    node.encoded,
+                    node.descriptor,
+                    node.synthetic,
+                    inputs=node.inputs,
+                    children=node.children,
+                )
+        self.pending.clear()
+        self.bytes = 0
 
 
 class Provenance:
@@ -66,6 +155,22 @@ class Provenance:
             identities.update((row["object_key"], row["object_id"]) for row in rows)
         return identities
 
+    def publication_scope(
+        self, inputs: Sequence[Any], value: Any, synthetic: bool
+    ) -> PublicationScope:
+        """Attach the combined input root instead of redundantly attaching its children.
+
+        The cover is constructed here from these exact immutable inputs; no mutable
+        reachability index or transitive SQL read is needed. Different subset roots
+        in displayed evidence still acquire their own publication dependency.
+        """
+        combined = self.combine(inputs, synthetic)
+        covered = {root["key"] for root in self.roots(inputs)}
+        roots = {root["key"]: root for root in self.roots(value) if root["key"] not in covered}
+        # A one-product combination may be the child itself. Its root must survive.
+        roots.update({root["key"]: root for root in self.roots(combined)})
+        return PublicationScope(combined, tuple(roots[key] for key in sorted(roots)))
+
     def _node(
         self,
         body: dict[str, Any],
@@ -74,6 +179,11 @@ class Provenance:
         inputs: Sequence[str] = (),
         children: Sequence[dict[str, Any]] = (),
     ) -> dict[str, Any]:
+        encoded, descriptor = self._encode_node(body, synthetic)
+        return self._publish_node(encoded, descriptor, synthetic, inputs=inputs, children=children)
+
+    @staticmethod
+    def _encode_node(body: dict[str, Any], synthetic: bool) -> tuple[bytes, dict[str, Any]]:
         encoded = canonical(body).encode()
         if len(encoded) > MAX_NODE_BYTES:
             raise ValueError("Provenance node exceeds its byte budget")
@@ -85,6 +195,18 @@ class Provenance:
             "bytes": len(encoded),
             "count": body["count"],
         }
+        return encoded, descriptor
+
+    def _publish_node(
+        self,
+        encoded: bytes,
+        descriptor: dict[str, Any],
+        synthetic: bool,
+        *,
+        inputs: Sequence[str] = (),
+        children: Sequence[dict[str, Any]] = (),
+    ) -> dict[str, Any]:
+        key, checksum = descriptor["key"], descriptor["sha256"]
         if key in self._published:
             # A publication/page still checks authoritative root state under the
             # retention fence. This bounded local memo is never an eligibility gate.
@@ -129,7 +251,8 @@ class Provenance:
                         "VALUES(%s,%s) ON CONFLICT DO NOTHING",
                         (prior["object_id"], child_ids[child["key"]]),
                     )
-        # No SQL transaction spans the network upload. A tombstone rejects a race.
+        # Staging ends before upload. History.put retains its own short-lived
+        # retention/tombstone fence; the final source guard rejects retirement races.
         self.history.put(key, encoded, content_type="application/json")
         with self.catalog.transaction() as connection:
             self.catalog.guard_inputs(connection, dependencies)
@@ -162,6 +285,7 @@ class Provenance:
         values = sorted(set(references))
         if not values:
             return []
+        plan = _NodePlan(self)
         unknown = set(values).difference(deliveries)
         if unknown:
             raise ValueError("Provenance references require their source delivery")
@@ -177,14 +301,14 @@ class Provenance:
                 "partition": partition,
             }
             if len(items) <= LEAF_REFERENCES and len(canonical(body).encode()) <= MAX_NODE_BYTES:
-                return self._node(body, synthetic, inputs=datasets)
+                return plan.node(body, synthetic, inputs=datasets)
             if depth >= MAX_DEPTH:
                 raise ValueError("Provenance identifier cannot fit a bounded leaf")
             groups: dict[str, list[str]] = defaultdict(list)
             for value in items:
                 groups[hashlib.sha256(value.encode()).hexdigest()[depth]].append(value)
             children = [build(groups[key], depth + 1, partition) for key in sorted(groups)]
-            return self._node(
+            return plan.node(
                 {
                     "schema_version": "1",
                     "kind": "branch",
@@ -213,7 +337,7 @@ class Provenance:
                         (partition, node)
                     )
                 children = [join(groups[key], depth + 1) for key in sorted(groups)]
-            return self._node(
+            return plan.node(
                 {
                     "schema_version": "1",
                     "kind": "branch",
@@ -225,6 +349,7 @@ class Provenance:
             )
 
         root = join([(key, build(items, 0, key)) for key, items in sorted(by_partition.items())], 0)
+        plan.flush()
         return {"format": "sharded-provenance-v1", "root": root, "count": root["count"]}
 
     def audit(self, observations: Sequence[Observation], synthetic: bool) -> Any:
@@ -266,6 +391,7 @@ class Provenance:
         """Store bounded analytical records with stable content-addressed partitions."""
         if not records:
             return []
+        plan = _NodePlan(self)
         positions = {key: index for index, key in enumerate(records)}
 
         def build(items: list[tuple[str, Any]], prefix: str) -> dict[str, Any]:
@@ -281,7 +407,7 @@ class Provenance:
             }
             if len(items) <= 100 and len(canonical(body).encode()) <= MAX_NODE_BYTES:
                 return {
-                    **self._node(body, synthetic, children=self.roots(body["records"])),
+                    **plan.node(body, synthetic, children=self.roots(body["records"])),
                     "prefix": prefix,
                 }
             if len(items) == 1 or depth >= MAX_DEPTH:
@@ -290,7 +416,7 @@ class Provenance:
             for key, value in items:
                 groups[hashlib.sha256(key.encode()).hexdigest()[depth]].append((key, value))
             children = [build(groups[key], prefix + key) for key in sorted(groups)]
-            node = self._node(
+            node = plan.node(
                 {
                     "schema_version": "1",
                     "kind": "branch",
@@ -304,6 +430,7 @@ class Provenance:
             return {**node, "prefix": prefix}
 
         root = build(sorted(records.items()), "")
+        plan.flush()
         return {"format": "sharded-records-v1", "root": root, "count": root["count"]}
 
     def record(self, value: Any, record_id: str) -> Any:
@@ -359,12 +486,13 @@ class Provenance:
         roots = [value["root"] for value in values if isinstance(value, dict)]
         if not roots:
             return []
+        plan = _NodePlan(self)
 
         def build(items: list[dict[str, Any]], depth: int) -> dict[str, Any]:
             if len(items) == 1:
                 return items[0]
             if len(items) <= BRANCH_CHILDREN:
-                return self._node(
+                return plan.node(
                     {
                         "schema_version": "1",
                         "kind": "branch",
@@ -380,7 +508,7 @@ class Provenance:
             for item in items:
                 groups[hashlib.sha256(item["key"].encode()).hexdigest()[depth]].append(item)
             children = [build(groups[key], depth + 1) for key in sorted(groups)]
-            return self._node(
+            return plan.node(
                 {
                     "schema_version": "1",
                     "kind": "branch",
@@ -392,6 +520,7 @@ class Provenance:
             )
 
         root = build(roots, 0)
+        plan.flush()
         return {"format": "sharded-provenance-v1", "root": root, "count": root["count"]}
 
     def compact(self, value: Any, observations: Sequence[Observation], synthetic: bool) -> Any:

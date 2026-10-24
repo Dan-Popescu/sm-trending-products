@@ -14,6 +14,7 @@ from analytical_results import reference_ids
 
 from sm_trending_products.benchmark import _disk_usage, _group_videos, benchmark
 from sm_trending_products.contracts import utc
+from sm_trending_products.pipeline import Pipeline
 
 pytestmark = pytest.mark.integration
 
@@ -41,8 +42,20 @@ def test_failed_object_verification_fails_the_benchmark(pipeline, tmp_path, monk
 
 
 def test_parallel_skewed_workload_compacts_without_changing_the_published_records(
-    pipeline, tmp_path
+    pipeline, tmp_path, monkeypatch
 ):
+    computation_before = []
+    original_assess = Pipeline.assess
+
+    def measure_computation_cache(application, *args, **kwargs):
+        computation_before.append(
+            application.catalog.one("SELECT count(*) AS count FROM feature_product_projections")[
+                "count"
+            ]
+        )
+        return original_assess(application, *args, **kwargs)
+
+    monkeypatch.setattr(Pipeline, "assess", measure_computation_cache)
     report = benchmark(
         pipeline,
         records=80,
@@ -62,13 +75,23 @@ def test_parallel_skewed_workload_compacts_without_changing_the_published_record
     # Compaction changes physical files while the frozen original-delivery audit
     # tree, analytical values and resulting content-addressed publication stay stable.
     assert report["analysis_runs"]["pre"]["cold"] == report["analysis_runs"]["post"]["cold"]
+    assert computation_before == [0, 4, 0, 4]
     for label in ("pre", "post"):
         cold = report["phases"][f"analysis_{label}_cold"]
         warm = report["phases"][f"analysis_{label}_warm"]
         assert cold["cache_before"]["file_bytes"] == 0
         assert cold["storage_traffic"]["download_bytes"] > 0
+        assert cold["cache_regime"] == "cold_files_and_computation"
+        assert cold["compute_cache_before"] == {"feature_projections": 0, "raw_windows": 0}
+        assert cold["analysis_work"]["projection_hits"] == 0
+        assert cold["analysis_work"]["projection_misses"] == 4
         assert warm["storage_traffic"]["download_bytes"] == 0
-        assert warm["storage_traffic"]["cache_hits"] > 0
+        assert warm["storage_traffic"]["get_requests"] == 0
+        assert warm["storage_traffic"]["cache_hits"] == 0
+        assert warm["analysis_work"]["projection_hits"] == 4
+        assert warm["analysis_work"]["projection_misses"] == 0
+        assert warm["analysis_work"]["delta_windows"] == 0
+        assert warm["analysis_work"]["full_windows"] == 0
         assert warm["cache_before"] == cold["cache_usage"]
     assert report["measurements"]["actual_records"] == 80
     assert report["measurements"]["queue_final"] == [{"state": "done", "count": 4}]
@@ -148,7 +171,8 @@ def test_benchmark_measures_actual_evidence_and_preserves_shared_cache(pipeline,
     assert traffic["get_requests"] > 0
     assert traffic["upload_bytes"] > 0
     assert traffic["download_bytes"] > 0
-    assert traffic["cache_hits"] > 0
+    assert measurements["analysis_work"]["projection_hits"] == 4
+    assert measurements["analysis_work"]["projection_misses"] == 8
 
     datasets = pipeline.datasets()
     assert len(datasets) == 2

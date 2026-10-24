@@ -10,12 +10,12 @@ import socket
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
-from .analysis_batches import bounded_product_batches
+from .assessment_service import AssessmentService
 from .catalog import Catalog
 from .collection import SourceCollection
 from .collector import Collector, redact
@@ -316,7 +316,7 @@ class Pipeline:
         synthetic: bool = False,
         policy: AssessmentPolicy | None = None,
     ) -> dict:
-        from .analytics import AssessmentIdentity, assess, normalize_assessments
+        from .analytics import AssessmentIdentity
 
         as_of, policy = utc(as_of or now()), policy or AssessmentPolicy()
         links = [ProductLink.model_validate(item) for item in self.links(as_of, synthetic)]
@@ -328,41 +328,12 @@ class Pipeline:
         identity = AssessmentIdentity.resolve(
             products, links, as_of, synthetic, policy.min_link_confidence
         )
-        resolved_links = tuple(identity.owners.values())
-        rows: list[dict] = []
-        input_scopes = []
+        prepared = AssessmentService(self.history, self.provenance).prepare(
+            products, links, identity, as_of, synthetic, policy
+        )
+        rows, input_scopes = prepared.rows, prepared.input_scopes
+        publication_scope = self.provenance.publication_scope(input_scopes, rows, synthetic)
 
-        def load(entity_keys: set[str]) -> tuple[list[Observation], list[dict]]:
-            return self._observations(
-                as_of,
-                synthetic,
-                entity_keys=entity_keys,
-                since=as_of - timedelta(days=policy.lookback_days),
-            )
-
-        for batch, _entity_keys, (observations, _manifests) in bounded_product_batches(
-            products, resolved_links, self.settings.analysis_product_batch_size, load
-        ):
-            input_scopes.extend(
-                self.provenance.audit_products(observations, identity.owners, synthetic)
-            )
-            rows.extend(
-                self.provenance.compact(
-                    assess(
-                        observations,
-                        batch,
-                        links,
-                        as_of,
-                        synthetic,
-                        policy,
-                        normalize=False,
-                        identity=identity,
-                    ),
-                    observations,
-                    synthetic,
-                )
-            )
-        rows = normalize_assessments(rows, policy)
         body = {
             "schema_version": "2",
             "as_of": as_of,
@@ -370,13 +341,13 @@ class Pipeline:
             "policy": policy.model_dump(mode="json"),
             "rows": rows,
             "datasets": {"location": "sharded_provenance", "scope": "source_deliveries"},
-            "input_provenance": self.provenance.combine(input_scopes, synthetic),
+            "input_provenance": publication_scope.input_provenance,
         }
         run_id = digest(body)
         key = f"assessments/{'synthetic' if synthetic else 'live'}/{run_id}.json"
         self.catalog.stage_derivation(key, ())
         with self.catalog.transaction() as connection:
-            self.provenance.attach(connection, key, self.provenance.roots(body))
+            self.provenance.attach(connection, key, publication_scope.roots)
             connection.execute(
                 "UPDATE derived_publications SET object_sha256=%s,object_bytes=%s "
                 "WHERE object_key=%s",
