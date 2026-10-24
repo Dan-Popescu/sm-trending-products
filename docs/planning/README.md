@@ -38,6 +38,13 @@ Read the domain glossary and relevant architecture decisions before implementing
 
 ## Current repository state
 
+The approved [planned-update continuity work](../implementation/continuity-delivery.md)
+adds independent durable acquisition, source-free normalization and signed private
+rolling releases. Its [delivery map](continuity-delivery.md) tracks issues
+#82–#90; actual pilot acceptance remains separate from controlled engineering
+checks. The [production operations guide](../operations/private-release-controller.md)
+keeps infrastructure identities and credentials outside this public repository.
+
 The initial implementation was merged through [PR #1](https://github.com/Dan-Popescu/sm-trending-products/pull/1), followed by autonomous correctness and acceptance work. The original GitHub permission blocker is resolved. The [publication record](../implementation/publication.md) preserves historical commit mappings; GitHub remains authoritative for current integration and issue state.
 
 T01–T13 now have controlled engineering acceptance mapped in the
