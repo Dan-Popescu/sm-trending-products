@@ -542,12 +542,16 @@ class Scheduler:
                         "priority_inputs": member["inputs"],
                         "planned_interval_hours": member["interval_hours"],
                         "scheduled_at": checked_at.isoformat(),
+                        "original_due_at": member_entity["next_due_at"].isoformat(),
                         "execution_priority": member["priority"]
                         + (1000 if bucket == "exploration_entity" else 0),
                     }
                     entity_reasons.append(member_reason)
                 reason = {
                     **entity_reasons[0],
+                    "original_due_at": min(
+                        member["entity"]["next_due_at"] for member in candidate["members"]
+                    ).isoformat(),
                     "entity_keys": [row["entity_key"] for row in entity_reasons],
                     "entity_reasons": entity_reasons,
                     "request_signature": candidate["request_signature"],
