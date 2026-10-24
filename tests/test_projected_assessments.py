@@ -1,7 +1,6 @@
 """Real published/frozen callers reuse exact, fully audited product features."""
 
 from datetime import timedelta
-from hashlib import sha256
 from time import perf_counter
 
 import pytest
@@ -12,6 +11,7 @@ from test_feature_windows import count_source_pins, rolling_case
 import sm_trending_products.assessment_service as service_module
 from sm_trending_products.analysis_batches import RowBudgetExceeded
 from sm_trending_products.analytics import assess
+from sm_trending_products.cache import _Cache
 from sm_trending_products.contracts import AssessmentPolicy, Capability, now
 from sm_trending_products.evaluation import EvaluationConfig, freeze_decision
 from sm_trending_products.maintenance import Maintenance
@@ -128,7 +128,7 @@ def test_excluded_raw_inputs_invalidate_cached_hit_lineage_and_queue_physical_wi
     first = pipeline.assess(cutoff, True)
     assert first["rows"][0]["coverage"]["observations"] == 0
     saved = pipeline.catalog.one("SELECT * FROM feature_product_windows WHERE product_id='p'")
-    path = pipeline.settings.cache_dir / sha256(saved["descriptor"]["key"].encode()).hexdigest()
+    path = _Cache(pipeline.history).paths(saved["descriptor"]["key"])[0]
     assert path.exists()
     # A feature hit still attaches the ALL-raw-input root, even if its row is empty.
     second = pipeline.assess(cutoff + timedelta(minutes=1), True)
@@ -207,9 +207,7 @@ def test_one_hundred_products_share_cold_evicted_and_new_source_file_parses(pipe
     # Optional local state can disappear across the whole working set. Cold
     # fallback still shares source parsing once per bounded product partition.
     for saved in pipeline.catalog.all("SELECT descriptor FROM feature_product_windows"):
-        (
-            pipeline.settings.cache_dir / sha256(saved["descriptor"]["key"].encode()).hexdigest()
-        ).unlink()
+        (_Cache(pipeline.history).paths(saved["descriptor"]["key"])[0]).unlink()
     pipeline.catalog.execute("DELETE FROM feature_product_projections")
     pins.clear()
     rebuilt = pipeline.assess(later + timedelta(minutes=1), True)

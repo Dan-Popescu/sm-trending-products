@@ -1,0 +1,336 @@
+{
+  "format": "verified-cache-priority-comparison-v1",
+  "issue": 77,
+  "limits": [
+    "Separate run timestamps and reviewed-link identities prevent interpreting stored publication hashes as identical between runs.",
+    "Only the declared homogeneous view_count/creator_id fixture is measured; no price, sales, cost, transcript or media extraction payloads.",
+    "HTTP Moto and the application share the test process. PostgreSQL CPU/RSS, provider latency and total production capacity are not measured.",
+    "Traffic reductions describe this fixture, not a universal 25x runtime or cloud-bill reduction.",
+    "The baseline test passes its full-oracle and budget checks, writes this report, then fails the new six-current-window acceptance assertion as expected.",
+    "The filesystem accounting scan remains O(number of cached files); no persisted accounting counter is introduced."
+  ],
+  "method": "The same native test runs against the full immutable baseline and candidate application checkouts at the same 1,000,000-byte cache budget. No oracle expansion occurs between cold and refresh. After measurements, each complete six-product assessment and expanded references match its own full analytical oracle.",
+  "original_report_sha256": {
+    "baseline": "158344ef29ed9d74c4e9276e4172a6fd4b1a42d7522b16e29af6787ffe394ebf",
+    "candidate": "e48cc7131c91aa762614526ddbe76999f131c987c97ee6c894dda1b3ac4f4754"
+  },
+  "reports": {
+    "baseline": {
+      "budget_bytes": 1000000,
+      "cold": {
+        "cache": {
+          "current": [
+            {
+              "declared_bytes": 107971,
+              "physical_alias_sizes": [],
+              "present": false,
+              "product_id": "p0"
+            },
+            {
+              "declared_bytes": 107085,
+              "physical_alias_sizes": [],
+              "present": false,
+              "product_id": "p1"
+            },
+            {
+              "declared_bytes": 107055,
+              "physical_alias_sizes": [],
+              "present": false,
+              "product_id": "p2"
+            },
+            {
+              "declared_bytes": 107232,
+              "physical_alias_sizes": [
+                107232
+              ],
+              "present": true,
+              "product_id": "p3"
+            },
+            {
+              "declared_bytes": 106761,
+              "physical_alias_sizes": [
+                106761
+              ],
+              "present": true,
+              "product_id": "p4"
+            },
+            {
+              "declared_bytes": 107467,
+              "physical_alias_sizes": [
+                107467
+              ],
+              "present": true,
+              "product_id": "p5"
+            }
+          ],
+          "current_present": 3,
+          "current_total_bytes": 643571,
+          "obsolete_file_bytes": 0,
+          "obsolete_files": 0,
+          "payload_inode_bytes": 988738
+        },
+        "metrics": {
+          "cache_hits": 0,
+          "download_bytes": 1812937,
+          "get_requests": 144,
+          "head_requests": 0,
+          "http_attempts": 386,
+          "put_requests": 242,
+          "upload_bytes": 1080165
+        },
+        "selected_observations": 14400,
+        "work": {
+          "delta_windows": 0,
+          "duplicate_rebuild_windows": 0,
+          "full_windows": 6,
+          "projection_hits": 0,
+          "projection_misses": 6
+        }
+      },
+      "complete_scalar_rank_reference_oracle": true,
+      "historical_imports": 144,
+      "lookback_days": 30,
+      "products": 6,
+      "refresh": {
+        "cache": {
+          "current": [
+            {
+              "declared_bytes": 108804,
+              "physical_alias_sizes": [],
+              "present": false,
+              "product_id": "p0"
+            },
+            {
+              "declared_bytes": 107875,
+              "physical_alias_sizes": [],
+              "present": false,
+              "product_id": "p1"
+            },
+            {
+              "declared_bytes": 107857,
+              "physical_alias_sizes": [],
+              "present": false,
+              "product_id": "p2"
+            },
+            {
+              "declared_bytes": 108025,
+              "physical_alias_sizes": [
+                108025
+              ],
+              "present": true,
+              "product_id": "p3"
+            },
+            {
+              "declared_bytes": 107552,
+              "physical_alias_sizes": [
+                107552
+              ],
+              "present": true,
+              "product_id": "p4"
+            },
+            {
+              "declared_bytes": 108261,
+              "physical_alias_sizes": [
+                108261
+              ],
+              "present": true,
+              "product_id": "p5"
+            }
+          ],
+          "current_present": 3,
+          "current_total_bytes": 648374,
+          "obsolete_file_bytes": 0,
+          "obsolete_files": 0,
+          "payload_inode_bytes": 994215
+        },
+        "metrics": {
+          "cache_hits": 0,
+          "download_bytes": 1869492,
+          "get_requests": 150,
+          "head_requests": 0,
+          "http_attempts": 170,
+          "put_requests": 20,
+          "upload_bytes": 78363
+        },
+        "selected_observations": 14520,
+        "work": {
+          "delta_windows": 0,
+          "duplicate_rebuild_windows": 0,
+          "full_windows": 6,
+          "projection_hits": 0,
+          "projection_misses": 6
+        }
+      },
+      "refresh_imports": 6,
+      "scope": "single-counter native SQL/HTTP Moto fixture; no throughput or capacity claim",
+      "seed_samples_per_video": 120,
+      "source_sha": "3d022340071f707727f4429a697a1ba38cf18853",
+      "videos_per_product": 20
+    },
+    "candidate": {
+      "budget_bytes": 1000000,
+      "cold": {
+        "cache": {
+          "current": [
+            {
+              "declared_bytes": 107975,
+              "physical_alias_sizes": [
+                107975
+              ],
+              "present": true,
+              "product_id": "p0"
+            },
+            {
+              "declared_bytes": 107080,
+              "physical_alias_sizes": [
+                107080
+              ],
+              "present": true,
+              "product_id": "p1"
+            },
+            {
+              "declared_bytes": 107057,
+              "physical_alias_sizes": [
+                107057
+              ],
+              "present": true,
+              "product_id": "p2"
+            },
+            {
+              "declared_bytes": 107227,
+              "physical_alias_sizes": [
+                107227
+              ],
+              "present": true,
+              "product_id": "p3"
+            },
+            {
+              "declared_bytes": 106765,
+              "physical_alias_sizes": [
+                106765
+              ],
+              "present": true,
+              "product_id": "p4"
+            },
+            {
+              "declared_bytes": 107469,
+              "physical_alias_sizes": [
+                107469
+              ],
+              "present": true,
+              "product_id": "p5"
+            }
+          ],
+          "current_present": 6,
+          "current_total_bytes": 643573,
+          "obsolete_file_bytes": 0,
+          "obsolete_files": 0,
+          "payload_inode_bytes": 996086
+        },
+        "metrics": {
+          "cache_hits": 0,
+          "download_bytes": 1812928,
+          "get_requests": 144,
+          "head_requests": 0,
+          "http_attempts": 386,
+          "put_requests": 242,
+          "upload_bytes": 1080165
+        },
+        "selected_observations": 14400,
+        "work": {
+          "delta_windows": 0,
+          "duplicate_rebuild_windows": 0,
+          "full_windows": 6,
+          "projection_hits": 0,
+          "projection_misses": 6
+        }
+      },
+      "complete_scalar_rank_reference_oracle": true,
+      "historical_imports": 144,
+      "lookback_days": 30,
+      "products": 6,
+      "refresh": {
+        "cache": {
+          "current": [
+            {
+              "declared_bytes": 108806,
+              "physical_alias_sizes": [
+                108806
+              ],
+              "present": true,
+              "product_id": "p0"
+            },
+            {
+              "declared_bytes": 107875,
+              "physical_alias_sizes": [
+                107875
+              ],
+              "present": true,
+              "product_id": "p1"
+            },
+            {
+              "declared_bytes": 107858,
+              "physical_alias_sizes": [
+                107858
+              ],
+              "present": true,
+              "product_id": "p2"
+            },
+            {
+              "declared_bytes": 108016,
+              "physical_alias_sizes": [
+                108016
+              ],
+              "present": true,
+              "product_id": "p3"
+            },
+            {
+              "declared_bytes": 107557,
+              "physical_alias_sizes": [
+                107557
+              ],
+              "present": true,
+              "product_id": "p4"
+            },
+            {
+              "declared_bytes": 108259,
+              "physical_alias_sizes": [
+                108259
+              ],
+              "present": true,
+              "product_id": "p5"
+            }
+          ],
+          "current_present": 6,
+          "current_total_bytes": 648371,
+          "obsolete_file_bytes": 0,
+          "obsolete_files": 0,
+          "payload_inode_bytes": 994507
+        },
+        "metrics": {
+          "cache_hits": 6,
+          "download_bytes": 56554,
+          "get_requests": 6,
+          "head_requests": 0,
+          "http_attempts": 26,
+          "put_requests": 20,
+          "upload_bytes": 78363
+        },
+        "selected_observations": 14520,
+        "work": {
+          "delta_windows": 6,
+          "duplicate_rebuild_windows": 0,
+          "full_windows": 0,
+          "projection_hits": 0,
+          "projection_misses": 6
+        }
+      },
+      "refresh_imports": 6,
+      "scope": "single-counter native SQL/HTTP Moto fixture; no throughput or capacity claim",
+      "seed_samples_per_video": 120,
+      "source_sha": "e85b7f3007db7f563e0bef044a8fc7cb3a1c6e71",
+      "videos_per_product": 20
+    }
+  },
+  "test_source_sha256": "52a18eb0fb17ea471c678948644601768f93ac9b1c34f4836d3238fc8e6a2537"
+}

@@ -12,13 +12,15 @@ import os
 import stat
 import threading
 from collections import OrderedDict
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO
 from uuid import uuid4
+
+from psycopg.errors import DeadlockDetected, LockNotAvailable, QueryCanceled
 
 if TYPE_CHECKING:
     from .history import History
@@ -33,6 +35,7 @@ class CacheCapacityError(ValueError):
 _SESSION_MAX_BYTES = 256 * 1024 * 1024
 _SESSION_MAX_PINS = 64
 _Identity = tuple[int, int, int, int, int]
+_LOCAL_PREFIX = "window-"
 
 
 def _identity(path: Path) -> _Identity:
@@ -99,6 +102,21 @@ class _Cache:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             yield
 
+    def paths(self, key: str) -> tuple[Path, ...]:
+        """Keep the original opaque name readable during a cache upgrade."""
+        name = hashlib.sha256(key.encode()).hexdigest()
+        legacy = self.root / name
+        return (
+            (self.root / (_LOCAL_PREFIX + name), legacy)
+            if key.startswith("local-feature-state/")
+            else (legacy,)
+        )
+
+    def discard(self, key: str) -> None:
+        with self.global_lock():
+            for path in self.paths(key):
+                path.unlink(missing_ok=True)
+
     def _sweep(self) -> int:
         """Under the global lock, reclaim dead holders and count reservations.
 
@@ -137,45 +155,44 @@ class _Cache:
                 record.unlink(missing_ok=True)
         return reserved
 
-    def _inodes(self) -> dict[tuple[int, int], int]:
+    def _snapshot(
+        self,
+    ) -> tuple[dict[tuple[int, int], int], set[tuple[int, int]], list[tuple[Path, os.stat_result]]]:
+        """Stat each payload once while the shared name/accounting lock is held."""
         sizes: dict[tuple[int, int], int] = {}
-        paths = [path for path in self.root.iterdir() if not path.name.startswith(".")]
-        paths.extend(self.pins.iterdir())
-        for path in paths:
-            if _regular(path):
-                info = path.stat(follow_symlinks=False)
-                sizes[(info.st_dev, info.st_ino)] = info.st_size
-        return sizes
+        pinned: set[tuple[int, int]] = set()
+        candidates: list[tuple[Path, os.stat_result]] = []
+        for directory in (self.root, self.pins):
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if directory == self.root and entry.name.startswith("."):
+                        continue
+                    info = entry.stat(follow_symlinks=False)
+                    if stat.S_ISREG(info.st_mode):
+                        inode = info.st_dev, info.st_ino
+                        sizes[inode] = info.st_size
+                        if directory == self.pins:
+                            pinned.add(inode)
+                        else:
+                            candidates.append((Path(entry.path), info))
+        return sizes, pinned, candidates
 
     def _make_room(self, amount: int, *, keep: Path | None = None) -> None:
         reserved = self._sweep()
-        sizes = self._inodes()
+        sizes, pinned, candidates = self._snapshot()
         used = sum(sizes.values())
         if used + reserved + amount <= self.limit:
             return
-        pinned = {
-            (info.st_dev, info.st_ino)
-            for path in self.pins.iterdir()
-            if _regular(path)
-            for info in (path.stat(follow_symlinks=False),)
-        }
-        candidates = sorted(
-            (
-                path
-                for path in self.root.iterdir()
-                if not path.name.startswith(".") and _regular(path)
-            ),
-            key=lambda path: path.stat(follow_symlinks=False).st_mtime_ns,
+        candidates.sort(
+            key=lambda item: (item[0].name.startswith(_LOCAL_PREFIX), item[1].st_mtime_ns)
         )
         names: dict[tuple[int, int], int] = {}
-        for path in candidates:
-            info = path.stat(follow_symlinks=False)
+        for _path, info in candidates:
             inode = (info.st_dev, info.st_ino)
             names[inode] = names.get(inode, 0) + 1
-        for path in candidates:
+        for path, info in candidates:
             if used + reserved + amount <= self.limit:
                 return
-            info = path.stat(follow_symlinks=False)
             inode = (info.st_dev, info.st_ino)
             if path != keep and inode not in pinned:
                 path.unlink(missing_ok=True)
@@ -257,14 +274,36 @@ class _Cache:
         key, expected = obj["key"], obj["sha256"]
         if not key.startswith("local-feature-state/") or obj.get("local_only") is not True:
             raise ValueError("Not a local projection descriptor")
-        local = self.root / hashlib.sha256(key.encode()).hexdigest()
-        self._reconcile_budget(local)
-        return self._try_cached(local, expected)
+        local, legacy = self.paths(key)
+        self._reconcile_budget(local if _regular(local) else legacy)
+        hit = self._try_cached(local, expected)
+        if hit is not None:
+            return hit
+        hit = self._try_cached(legacy, expected)
+        if hit is not None:
+            # Never recreate a name removed by retirement. An existing reader
+            # may finish on its pin even when its original name has disappeared.
+            try:
+                # Retirement also removes names under this lock. Promotion is
+                # only a rename of a still-present, verified inode, so it need
+                # not wait behind a distinct cold fill on the same stripe.
+                with self.global_lock():
+                    if (
+                        not local.exists()
+                        and _regular(legacy)
+                        and legacy.stat().st_ino == hit[1].stat().st_ino
+                    ):
+                        legacy.rename(local)
+                        return local, hit[1], hit[2]
+            except BaseException:
+                self.release(hit[1], hit[2])
+                raise
+        return hit
 
     def admit_local(
         self, body: bytes, descriptor: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
-        """Use the ordinary global reservations, budget and immutable object names."""
+        """Admit under the caller's object stripe and SQL retirement fence."""
         checksum = hashlib.sha256(body).hexdigest()
         key = f"local-feature-state/{checksum}.parquet"
         obj = descriptor or {"key": key, "sha256": checksum, "bytes": len(body), "local_only": True}
@@ -278,37 +317,36 @@ class _Cache:
         key = obj["key"]
         if len(body) > self.limit:
             return None
-        local = self.root / hashlib.sha256(key.encode()).hexdigest()
+        local = self.paths(key)[0]
         self._reconcile_budget(local)
-        with self.object_lock(key):
-            hit = self._try_cached(local, checksum)
-            if hit is not None:
-                self.release(hit[1], hit[2])
-                return obj
-            record = self.downloads / (uuid4().hex + ".reserve")
-            temporary = record.with_suffix(".part")
-            reservation: BinaryIO | None = None
-            try:
+        hit = self._try_cached(local, checksum)
+        if hit is not None:
+            self.release(hit[1], hit[2])
+            return obj
+        record = self.downloads / (uuid4().hex + ".reserve")
+        temporary = record.with_suffix(".part")
+        reservation: BinaryIO | None = None
+        try:
+            with self.global_lock():
+                self._make_room(len(body))
+                reservation = _open(record)
+                fcntl.flock(reservation.fileno(), fcntl.LOCK_EX)
+                reservation.write(str(len(body)).encode())
+                reservation.flush()
+            with _open(temporary) as output:
+                output.write(body)
+                output.flush()
+                os.fsync(output.fileno())
+            with self.global_lock():
+                os.replace(temporary, local)
+                record.unlink()
+            return obj
+        finally:
+            if reservation is not None:
                 with self.global_lock():
-                    self._make_room(len(body))
-                    reservation = _open(record)
-                    fcntl.flock(reservation.fileno(), fcntl.LOCK_EX)
-                    reservation.write(str(len(body)).encode())
-                    reservation.flush()
-                with _open(temporary) as output:
-                    output.write(body)
-                    output.flush()
-                    os.fsync(output.fileno())
-                with self.global_lock():
-                    os.replace(temporary, local)
-                    record.unlink()
-                return obj
-            finally:
-                if reservation is not None:
-                    with self.global_lock():
-                        temporary.unlink(missing_ok=True)
-                        record.unlink(missing_ok=True)
-                    reservation.close()
+                    temporary.unlink(missing_ok=True)
+                    record.unlink(missing_ok=True)
+                reservation.close()
 
     def obtain(self, obj: dict[str, Any], *, refresh: bool = True) -> tuple[Path, Path, BinaryIO]:
         self.verified_identity = None
@@ -555,10 +593,29 @@ def evict_cache(history: History, keep: Path) -> None:
 
 
 @contextmanager
-def cache_object_lock(history: History, key: str) -> Iterator[None]:
-    """Fence remote deletion/cache invalidation against an in-flight fill."""
-    with _Cache(history).object_lock(key):
-        yield
+def cache_object_lock(history: History, key: str) -> Iterator[Callable[[], None]]:
+    """Fence deletion against fills; the yielded operation removes every alias."""
+    cache = _Cache(history)
+    with cache.object_lock(key):
+        yield lambda: cache.discard(key)
+
+
+def discard_retired_local(history: History, key: str) -> None:
+    """Reclaim an obsolete version; durable retirement remains independently retryable."""
+    if not key.startswith("local-feature-state/"):
+        return
+    try:
+        with history.catalog.transaction() as connection:
+            history.catalog.guard_retention(connection)
+            with cache_object_lock(history, key) as discard:
+                retired = connection.execute(
+                    "SELECT 1 FROM retention_objects WHERE object_key=%s AND local_only", (key,)
+                ).fetchone()
+                if retired is not None:
+                    discard()
+    except (OSError, ValueError, DeadlockDetected, LockNotAvailable, QueryCanceled):
+        # The existing outbox is still authoritative, including cleanup failure.
+        return
 
 
 def local_cache_descriptor(body: bytes, identity: str) -> dict[str, Any]:
@@ -588,12 +645,16 @@ def store_local_cached(
         )
         with transaction as current:
             history.catalog.guard_retention(current)
-            retired = current.execute(
-                "SELECT 1 FROM retention_objects WHERE object_key=%s", (obj["key"],)
-            ).fetchone()
-            if retired is not None:
-                return None
-            return _Cache(history).admit_local(body, obj)
+            cache = _Cache(history)
+            with cache.object_lock(obj["key"]):
+                # Check after acquiring the stripe: an admission that waited
+                # behind retirement must not resurrect the removed original.
+                retired = current.execute(
+                    "SELECT 1 FROM retention_objects WHERE object_key=%s", (obj["key"],)
+                ).fetchone()
+                if retired is not None:
+                    return None
+                return cache.admit_local(body, obj)
     except (CacheCapacityError, OSError, ValueError):
         return None
 

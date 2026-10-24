@@ -10,7 +10,7 @@ from test_feature_projection import video
 
 import sm_trending_products.history as history_module
 from sm_trending_products.analytics import assess
-from sm_trending_products.cache import pin_local_cached, store_local_cached
+from sm_trending_products.cache import _Cache, pin_local_cached, store_local_cached
 from sm_trending_products.contracts import AssessmentPolicy, Product, ProductLink, digest, now
 from sm_trending_products.feature_projection import FeatureProjection, ProjectionScope
 from sm_trending_products.maintenance import Maintenance
@@ -133,7 +133,7 @@ def test_eviction_corruption_ambiguous_delivery_and_compaction_rebuild_exactly(
 ):
     cutoff, _product, _links, scope, cache, _window, _audit = rolling_case(pipeline)
     saved = pipeline.catalog.one("SELECT * FROM feature_product_windows WHERE product_id='p'")
-    path = pipeline.settings.cache_dir / sha256(saved["descriptor"]["key"].encode()).hexdigest()
+    path = _Cache(pipeline.history).paths(saved["descriptor"]["key"])[0]
     if failure == "evicted":
         path.unlink()
     elif failure == "corrupt":
@@ -193,7 +193,7 @@ def test_retirement_physically_purges_local_state_without_provider_operations(
         "SELECT descriptor FROM feature_product_windows WHERE product_id='p'"
     )
     descriptor = saved["descriptor"]
-    path = pipeline.settings.cache_dir / sha256(descriptor["key"].encode()).hexdigest()
+    path = _Cache(pipeline.history).paths(descriptor["key"])[0]
     body = path.read_bytes()
     pipeline.catalog.execute(
         "UPDATE derived_publications SET state='invalidated' WHERE object_key=%s", (audit,)
