@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import gzip
 import hashlib
 import io
@@ -1046,7 +1045,7 @@ class Maintenance:
             try:
                 if budget:
                     budget.check()
-                with cache_object_lock(self.history, key):
+                with cache_object_lock(self.history, key) as discard:
                     if not item["local_only"]:
                         if versioned:
                             self._delete_object_versions(key, budget=budget)
@@ -1057,13 +1056,7 @@ class Maintenance:
                                 self.history.metrics.get("delete_requests", 0) + 1
                             )
                             self.history.client.delete_object(Bucket=self.history.bucket, Key=key)
-                    with (self.pipeline.settings.cache_dir / ".cache.lock").open("a") as lock:
-                        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-                        cached = (
-                            self.pipeline.settings.cache_dir
-                            / hashlib.sha256(key.encode()).hexdigest()
-                        )
-                        cached.unlink(missing_ok=True)
+                    discard()
             except _BudgetExhausted as error:
                 result["stop_reason"] = str(error)
                 break

@@ -22,7 +22,12 @@ from psycopg.types.json import Jsonb
 from pydantic_core import to_json
 
 from .analysis_batches import RowBudgetExceeded
-from .cache import local_cache_descriptor, pin_local_cached, store_local_cached
+from .cache import (
+    discard_retired_local,
+    local_cache_descriptor,
+    pin_local_cached,
+    store_local_cached,
+)
 from .catalog import Catalog
 from .contracts import AssessmentPolicy, Observation, Product, canonical, digest, utc
 from .history import History
@@ -744,14 +749,25 @@ class FeatureProjection:
             ).fetchone()
             if root is None:
                 return False
+            previous = connection.execute(
+                "SELECT descriptor FROM feature_product_windows WHERE product_id=%s FOR UPDATE",
+                (scope.product.product_id,),
+            ).fetchone()
+            # A concurrent first insert can win after the empty lookup. Decline
+            # that optional cache write rather than replace an unlocked version.
+            conflict = (
+                "DO UPDATE SET context_sha256=EXCLUDED.context_sha256,"
+                "computed_at=EXCLUDED.computed_at,"
+                "covered_object_ids=EXCLUDED.covered_object_ids,covered_sha256=EXCLUDED.covered_sha256,"
+                "descriptor=EXCLUDED.descriptor,audit_root=EXCLUDED.audit_root,state='staged' "
+                "WHERE feature_product_windows.computed_at<=EXCLUDED.computed_at"
+                if previous
+                else "DO NOTHING"
+            )
             staged = connection.execute(
                 "INSERT INTO feature_product_windows(product_id,context_sha256,computed_at,"
                 "covered_object_ids,covered_sha256,descriptor,audit_root,state) "
-                "VALUES(%s,%s,%s,%s,%s,%s,%s,'staged') ON CONFLICT(product_id) DO UPDATE SET "
-                "context_sha256=EXCLUDED.context_sha256,computed_at=EXCLUDED.computed_at,"
-                "covered_object_ids=EXCLUDED.covered_object_ids,covered_sha256=EXCLUDED.covered_sha256,"
-                "descriptor=EXCLUDED.descriptor,audit_root=EXCLUDED.audit_root,state='staged' "
-                "WHERE feature_product_windows.computed_at<=EXCLUDED.computed_at",
+                "VALUES(%s,%s,%s,%s,%s,%s,%s,'staged') ON CONFLICT(product_id) " + conflict,
                 (
                     scope.product.product_id,
                     scope.window_context(policy),
@@ -764,6 +780,10 @@ class FeatureProjection:
             )
             if staged.rowcount != 1:
                 return False
+        # Capture the version actually replaced while holding its row lock.
+        # The stage and its retirement tombstone must commit before unlinking.
+        if previous and previous["descriptor"]["key"] != descriptor["key"]:
+            discard_retired_local(history, previous["descriptor"]["key"])
         with self.catalog.transaction() as connection:
             self.catalog.guard_namespace(connection, scope.product.synthetic)
             current = connection.execute(

@@ -6,6 +6,30 @@ inode once and includes the full reserved size of every in-flight download.
 Filesystem metadata/allocation overhead and analytical spill directories are
 separate operational disk headroom; this value is not a whole-volume quota.
 
+Local rolling windows have soft eviction priority over downloaded source and
+provenance files, with LRU ordering within each class. They remain disposable:
+when sources, active pins or new windows need the space, unpinned local windows
+can also be evicted. There is no reserved second budget or global corpus pin.
+New local names use `window-<SHA256 of object key>`; downloaded objects retain the
+original opaque name. A verified legacy local name is promoted under the existing
+accounting lock. Physical retirement removes both possible names; active
+readers retain their counted hardlink until they finish. Restart the whole group
+sharing this cache for this update: older maintenance cannot purge the new names.
+
+Replacing a window captures its previous descriptor under its SQL row lock. Only
+an accepted, committed stage can reclaim that older local name, and only after
+its existing retirement tombstone is visible. A competing first insert may
+decline its optional cache write instead of replacing an unlocked version. The
+retirement outbox remains pending and independently retryable after this early
+cleanup; filesystem errors do not remove its durable work. Local admission checks
+the tombstone after obtaining the same object stripe, so a waiting writer cannot
+recreate bytes after cleanup. A rejected/rolled-back stage leaves the current
+window intact. These rules preserve full source rebuilds on every cache miss.
+
+Admission collects one `scandir`/stat snapshot of payloads and pins under the
+accounting lock, reusing that snapshot for inode accounting and eviction. It
+still scans O(number of cache files); it introduces no persisted size counter.
+
 Workers sharing a root must use the same configured budget. When reducing it,
 stop new work in the old group and restart with the new value. The first cache
 admission in each application instance reconciles retained payloads under the

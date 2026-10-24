@@ -4,6 +4,8 @@ import time
 
 import pytest
 
+from sm_trending_products.cache import _Cache
+
 
 def assert_bounded_cursor(connection, kind, branch, key, positions):
     from sm_trending_products.invalidation import SUCCESSORS
@@ -622,9 +624,8 @@ def test_retention_continuation_removes_real_files_and_sql_payload_and_restores_
     window = pipeline.catalog.one(
         "SELECT descriptor FROM feature_product_windows WHERE product_id='p'"
     )["descriptor"]
-    from hashlib import sha256
 
-    local = pipeline.settings.cache_dir / sha256(window["key"].encode()).hexdigest()
+    local = _Cache(pipeline.history).paths(window["key"])[0]
     assert local.exists()
     pipeline.catalog.execute(
         "UPDATE feature_product_projections SET payload=payload||'{\"private_price\":99.99}'::jsonb"
