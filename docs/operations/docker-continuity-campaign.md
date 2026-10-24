@@ -82,6 +82,25 @@ cleanup removes only its randomly named Compose project and fixture volumes; the
 fixture registry and images remain available for inspection. Without the manifest
 environment variable the tests skip, so ordinary unit runs need no Docker daemon.
 
+Named phase checkpoints also take bounded read-only resource samples from each
+owned running capture container. Each sample records its container ID and Docker
+start timestamp, configured CPU/RAM limits, cgroup v2 `cpu.stat` usage,
+`memory.current`, `memory.peak`, `memory.max` and `cpu.max`. CPU is a cumulative
+microsecond counter for that runtime epoch; memory peak is the cgroup's reported
+lifetime peak at that instant, including the small probe process. Compare samples
+only within the same container ID and start timestamp, including across the
+restart scenario. These are sampled container counters, not host RSS, continuous
+profiling or universal production peaks.
+
+Disk samples report actual capture-spool file count/bytes and filesystem available
+bytes. Traversal stops after 1,000 entries and explicitly marks a truncated lower
+bound. The volume is shared between capture workers, so its bytes are not assigned
+exclusively to either worker, and a cleaned spool snapshot is not its lifetime
+peak. Every exec probe has a five-second deadline. Missing counters remain null
+with explicit measurement gaps; an unavailable cgroup v2 CPU/RAM probe falls back
+to a bounded Docker-stats snapshot with its different snapshot semantics. Absent
+or stopped containers receive explicit states without fabricated zero readings.
+
 These observations establish the tested synthetic source behavior. They do not
 establish real TikTok recoverability, production source credentials, remote
 storage durability, or an unconditional guarantee for responses interrupted

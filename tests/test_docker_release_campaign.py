@@ -6,6 +6,7 @@ scripts/build-continuity-fixtures.py. No production credentials or host are used
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import shutil
@@ -33,6 +34,75 @@ from sm_trending_products.release_host import CatalogWorkerGate, ComposeReleaseH
 from sm_trending_products.settings import Settings
 
 pytestmark = pytest.mark.integration
+
+
+def container_resource_probe():
+    root = Path("/sys/fs/cgroup")
+    body = {
+        "sample_unix_seconds": time.time(),
+        "cgroup_v2": (root / "cgroup.controllers").is_file(),
+        "gaps": [],
+    }
+
+    def read(name):
+        try:
+            return (root / name).read_text().strip()
+        except OSError as error:
+            body["gaps"].append(name + ":" + type(error).__name__)
+            return None
+
+    cpu = read("cpu.stat")
+    body["cpu_usage_usec"] = (
+        dict(line.split() for line in cpu.splitlines()).get("usage_usec") if cpu else None
+    )
+    if body["cpu_usage_usec"] is not None:
+        body["cpu_usage_usec"] = int(body["cpu_usage_usec"])
+    for name, key in [
+        ("memory.current", "memory_current_bytes"),
+        ("memory.peak", "memory_peak_bytes"),
+        ("memory.max", "memory_max_bytes"),
+    ]:
+        value = read(name)
+        body[key] = int(value) if value and value.isdigit() else value
+    body["cpu_max"] = read("cpu.max")
+    spool = Path("/var/lib/sm-trends/spool")
+    body["spool"] = {
+        "scope": "shared_capture_spool_volume",
+        "file_count": None,
+        "file_bytes": None,
+        "truncated": False,
+        "entry_limit": 1000,
+    }
+    try:
+        usage = os.statvfs(spool)
+        body["spool"]["filesystem_available_bytes"] = usage.f_bavail * usage.f_frsize
+        body["spool"]["filesystem_total_bytes"] = usage.f_blocks * usage.f_frsize
+        count, size, visited = 0, 0, 0
+        pending = [str(spool)]
+        while pending:
+            with os.scandir(pending.pop()) as entries:
+                for entry in entries:
+                    visited += 1
+                    if visited > 1000:
+                        body["spool"]["truncated"] = True
+                        pending.clear()
+                        break
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+                    elif entry.is_file(follow_symlinks=False):
+                        count += 1
+                        size += entry.stat(follow_symlinks=False).st_size
+        body["spool"].update(file_count=count, file_bytes=size)
+    except OSError as error:
+        body["gaps"].append("spool:" + type(error).__name__)
+    print(json.dumps(body))
+
+
+RESOURCE_PROBE = (
+    "import json,os,time\nfrom pathlib import Path\n"
+    + inspect.getsource(container_resource_probe)
+    + "\ncontainer_resource_probe()"
+)
 
 
 def docker(*arguments, timeout=60, environment=None):
@@ -124,6 +194,7 @@ class Campaign:
         self.source = OneShotSource()
         self.pipeline = None
         self.images = manifest["images"]
+        self.resource_samples = []
         self.blue = self.release("blue")
         self.green = self.release("green")
         self.host = ComposeReleaseHost(
@@ -265,6 +336,7 @@ class Campaign:
         self.host.prepare(self.project, self.blue.manifest, "blue")
         self.host.start(self.project, self.blue.manifest, "blue", "fixture-blue")
         self.worker("fixture-blue", "running")
+        self.sample_resources("predecessor_started")
 
     def worker(self, worker_id, state=None, *, after_generation=0):
         return eventually(
@@ -332,7 +404,59 @@ class Campaign:
         )
         return planned
 
+    def sample_resources(self, phase):
+        """Bounded read-only snapshots of owned capture containers, never host RSS."""
+        for slot in ("blue", "green"):
+            sample = {"phase": phase, "slot": slot, "observed_unix_seconds": time.time()}
+            container = self.host._container(slot)
+            if not container:
+                self.resource_samples.append({**sample, "status": "absent"})
+                continue
+            identity = json.loads(docker("inspect", container, timeout=5))[0]
+            assert identity["Config"]["Image"] == self.images[slot]
+            assert (
+                identity["Config"]["Labels"]["io.sm-trends.worker-id"]
+                == self.host.slot_workers[slot]
+            )
+            sample.update(
+                container_id=container,
+                container_started_at=identity["State"]["StartedAt"],
+                configured_limits={
+                    "nano_cpus": identity["HostConfig"]["NanoCpus"],
+                    "memory_bytes": identity["HostConfig"]["Memory"],
+                },
+            )
+            if not identity["State"]["Running"]:
+                self.resource_samples.append({**sample, "status": "stopped"})
+                continue
+            try:
+                measurement = json.loads(
+                    docker("exec", container, "python", "-c", RESOURCE_PROBE, timeout=5)
+                )
+                sample.update(status="sampled", measurement=measurement)
+                if (
+                    not measurement["cgroup_v2"]
+                    or measurement["cpu_usage_usec"] is None
+                    or measurement["memory_current_bytes"] is None
+                ):
+                    stats = json.loads(
+                        docker(
+                            "stats", "--no-stream", "--format", "{{json .}}", container, timeout=5
+                        )
+                    )
+                    sample["docker_stats_snapshot"] = {
+                        key: stats.get(key)
+                        for key in ("CPUPerc", "MemUsage", "MemPerc", "BlockIO", "PIDs")
+                    }
+                    measurement["gaps"].append(
+                        "cgroup_v2_counters_unavailable_docker_stats_snapshot_only"
+                    )
+            except (AssertionError, subprocess.SubprocessError, json.JSONDecodeError) as error:
+                sample.update(status="unavailable", measurement_gap=type(error).__name__)
+            self.resource_samples.append(sample)
+
     def record(self, scenario, extra=None):
+        self.sample_resources("scenario_completed")
         obligations = self.pipeline.catalog.one(
             "SELECT count(*) AS total,count(*) FILTER(WHERE durable_at IS NOT NULL) AS durable,"
             "count(*) FILTER(WHERE captured_at>deadline_at OR "
@@ -356,6 +480,19 @@ class Campaign:
                         "production_acceptance": False,
                         "requests_per_one_shot_page": self.source.requests,
                         "obligations": obligations,
+                        "resource_samples": self.resource_samples,
+                        "resource_semantics": {
+                            "cpu": "Cumulative cgroup usage_usec for the sampled runtime epoch; "
+                            "not percent or a universal peak",
+                            "memory": "cgroup current and lifetime peak at the sample; "
+                            "includes the bounded probe process",
+                            "disk": "Shared capture spool snapshot, entry cap and filesystem "
+                            "available bytes; not a lifetime peak or per-worker attribution",
+                            "epochs": "Compare counters only for the same container_id "
+                            "and container_started_at",
+                            "missing": "Unavailable counters remain null or explicit gaps; "
+                            "absent/stopped containers have no fabricated measurements",
+                        },
                         **(extra or {}),
                     },
                     indent=2,
@@ -457,12 +594,14 @@ def test_two_images_preserve_one_shot_inflight_capture_through_controller_crash_
     result = campaign.controller().apply(planned["release_id"])
     assert result["reason"] == "capture_proof_missing"
     assert campaign.host.healthy(campaign.project, campaign.blue.manifest, "blue", "fixture-blue")
+    campaign.sample_resources("replacement_started_without_capture_proof")
     qualification = campaign.enqueue("replacement-proof")
     campaign.done(qualification)
     result = campaign.controller().apply(planned["release_id"])
     assert result["status"] == "blocked" and result["reason"] == "predecessor_busy"
     assert campaign.pipeline.worker_control.status("fixture-blue")["state"] == "draining"
     assert campaign.host.healthy(campaign.project, campaign.blue.manifest, "blue", "fixture-blue")
+    campaign.sample_resources("predecessor_draining_with_capture_inflight")
     campaign.source.release.set()
     campaign.done(held)
     campaign.worker("fixture-blue", "drained")
@@ -500,6 +639,7 @@ def test_unqualified_actual_candidate_rolls_back_without_stopping_the_predecesso
         campaign.project, campaign.green.manifest, "green", planned["candidate_worker_id"]
     )
     campaign.done(campaign.enqueue("during-candidate-drain"))
+    campaign.sample_resources("candidate_draining_with_capture_inflight")
     campaign.source.release.set()
     campaign.done(held)
     campaign.worker(planned["candidate_worker_id"], "drained")
@@ -528,6 +668,7 @@ def test_compose_restart_retains_pause_and_fences_previous_generation(campaign):
     campaign.worker("fixture-blue", "drained")
     campaign.compose("restart", "--timeout", "-1", "worker")
     current = campaign.worker("fixture-blue", "drained", after_generation=old["generation"])
+    campaign.sample_resources("paused_after_restart")
     task = campaign.enqueue("after-paused-restart")
     time.sleep(0.2)
     assert campaign.source.requests == {}
