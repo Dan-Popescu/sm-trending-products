@@ -134,14 +134,22 @@ class WorkerControl:
         No running worker is acknowledged or stopped here. The admission lock
         prevents a legacy claim racing the zero-lease check; a delayed startup
         inherits the durable pause when it eventually registers.
+        Repeating after an interrupted cancellation accepts only the same
+        already-stopped pause with zero leases; running identities are untouched.
         """
         if not worker_id or len(worker_id) > 200:
             raise ValueError("Invalid worker identity")
         with self.catalog.transaction() as connection:
-            if self._lock(connection, worker_id) is not None:
-                return False
+            row = self._lock(connection, worker_id)
             if self._leases(connection, worker_id)["owned_leases"]:
                 return False
+            if row is not None:
+                return bool(
+                    row["synthetic"] == synthetic
+                    and row["state"] == "stopped"
+                    and row["drain_requested_at"] is not None
+                    and row["stopped_at"] is not None
+                )
             connection.execute(
                 "INSERT INTO collection_workers(worker_id,generation,synthetic,state,"
                 "drain_requested_at,stopped_at) "

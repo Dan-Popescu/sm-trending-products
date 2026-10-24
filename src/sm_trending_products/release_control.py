@@ -449,12 +449,14 @@ class DeploymentController:
         candidate = ReleaseManifest.model_validate(row["candidate_manifest"])
         slot = "green" if row["prior_slot"] == "blue" else "blue"
         worker = self.workers.status(row["candidate_worker_id"])
+        if (
+            (worker is None or worker["state"] == "stopped")
+            and self.host.absent(row["target"], slot)
+            and self.workers.cancel_unregistered(row["candidate_worker_id"], row["synthetic"])
+        ):
+            self._record(connection, row, fence, status="aborted")
+            return
         if not worker:
-            if self.host.absent(row["target"], slot) and self.workers.cancel_unregistered(
-                row["candidate_worker_id"], row["synthetic"]
-            ):
-                self._record(connection, row, fence, status="aborted")
-                return
             raise ReleaseBlocked("candidate_worker_unavailable")
         if worker["generation"] != row["candidate_generation"]:
             if not self.host.healthy(row["target"], candidate, slot, row["candidate_worker_id"]):
