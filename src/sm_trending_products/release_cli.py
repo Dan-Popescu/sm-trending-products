@@ -353,6 +353,7 @@ class HostRuntime:
                 previous=VerifiedRelease(
                     ReleaseManifest.model_validate(row["prior_manifest"]), row["prior_proof"]
                 ),
+                supersede=row["rollback_of"] is not None,
             )
             return {**refreshed, "release_id": release_id, "capture_phase": "retired"}
         return result

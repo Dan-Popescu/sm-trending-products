@@ -113,9 +113,11 @@ def test_authorized_source_handover_refreshes_all_roles_and_reverse_too(pipeline
     runtime.authorization = authority
     runtime.controller = lambda current: controller
     refreshed = []
+    options = []
 
     def processing(release=None, **kwargs):
         refreshed.append(release)
+        options.append(kwargs)
         return {"status": "completed", "target": "fixture"}
 
     runtime.refresh_processing_release = processing
@@ -123,6 +125,8 @@ def test_authorized_source_handover_refreshes_all_roles_and_reverse_too(pipeline
     result = runtime.apply(row["release_id"])
     assert result["status"] == "completed" and result["capture_phase"] == "retired"
     assert refreshed[-1].manifest == release("b").manifest
+    assert options[-1]["previous"].manifest == release("a").manifest
+    assert options[-1]["supersede"] is False
     # Repeating an accepted request repairs the source-to-processing crash gap.
     runtime.apply(row["release_id"])
     assert len(refreshed) == 2
@@ -131,6 +135,8 @@ def test_authorized_source_handover_refreshes_all_roles_and_reverse_too(pipeline
     result = runtime.pull()
     assert result["release_id"] == reverse["release_id"]
     assert refreshed[-1].manifest == release("a").manifest
+    assert options[-1]["previous"].manifest == release("b").manifest
+    assert options[-1]["supersede"] is True
     result = runtime.pull()
     assert result["status"] == "completed" and refreshed[-1] is None
 
