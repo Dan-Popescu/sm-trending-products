@@ -12,6 +12,7 @@ class PlanningSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=None, extra="ignore", populate_by_name=True)
 
     scheduler_request_budget: int = Field(default=500, ge=0, le=10_000)
+    acquisition_enabled: bool = False
     collection_schedule_minutes: int = Field(default=5, ge=1, le=60)
     assessment_schedule_minutes: int = Field(default=15, ge=1, le=60)
     maintenance_schedule_minutes: int = Field(default=15, ge=1, le=60)
@@ -41,6 +42,7 @@ class Settings(PlanningSettings):
     aws_default_region: str = "us-east-1"
     cache_dir: Path = Path(".cache/objects")
     spool_dir: Path = Path(".cache/spool")
+    capture_spool_max_bytes: int = Field(default=268_435_456, ge=33_554_432)
     cache_max_bytes: int = Field(default=2_000_000_000, ge=1_000_000)
     collector_binary: str = "sm-collector"
     worker_id: str = ""

@@ -20,9 +20,27 @@ export COMPOSE_PROFILES=local
 export COMPOSE_ENV_FILES=/dev/null
 export COMPOSE_DISABLE_ENV_FILE=true
 export PIPELINE_IMAGE="${PIPELINE_IMAGE:-sm-trending-products:local}"
+# Override inherited role pins/identities: this rehearsal runs only its built
+# image and synthetic legacy checkpoint fixture, never a production release.
+export CAPTURE_BLUE_IMAGE="$PIPELINE_IMAGE"
+export CAPTURE_GREEN_IMAGE="$PIPELINE_IMAGE"
+export ACQUISITION_PLANNER_IMAGE="$PIPELINE_IMAGE"
+export NORMALIZER_IMAGE="$PIPELINE_IMAGE"
+export ANALYTICS_IMAGE="$PIPELINE_IMAGE"
+export DASHBOARD_IMAGE="$PIPELINE_IMAGE"
+export CAPTURE_BLUE_WORKER_ID="ci-blue-$recovery_id"
+export CAPTURE_GREEN_WORKER_ID="ci-green-$recovery_id"
+export ACQUISITION_ENABLED=false
 export POSTGRES_USER=sm_trends_ci
 export POSTGRES_DB=sm_trends_ci
 export POSTGRES_PASSWORD="$recovery_password"
+export POSTGRES_HOST_PORT="$(python3 - <<'PY'
+import socket
+with socket.socket() as probe:
+    probe.bind(("127.0.0.1", 0))
+    print(probe.getsockname()[1])
+PY
+)"
 export DATABASE_URL="postgresql://sm_trends_ci:$recovery_password@postgres:5432/sm_trends_ci"
 export PIPELINE_NAMESPACE=ci-recovery
 export S3_BUCKET="sm-trends-ci-recovery-$recovery_id"
@@ -123,7 +141,7 @@ with Pipeline.from_env() as application:
     }))
 PY
 
-docker compose up --detach --no-build worker dagster-daemon dagster-webserver dashboard
+docker compose up --detach --no-build worker capture-planner normalizer dagster-daemon dagster-webserver dashboard
 services_ready=false
 for _attempt in $(seq 1 45); do
   if docker compose exec -T dashboard python -c \
@@ -140,8 +158,8 @@ for _attempt in $(seq 1 45); do
 done
 [[ "$services_ready" == true ]] || { echo 'Operator services or daemon did not become ready.' >&2; exit 1; }
 docker compose exec -T worker sm-trends verify --json
-# backup.sh stops and restarts these writers; observe health after that restart too.
-scripts/backup.sh "$recovery_workdir/backup" --copy-objects
+# An online application snapshot keeps acquisition services running.
+scripts/backup.sh "$recovery_workdir/backup" --copy-objects --online
 docker compose exec -T worker sm-trends verify --json
 scripts/restore-check.sh "$recovery_workdir/backup" --exercise-synthetic-recovery
 python3 - "$recovery_workdir/seed.json" "$recovery_report" <<'PY'
@@ -154,9 +172,9 @@ Path(sys.argv[2]).write_text(json.dumps({
     "status": "verified", "boundary": "native_container_recovery",
     "database": "PostgreSQL 17.11", "object_store": "HTTP Moto 5.2.4",
     "synthetic": True, "catalog_fingerprint_matched": True, "seed": seed,
-    "operator_services_started": ["worker", "dagster-daemon", "dagster-webserver", "dashboard"],
+    "operator_services_started": ["worker", "capture-planner", "normalizer", "dagster-daemon", "dagster-webserver", "dashboard"],
     "dashboard_health": "ready", "dagster_webserver_health": "ready",
-    "dagster_daemon_heartbeat": "ready", "writer_restart_verification": "passed",
+    "dagster_daemon_heartbeat": "ready", "backup_mode": "online",
     "restored_checkpoint_recovery": "passed", "restored_restart_duplicates": 0,
 }, indent=2) + "\n")
 PY

@@ -47,6 +47,7 @@ def _report_batch(context: AssetExecutionContext, result: dict, **counts: int) -
 
 @asset
 def collection_schedule(context: AssetExecutionContext, config: BatchConfig) -> dict:
+    _require_legacy_collection()
     with Pipeline.from_env() as pipeline:
         budget = config.request_budget
         if budget is None:
@@ -60,10 +61,19 @@ def collection_schedule(context: AssetExecutionContext, config: BatchConfig) -> 
 
 @asset(deps=[collection_schedule])
 def observation_batch(context: AssetExecutionContext, config: BatchConfig) -> dict:
+    _require_legacy_collection()
     with Pipeline.from_env() as pipeline:
         result = pipeline.collect_batch(config.batch_size, synthetic=config.synthetic)
     _report_batch(context, result, processed=result["processed"])
     return result
+
+
+def _require_legacy_collection() -> None:
+    if PlanningSettings().acquisition_enabled:
+        raise Failure(
+            description="Dedicated acquisition is enabled; use the capture planner and capture "
+            "workers. Legacy Dagster collection is disabled."
+        )
 
 
 @asset(deps=[observation_batch])
@@ -189,10 +199,18 @@ defs = Definitions(
             cron_schedule=PlanningSettings.cron(PlanningSettings().maintenance_schedule_minutes),
             default_status=DefaultScheduleStatus.RUNNING,
         ),
-        ScheduleDefinition(
-            job=collection_job,
-            cron_schedule=PlanningSettings.cron(PlanningSettings().collection_schedule_minutes),
-            default_status=DefaultScheduleStatus.RUNNING,
+        *(
+            []
+            if PlanningSettings().acquisition_enabled
+            else [
+                ScheduleDefinition(
+                    job=collection_job,
+                    cron_schedule=PlanningSettings.cron(
+                        PlanningSettings().collection_schedule_minutes
+                    ),
+                    default_status=DefaultScheduleStatus.RUNNING,
+                )
+            ]
         ),
         ScheduleDefinition(
             job=assessment_job,

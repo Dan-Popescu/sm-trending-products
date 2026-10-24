@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,6 +14,58 @@ from dagster import AssetKey, AssetMaterialization, DagsterInstance, materialize
 from dagster_postgres.utils import get_conn_string
 
 from sm_trending_products import orchestration
+
+
+def test_independent_mode_removes_the_automatic_collection_schedule(monkeypatch):
+    try:
+        with monkeypatch.context() as environment:
+            environment.setenv("ACQUISITION_ENABLED", "true")
+            independent = importlib.reload(orchestration)
+            jobs = {schedule.job_name for schedule in independent.defs.schedules}
+            assert "collection_batches" not in jobs
+            assert "opportunity_rankings" in jobs
+            assert "retention_policy" in jobs
+    finally:
+        importlib.reload(orchestration)
+
+
+@pytest.mark.parametrize("asset", ["collection_schedule", "observation_batch"])
+def test_independent_acquisition_rejects_legacy_collection_before_access(monkeypatch, asset):
+    class ForbiddenPipeline:
+        @classmethod
+        def from_env(cls):
+            raise AssertionError("Legacy collection must not open the acquisition dependencies")
+
+    monkeypatch.setenv("ACQUISITION_ENABLED", "true")
+    monkeypatch.setattr(orchestration, "Pipeline", ForbiddenPipeline)
+    result = materialize([getattr(orchestration, asset)], raise_on_error=False)
+    assert not result.success
+    failure = result.failure_data_for_node(asset)
+    assert "Dedicated acquisition is enabled" in failure.error.message
+
+
+def test_independent_analytics_runs_without_collection(monkeypatch):
+    class AnalyticalPipeline:
+        @classmethod
+        def from_env(cls):
+            return cls()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def assess(self, *args, **kwargs):
+            return {"run_id": "existing-captured-evidence", "rows": []}
+
+    monkeypatch.setenv("ACQUISITION_ENABLED", "true")
+    monkeypatch.setattr(orchestration, "Pipeline", AnalyticalPipeline)
+    result = materialize([orchestration.opportunity_assessments])
+    assert result.success
+    assert [event.step_key for event in result.get_step_success_events()] == [
+        "opportunity_assessments"
+    ]
 
 
 @pytest.mark.integration

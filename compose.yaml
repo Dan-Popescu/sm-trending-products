@@ -18,6 +18,8 @@ x-pipeline-environment: &pipeline-environment
   TIKTOK_CCL_ACCESS_TOKEN: ${TIKTOK_CCL_ACCESS_TOKEN:-}
   CACHE_DIR: /var/lib/sm-trends/cache
   SPOOL_DIR: /var/lib/sm-trends/spool
+  CAPTURE_SPOOL_MAX_BYTES: ${CAPTURE_SPOOL_MAX_BYTES:-268435456}
+  ACQUISITION_ENABLED: ${ACQUISITION_ENABLED:-true}
   COLLECTOR_BINARY: /usr/local/bin/sm-collector
   CACHE_MAX_BYTES: ${CACHE_MAX_BYTES:-2000000000}
   BATCH_SIZE: ${BATCH_SIZE:-20}
@@ -76,6 +78,8 @@ x-pipeline-service: &pipeline-service
 services:
   postgres:
     image: postgres:17.11-bookworm
+    ports:
+      - 127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-sm_trends}
       POSTGRES_DB: ${POSTGRES_DB:-sm_trends}
@@ -135,7 +139,14 @@ services:
 
   worker:
     <<: *pipeline-service
-    command: [sm-trends, worker, --loop, --batch-size, '${WORKER_BATCH_SIZE:-20}']
+    image: ${CAPTURE_BLUE_IMAGE:-${PIPELINE_IMAGE:-sm-trending-products:local}}
+    command: [sm-trends, capture, --loop, --batch-size, '${WORKER_BATCH_SIZE:-20}']
+    environment:
+      <<: *pipeline-environment
+      WORKER_ID: ${CAPTURE_BLUE_WORKER_ID:-capture-blue-local}
+    labels:
+      io.sm-trends.worker-id: ${CAPTURE_BLUE_WORKER_ID:-capture-blue-local}
+    stop_grace_period: ${CAPTURE_STOP_GRACE_PERIOD:-15m}
     depends_on:
       initialize:
         condition: service_completed_successfully
@@ -144,8 +155,51 @@ services:
     pids_limit: 128
     restart: unless-stopped
 
+  worker-green:
+    <<: *pipeline-service
+    image: ${CAPTURE_GREEN_IMAGE:-${PIPELINE_IMAGE:-sm-trending-products:local}}
+    profiles: [rollout]
+    command: [sm-trends, capture, --loop, --batch-size, '${WORKER_BATCH_SIZE:-20}']
+    environment:
+      <<: *pipeline-environment
+      WORKER_ID: ${CAPTURE_GREEN_WORKER_ID:-capture-green-local}
+    labels:
+      io.sm-trends.worker-id: ${CAPTURE_GREEN_WORKER_ID:-capture-green-local}
+    stop_grace_period: ${CAPTURE_STOP_GRACE_PERIOD:-15m}
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    mem_limit: ${WORKER_MEMORY_LIMIT:-768m}
+    cpus: ${WORKER_CPUS:-1.0}
+    pids_limit: 128
+    restart: unless-stopped
+
+  capture-planner:
+    <<: *pipeline-service
+    image: ${ACQUISITION_PLANNER_IMAGE:-${PIPELINE_IMAGE:-sm-trending-products:local}}
+    command: [python, -m, sm_trending_products.capture_coordinator, --loop]
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    mem_limit: ${ACQUISITION_PLANNER_MEMORY_LIMIT:-512m}
+    cpus: ${ACQUISITION_PLANNER_CPUS:-0.5}
+    restart: unless-stopped
+
+  normalizer:
+    <<: *pipeline-service
+    image: ${NORMALIZER_IMAGE:-${PIPELINE_IMAGE:-sm-trending-products:local}}
+    command: [sm-trends, publish-captures, --loop, --batch-size, '${NORMALIZER_BATCH_SIZE:-20}']
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    mem_limit: ${NORMALIZER_MEMORY_LIMIT:-768m}
+    cpus: ${NORMALIZER_CPUS:-1.0}
+    pids_limit: 128
+    restart: unless-stopped
+
   dagster-webserver:
     <<: *pipeline-service
+    image: ${ANALYTICS_IMAGE:-${PIPELINE_IMAGE:-sm-trending-products:local}}
     command: [dagster-webserver, -m, sm_trending_products.orchestration, --host, 0.0.0.0, --port, '3000']
     ports:
       - 127.0.0.1:3000:3000
@@ -158,6 +212,7 @@ services:
 
   dagster-daemon:
     <<: *pipeline-service
+    image: ${ANALYTICS_IMAGE:-${PIPELINE_IMAGE:-sm-trending-products:local}}
     command: [dagster-daemon, run, -m, sm_trending_products.orchestration]
     depends_on:
       initialize:
@@ -169,6 +224,7 @@ services:
 
   dashboard:
     <<: *pipeline-service
+    image: ${DASHBOARD_IMAGE:-${PIPELINE_IMAGE:-sm-trending-products:local}}
     command: [streamlit, run, src/sm_trending_products/dashboard.py, --server.address, 0.0.0.0, --server.port, '8501', --server.headless, 'true', --browser.gatherUsageStats, 'false']
     ports:
       - 127.0.0.1:8501:8501
