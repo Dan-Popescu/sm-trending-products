@@ -1,0 +1,263 @@
+{
+  "application_commit": "045dc658f83b3860f6cbc806e2845125a3dad8de",
+  "harness_sha256": "bef1fc190a07d27107cd7ff7d4d22262e84145273e5d18ca4427fea59a1d6a0c",
+  "measurement_at": "2026-10-24T09:50:40.579733+00:00",
+  "physical_observation_delivery_rows": 7200000,
+  "relations": [
+    {
+      "index_bytes": 8192,
+      "relname": "alerts",
+      "table_bytes": 0,
+      "total_bytes": 16384
+    },
+    {
+      "index_bytes": 24576,
+      "relname": "assessment_runs",
+      "table_bytes": 0,
+      "total_bytes": 32768
+    },
+    {
+      "index_bytes": 49152,
+      "relname": "collection_tasks",
+      "table_bytes": 0,
+      "total_bytes": 57344
+    },
+    {
+      "index_bytes": 16384,
+      "relname": "credential_bindings",
+      "table_bytes": 0,
+      "total_bytes": 24576
+    },
+    {
+      "index_bytes": 8192,
+      "relname": "credential_budgets",
+      "table_bytes": 0,
+      "total_bytes": 16384
+    },
+    {
+      "index_bytes": 8192,
+      "relname": "current_assessments",
+      "table_bytes": 0,
+      "total_bytes": 16384
+    },
+    {
+      "index_bytes": 16384,
+      "relname": "dataset_lineage",
+      "table_bytes": 0,
+      "total_bytes": 24576
+    },
+    {
+      "index_bytes": 5111808,
+      "relname": "dataset_object_refs",
+      "table_bytes": 2088960,
+      "total_bytes": 7241728
+    },
+    {
+      "index_bytes": 5865472,
+      "relname": "datasets",
+      "table_bytes": 3727360,
+      "total_bytes": 9633792
+    },
+    {
+      "index_bytes": 32768,
+      "relname": "derived_artifact_edges",
+      "table_bytes": 8192,
+      "total_bytes": 40960
+    },
+    {
+      "index_bytes": 32768,
+      "relname": "derived_artifact_inputs",
+      "table_bytes": 8192,
+      "total_bytes": 49152
+    },
+    {
+      "index_bytes": 65536,
+      "relname": "derived_publications",
+      "table_bytes": 24576,
+      "total_bytes": 122880
+    },
+    {
+      "index_bytes": 13287424,
+      "relname": "entities",
+      "table_bytes": 23371776,
+      "total_bytes": 36700160
+    },
+    {
+      "index_bytes": 16384,
+      "relname": "evaluation_artifacts",
+      "table_bytes": 0,
+      "total_bytes": 24576
+    },
+    {
+      "index_bytes": 8192,
+      "relname": "evaluation_dependencies",
+      "table_bytes": 0,
+      "total_bytes": 16384
+    },
+    {
+      "index_bytes": 8192,
+      "relname": "evaluation_runs",
+      "table_bytes": 0,
+      "total_bytes": 16384
+    },
+    {
+      "index_bytes": 8192,
+      "relname": "family_memberships",
+      "table_bytes": 0,
+      "total_bytes": 16384
+    },
+    {
+      "index_bytes": 24576,
+      "relname": "feature_product_projections",
+      "table_bytes": 0,
+      "total_bytes": 32768
+    },
+    {
+      "index_bytes": 16384,
+      "relname": "feature_product_windows",
+      "table_bytes": 0,
+      "total_bytes": 24576
+    },
+    {
+      "index_bytes": 6905856,
+      "relname": "feature_source_frontiers",
+      "table_bytes": 6471680,
+      "total_bytes": 13418496
+    },
+    {
+      "index_bytes": 24576,
+      "relname": "forward_frontier",
+      "table_bytes": 0,
+      "total_bytes": 32768
+    },
+    {
+      "index_bytes": 6815744,
+      "relname": "normalized_object_entities",
+      "table_bytes": 4268032,
+      "total_bytes": 11124736
+    },
+    {
+      "index_bytes": 1236992,
+      "relname": "normalized_objects",
+      "table_bytes": 5677056,
+      "total_bytes": 6955008
+    },
+    {
+      "index_bytes": 4293074944,
+      "relname": "observation_deliveries",
+      "table_bytes": 1426096128,
+      "total_bytes": 5719588864
+    },
+    {
+      "index_bytes": 8192,
+      "relname": "operational_usage",
+      "table_bytes": 0,
+      "total_bytes": 16384
+    },
+    {
+      "index_bytes": 13189120,
+      "relname": "product_links",
+      "table_bytes": 10928128,
+      "total_bytes": 24158208
+    },
+    {
+      "index_bytes": 122880,
+      "relname": "products",
+      "table_bytes": 180224,
+      "total_bytes": 344064
+    },
+    {
+      "index_bytes": 8192,
+      "relname": "replay_availability",
+      "table_bytes": 0,
+      "total_bytes": 16384
+    },
+    {
+      "index_bytes": 8192,
+      "relname": "request_budgets",
+      "table_bytes": 0,
+      "total_bytes": 16384
+    },
+    {
+      "index_bytes": 24576,
+      "relname": "retention_objects",
+      "table_bytes": 0,
+      "total_bytes": 32768
+    },
+    {
+      "index_bytes": 8192,
+      "relname": "scheduler_policies",
+      "table_bytes": 0,
+      "total_bytes": 16384
+    },
+    {
+      "index_bytes": 16384,
+      "relname": "scheduler_policy_activations",
+      "table_bytes": 0,
+      "total_bytes": 24576
+    },
+    {
+      "index_bytes": 16384,
+      "relname": "schema_migrations",
+      "table_bytes": 8192,
+      "total_bytes": 24576
+    },
+    {
+      "index_bytes": 16384,
+      "relname": "source_capabilities",
+      "table_bytes": 0,
+      "total_bytes": 24576
+    },
+    {
+      "index_bytes": 8192,
+      "relname": "source_policies",
+      "table_bytes": 0,
+      "total_bytes": 16384
+    }
+  ],
+  "requested": {
+    "analysis_product_batch_size": 10,
+    "cache_bytes": 2000000000,
+    "deadline_seconds": 14400.0,
+    "history_days": 30,
+    "hot_product_batch_rows": 100,
+    "hot_products": 0,
+    "max_owned_disk_bytes": 12884901888,
+    "max_rss_bytes": 2147483648,
+    "min_disk_free_bytes": 2147483648,
+    "products": 3000,
+    "profile": false,
+    "refresh_waves": 4,
+    "refreshes_per_day": 4,
+    "seed_batch_rows": 5000,
+    "shared_products_per_import": 1,
+    "videos_per_product": 20
+  },
+  "scope": "native per-table/index sizes after full seeding; derived tables may already be growing during cold",
+  "seed_inventory": {
+    "datasets": {
+      "count": 3000,
+      "observations": 7200000
+    },
+    "derivations": {
+      "bytes": 0,
+      "objects": 0
+    },
+    "manifests": {
+      "canonical_bytes": 5740800,
+      "objects": 3000
+    },
+    "normalized": {
+      "bytes": 304307895,
+      "objects": 3000
+    },
+    "raw": {
+      "bytes": 342344420,
+      "objects": 3000
+    },
+    "sql": {
+      "total_bytes": 5829795840
+    },
+    "wal_lsn": "F/24C00000"
+  }
+}
