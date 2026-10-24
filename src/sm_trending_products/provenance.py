@@ -142,6 +142,12 @@ class Provenance:
     def guard(self, connection, roots: Sequence[dict[str, Any]]) -> dict[str, int]:
         self.catalog.guard_retention(connection)
         keys = sorted({root["key"] for root in roots})
+        namespaces = {key.split("/")[1] if "/" in key else "" for key in keys}
+        for namespace in namespaces:
+            self.catalog.guard_namespace(
+                connection,
+                True if namespace == "synthetic" else False if namespace == "live" else None,
+            )
         identities: dict[str, int] = {}
         for start in range(0, len(keys), 1000):
             chunk = keys[start : start + 1000]
@@ -218,6 +224,7 @@ class Provenance:
         dependencies = sorted(set(inputs))
         # Register dependencies before any upload so retention can fence crashes.
         with self.catalog.transaction() as connection:
+            self.catalog.guard_namespace(connection, synthetic)
             self.catalog.guard_inputs(connection, dependencies)
             child_ids = self.guard(connection, children)
             connection.execute(
@@ -255,6 +262,7 @@ class Provenance:
         # retention/tombstone fence; the final source guard rejects retirement races.
         self.history.put(key, encoded, content_type="application/json")
         with self.catalog.transaction() as connection:
+            self.catalog.guard_namespace(connection, synthetic)
             self.catalog.guard_inputs(connection, dependencies)
             self.guard(connection, children)
             committed = connection.execute(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlsplit
 
@@ -90,6 +91,9 @@ def test_retention_records_actual_counts_and_fails_pending_deletion(monkeypatch,
                 "deleted_objects": 5,
                 "pending_objects": pending,
                 "failed_objects": pending,
+                "pending_source_invalidations": [
+                    {"phase": "discover", "created_at": datetime.now(UTC)}
+                ],
             }
 
     monkeypatch.setattr(orchestration, "Pipeline", ControlledPipeline)
@@ -99,6 +103,7 @@ def test_retention_records_actual_counts_and_fails_pending_deletion(monkeypatch,
         metadata = result.asset_materializations_for_node("source_retention")[0].metadata
         assert metadata["dataset_count"].value == 2
         assert metadata["deleted_objects"].value == 5
+        assert metadata["pending_source_invalidations"].value == 1
 
 
 def test_collection_asset_reports_quota_wait_without_an_error_or_attempt(monkeypatch):

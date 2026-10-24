@@ -257,6 +257,8 @@ def dispatch(pipeline, args):
         case "import":
             return pipeline.import_file(args.file, synthetic=synthetic, batch_size=args.batch_size)
         case "worker":
+            from .catalog import InvalidationPending
+
             stop = threading.Event()
             if args.loop:
                 signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -264,10 +266,23 @@ def dispatch(pipeline, args):
             if not 0 < args.poll_seconds <= 60:
                 raise ValueError("Poll interval must be positive and at most 60 seconds")
             while not stop.is_set():
-                result = pipeline.collect_batch(args.batch_size, synthetic=synthetic)
+                try:
+                    result = pipeline.collect_batch(args.batch_size, synthetic=synthetic)
+                except InvalidationPending:
+                    # A retirement gate is temporary backpressure, not a failed
+                    # collection task. Keep the daemon alive and finish its
+                    # persisted work without waiting for another cron/restart.
+                    progress = pipeline.catalog.resume_invalidations(
+                        max_batches=1000, max_seconds=0.8, synthetic=synthetic
+                    )
+                    result = {"status": "invalidation_pending", "invalidations": progress}
                 if not args.loop:
                     return result
                 print(canonical(result), flush=True)
+                if result.get("status") == "invalidation_pending":
+                    progress = result["invalidations"]
+                    stop.wait(0.01 if progress["processed"] else min(args.poll_seconds, 0.25))
+                    continue
                 # Drain a busy queue without an artificial pause between bounded
                 # batches. Empty/partial work and backpressure still wait, and
                 # every next batch checks the signal event before claiming work.

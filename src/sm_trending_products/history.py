@@ -11,6 +11,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from contextlib import AbstractContextManager
 from datetime import datetime
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
@@ -129,7 +130,10 @@ class History:
             return self._guarded_put(connection, key, body, content_type=content_type)
 
     def _guarded_put(self, connection, key: str, body: bytes, *, content_type: str) -> dict:
-        self.catalog.guard_retention(connection)
+        namespace = key.split("/")[1] if "/" in key else ""
+        self.catalog.guard_namespace(
+            connection, True if namespace == "synthetic" else False if namespace == "live" else None
+        )
         tombstone = connection.execute(
             "SELECT 1 FROM retention_objects WHERE object_key=%s", (key,)
         ).fetchone()
@@ -367,11 +371,42 @@ class History:
         entity_keys: set[str] | None = None,
         max_rows: int | None = None,
     ) -> list[Observation]:
+        iterator = iter(manifests)
+        first = next(iterator, None)
+        if first is None:
+            return []
+        with self.catalog.evidence_transaction(first.get("synthetic")):
+            return self._read(
+                chain((first,), iterator),
+                as_of=as_of,
+                since=since,
+                until=until,
+                period_window=period_window,
+                entity_keys=entity_keys,
+                max_rows=max_rows,
+            )
+
+    def _read(
+        self,
+        manifests: Iterable[dict],
+        *,
+        as_of: datetime,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        period_window: tuple[datetime, datetime] | None = None,
+        entity_keys: set[str] | None = None,
+        max_rows: int | None = None,
+    ) -> list[Observation]:
         row_budget = max_rows if max_rows is not None else self.settings.analysis_max_rows_per_batch
         if isinstance(row_budget, bool) or row_budget < 1:
             raise ValueError("Analysis row budget must be positive")
         result: dict[str, Observation] = {}
+        namespace = None
         for dataset in manifests:
+            current_namespace = dataset.get("synthetic")
+            if namespace is not None and current_namespace != namespace:
+                raise ValueError("A history read cannot mix evidence namespaces")
+            namespace = current_namespace
             if dataset["state"] != "committed":
                 continue
             for obj in dataset["manifest"]["normalized"]:
@@ -425,9 +460,10 @@ class History:
         return sorted(result.values(), key=lambda obs: (obs.observed_at, obs.observation_id))
 
     def raw(self, dataset: dict) -> dict:
-        with pin_cached(self, dataset["manifest"]["raw"]) as path:
-            with gzip.open(path, "rt") as handle:
-                return json.load(handle)
+        with self.catalog.evidence_transaction(dataset.get("synthetic")):
+            with pin_cached(self, dataset["manifest"]["raw"]) as path:
+                with gzip.open(path, "rt") as handle:
+                    return json.load(handle)
 
     def observations(
         self,
@@ -482,7 +518,7 @@ class History:
         with self.catalog.transaction() as connection:
             # A page's file reads share the same retention fence as its SQL
             # selection; retirement cannot delete an input halfway through it.
-            self.catalog.guard_retention(connection)
+            self.catalog.guard_namespace(connection, synthetic)
             references = self.catalog.observation_page(
                 synthetic, as_of, entity_keys, limit + 1, after, connection=connection
             )

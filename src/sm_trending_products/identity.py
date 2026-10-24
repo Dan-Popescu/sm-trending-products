@@ -395,12 +395,13 @@ class Identity:
         if not query or len(query) > 256:
             raise ValueError("Candidate query must contain between 1 and 256 characters")
         limit = _limit(limit, 100)
-        candidates = self.catalog.all(
+        candidates = self.catalog.evidence_all(
             "SELECT entity_key,title,source,entity_type,synthetic FROM entities "
             "WHERE synthetic=%s AND to_tsvector('simple',title) @@ plainto_tsquery('simple',%s) "
             "ORDER BY ts_rank_cd(to_tsvector('simple',title),plainto_tsquery('simple',%s)) DESC,"
             "entity_key LIMIT 1000",
             (synthetic, query, query),
+            synthetic=synthetic,
         )
         query_terms = set(query.split())
         ranked = []

@@ -151,15 +151,18 @@ def test_operation_budget_preserves_an_unfinished_versioned_key_for_restart(pipe
     assert not client.list_object_versions(Bucket=bucket, Prefix=key).get("Versions")
 
 
-def test_closure_preview_truncation_reflects_affected_datasets_not_just_roots(pipeline):
+def test_wide_closure_preview_is_an_explicit_lower_bound_and_drain_continues(pipeline):
     seed_expired_roots(pipeline, 1105, shared_raw=True, expired_count=1)
     preview = pipeline.retention()
     assert preview["expired_root_count"] == 1
-    assert preview["dataset_count"] == 1105 and len(preview["dataset_ids"]) == 1000
+    assert preview["dataset_count"] == 1 and len(preview["dataset_ids"]) == 1
     assert preview["preview_truncated"] is True
+    assert preview["dataset_count_is_lower_bound"] is True
+    assert preview["preview_scope"] == "expired_roots_only"
     result = Maintenance(pipeline).retention_drain(max_objects=1, max_seconds=60)
-    assert result["dataset_count"] == 1105 and len(result["dataset_ids"]) == 1000
-    assert result["preview_truncated"] is True
+    assert result["stop_reason"] == "invalidation_pending"
+    result = Maintenance(pipeline).retention_drain(max_objects=1, max_seconds=60)
+    assert result["invalidation_progress"]["status"] == "complete"
     assert result["pending_objects"] == 1105
     assert result["stop_reason"] == "object_limit"
     resumed = Maintenance(pipeline).retention_drain(max_seconds=60)
@@ -245,15 +248,24 @@ def test_compaction_drain_processes_multiple_groups_without_rereading_new_output
     assert pipeline.verify()["ok"] is True
 
 
-def test_oversized_atomic_closure_is_reported_without_partial_retirement(pipeline, monkeypatch):
+def test_oversized_atomic_closure_starts_resumable_retirement_without_partial_visibility(
+    pipeline, monkeypatch
+):
     seed_expired_roots(pipeline, 3, shared_raw=True, expired_count=1)
     monkeypatch.setattr(maintenance_module, "RETENTION_TARGET_LIMIT", 2)
     result = Maintenance(pipeline).retention_drain()
-    assert result["status"] == "blocked" and result["stop_reason"] == "retention_closure_limit"
+    assert result["status"] == "partial" and result["stop_reason"] == "invalidation_pending"
     assert result["dataset_count"] == result["operations"] == result["pending_objects"] == 0
+    assert result["pending_source_invalidations"]
     assert result["expired_root_count"] == 1
     assert (
         pipeline.catalog.one("SELECT count(*) AS n FROM datasets WHERE state='committed'")["n"] == 3
+    )
+    resumed = Maintenance(pipeline).retention_drain()
+    assert resumed["status"] == "complete"
+    assert not resumed["pending_source_invalidations"]
+    assert (
+        pipeline.catalog.one("SELECT count(*) AS n FROM datasets WHERE state='deleted'")["n"] == 3
     )
 
 

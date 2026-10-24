@@ -6,7 +6,7 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from .catalog import Catalog, LeaseLost
+from .catalog import Catalog, InvalidationPending, LeaseLost
 from .collector import CollectionError, Collector, redact
 from .contracts import Observation, digest, now
 from .history import History
@@ -128,6 +128,8 @@ class SourceCollection:
                     if prior and prior["state"] == "staged":
                         try:
                             raw = self.history.raw(prior)
+                        except InvalidationPending:
+                            raise
                         except Exception:
                             # No completed observation exists; a bounded refetch is allowed.
                             raw = None
@@ -179,6 +181,12 @@ class SourceCollection:
                     )
                 result["processed"] += 1
                 result["datasets"].append(dataset_id)
+            except InvalidationPending:
+                try:
+                    self.catalog.reschedule(task, "invalidation_pending", 1, no_attempt=True)
+                except LeaseLost:
+                    pass
+                raise
             except LeaseLost:
                 result["errors"].append({"task_id": task["task_id"], "category": "lease_lost"})
             except Exception as error:
