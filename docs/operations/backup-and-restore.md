@@ -2,6 +2,43 @@
 
 A complete recovery set contains the PostgreSQL control state, immutable object bytes and metadata, and the application/dependency versions needed to read them. The scripts use `pg_dump` and `pg_restore` from the pinned PostgreSQL container so the client matches the server major version.
 
+## Online acquisition checkpoint
+
+Use `--online` when acquisition must continue during backup:
+
+```sh
+scripts/backup.sh /absolute/new/backup-family/base-001 --copy-objects --online
+scripts/backup.sh /absolute/new/backup-family/delta-002 --copy-objects --online \
+  --base /absolute/new/backup-family/base-001
+```
+
+The parent family directory must already exist. This mode does not stop or restart
+any deployment service. One exported repeatable-read application snapshot supplies
+the catalog fingerprints, expected object references and native SQL dump. Its
+exporter remains connected until the dump completes. New source tasks, captures
+and publications continue and remain in the live database, but belong to a later
+recovery point. The online inventory contains only objects referenced by the
+snapshot's catalog, including available staged recovery inputs and raw-only
+capture datasets; unrelated/post-snapshot objects are excluded.
+
+The backup holds a shared schema-migration lock, not the retention fence.
+Application migrations wait until the dump handshake finishes. A concurrent
+source deletion can make the backup fail incomplete; it does not force collectors
+to wait behind a backup/retention lock. Normal conditional object identity,
+metadata and hash checks still apply. The source provider must supply the required
+consistency/conditional semantics. Long snapshots can delay PostgreSQL vacuum;
+the existing whole-backup deadline remains enforced.
+
+The application dump is exact at its exported cut. Dagster's separate database
+has an independent snapshot and is explicitly labeled as such in `backup.json`.
+Successful application rollback must keep post-cut observations; restoring this
+backup is disaster recovery to its stated cut, not an application deployment
+rollback or a zero-RPO whole-host failover mechanism.
+
+The existing default/`--offline` mode below retains its paused-writer compatibility
+behavior. It must not be selected for an active non-replayable capture window.
+See [the decision and tradeoffs](../adr/0014-online-application-checkpoints.md).
+
 ## Capture
 
 Keep a dedicated backup family directory. Create the first complete recovery set:
