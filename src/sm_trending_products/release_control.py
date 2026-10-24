@@ -353,6 +353,19 @@ class DeploymentController:
             candidate_generation=candidate_generation,
         )
 
+    def _require_replacement(self, row: dict, manifest: ReleaseManifest, slot: str) -> None:
+        worker = self.workers.status(row["candidate_worker_id"])
+        reason = None
+        if not worker or worker["state"] != "running":
+            reason = "replacement_worker_unavailable"
+        elif worker["generation"] != row["candidate_generation"]:
+            reason = "replacement_generation_changed"
+        elif not self.host.healthy(row["target"], manifest, slot, row["candidate_worker_id"]):
+            reason = "replacement_unhealthy"
+        if reason:
+            self.workers.resume(row["prior_worker_id"], row["prior_generation"])
+            raise ReleaseBlocked(reason)
+
     def apply(self, release_id: str) -> dict:
         row = self.catalog.one("SELECT * FROM deployment_runs WHERE release_id=%s", (release_id,))
         if not row:
@@ -420,6 +433,7 @@ class DeploymentController:
                     self._record(connection, row, fence, phase="started")
                 replacement = self.workers.status(row["candidate_worker_id"])
                 if not replacement or replacement["state"] != "running":
+                    self.workers.resume(row["prior_worker_id"], row["prior_generation"])
                     raise ReleaseBlocked("replacement_worker_unavailable")
                 if replacement["generation"] != row["candidate_generation"]:
                     if predecessor["state"] != "stopped":
@@ -429,12 +443,7 @@ class DeploymentController:
                         changes["phase"] = "started"
                     self._record(connection, row, fence, **changes)
                 if row["phase"] not in {"committed", "retired"}:
-                    if not self.host.healthy(
-                        row["target"], candidate, slot, row["candidate_worker_id"]
-                    ):
-                        self.workers.resume(row["prior_worker_id"], row["prior_generation"])
-                        self._record(connection, row, fence, phase="started")
-                        raise ReleaseBlocked("replacement_unhealthy")
+                    self._require_replacement(row, candidate, slot)
                     evidence = self.evidence.verify(
                         worker_id=row["candidate_worker_id"],
                         generation=row["candidate_generation"],
@@ -452,12 +461,7 @@ class DeploymentController:
                     if not drained.get("drained"):
                         raise ReleaseBlocked("predecessor_busy")
                     # Recheck after the drain barrier before committing the pointer.
-                    if not self.host.healthy(
-                        row["target"], candidate, slot, row["candidate_worker_id"]
-                    ):
-                        self.workers.resume(row["prior_worker_id"], row["prior_generation"])
-                        self._record(connection, row, fence, phase="started")
-                        raise ReleaseBlocked("replacement_unhealthy")
+                    self._require_replacement(row, candidate, slot)
                     evidence = self.evidence.verify(
                         worker_id=row["candidate_worker_id"],
                         generation=row["candidate_generation"],
@@ -467,6 +471,7 @@ class DeploymentController:
                     if evidence is None:
                         self.workers.resume(row["prior_worker_id"], row["prior_generation"])
                         raise ReleaseBlocked("capture_proof_missing")
+                    self._require_replacement(row, candidate, slot)
                     self._record(connection, row, fence, phase="verified", evidence=evidence)
                     with connection.transaction():
                         changed = connection.execute(
@@ -492,11 +497,7 @@ class DeploymentController:
                         )
                     row["phase"] = "committed"
                 if row["phase"] == "committed":
-                    if not self.host.healthy(
-                        row["target"], candidate, slot, row["candidate_worker_id"]
-                    ):
-                        self.workers.resume(row["prior_worker_id"], row["prior_generation"])
-                        raise ReleaseBlocked("replacement_unhealthy")
+                    self._require_replacement(row, candidate, slot)
                     evidence = self.evidence.verify(
                         worker_id=row["candidate_worker_id"],
                         generation=row["candidate_generation"],
@@ -511,6 +512,7 @@ class DeploymentController:
                     )
                     if not drained.get("drained"):
                         raise ReleaseBlocked("predecessor_busy")
+                    self._require_replacement(row, candidate, slot)
                     self.host.retire(
                         row["target"], prior, row["prior_slot"], row["prior_worker_id"]
                     )

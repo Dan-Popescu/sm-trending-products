@@ -29,25 +29,31 @@ class CatalogCaptureVerifier:
         with self.catalog.transaction() as connection:
             unqualified = connection.execute(
                 "SELECT 1 FROM capture_obligations WHERE synthetic=%s "
-                "AND original_due_at>=%s AND original_due_at<=%s "
+                "AND (original_due_at>=%s OR durable_at>=%s OR capture_dataset_id IS NULL) "
+                "AND original_due_at<=%s "
                 "AND (contract_id IS NULL OR deadline_at IS NULL) LIMIT 1",
-                (synthetic, start, cutoff),
+                (synthetic, start, start, cutoff),
             ).fetchone()
             if unqualified:
                 return None
             required = connection.execute(
                 "SELECT DISTINCT source,account_id,operation,scope_id FROM capture_obligations "
-                "WHERE synthetic=%s AND original_due_at>=%s AND original_due_at<=%s "
+                "WHERE synthetic=%s "
+                "AND (original_due_at>=%s OR durable_at>=%s OR capture_dataset_id IS NULL) "
+                "AND original_due_at<=%s "
                 "ORDER BY source,account_id,operation,scope_id LIMIT %s",
-                (synthetic, start, cutoff, self.scope_limit + 1),
+                (synthetic, start, start, cutoff, self.scope_limit + 1),
             ).fetchall()
             if not required or len(required) > self.scope_limit:
                 return None
             breaches = connection.execute(
-                "SELECT count(*) AS count FROM capture_obligations WHERE synthetic=%s "
-                "AND deadline_at>=%s AND deadline_at<%s "
-                "AND (captured_at IS NULL OR captured_at>deadline_at)",
-                (synthetic, start, cutoff),
+                "SELECT count(*) AS count FROM capture_obligations o LEFT JOIN datasets d "
+                "ON d.dataset_id=o.capture_dataset_id AND d.synthetic=o.synthetic "
+                "AND d.source=o.source WHERE o.synthetic=%s "
+                "AND (o.original_due_at>=%s OR o.durable_at>=%s OR o.capture_dataset_id IS NULL) "
+                "AND o.deadline_at<%s AND (o.captured_at IS NULL OR o.captured_at>o.deadline_at "
+                "OR o.durable_at IS NULL OR d.state IS DISTINCT FROM 'committed')",
+                (synthetic, start, start, cutoff),
             ).fetchone()
             if not breaches or breaches["count"]:
                 return None

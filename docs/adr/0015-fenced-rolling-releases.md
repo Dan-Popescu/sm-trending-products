@@ -43,6 +43,10 @@ A changed predecessor generation blocks rather than targeting an unexamined
 replacement. No due source work means the controller waits with the old path
 operating rather than issuing gratuitous live canaries. Capture evidence is
 separate from Docker process health and worker admission.
+Proof also includes older never-captured backlog and validates each receipt
+overlapping the handover. A fresh receipt in one scope cannot hide a retired
+handover receipt in that scope. Historical receipts intentionally retired before
+this handover do not impose a lifetime retention guarantee on deployment.
 
 The old worker stops claiming only through its acknowledged operation barrier;
 it must own no lease before retirement. A deadline blocks the release and never
