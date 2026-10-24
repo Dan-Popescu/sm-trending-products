@@ -24,6 +24,17 @@ host mutations. Synthetic tests explicitly enable a fixture proof; ordinary host
 controllers do not permit that method. End-to-end signature publication remains
 part of the CI/host installation qualification, not a claim of the fixture tests.
 
+Publishing a candidate does not authorize deployment. The signed deployment
+request bundle is retained with its SQL request and verified again on every
+host CLI mutation or automatic resume. A separate root-private, fsynced intent
+seal binds the immutable candidate/predecessor identities, generations and schema
+to that request. App-writable journal rows cannot manufacture deployment or
+rollback authority. A root-private highest accepted request protects monotonicity
+if the SQL request history is altered. Host-console rollback records its own
+private authority referencing the previously authorized run; cancellation intent
+also survives independently of mutable SQL progress. Corruption or missing
+authority blocks all host mutations.
+
 The existing worker and optional worker-green Compose services are the only
 mutable host slots. Fixed arguments select the local Docker socket, private
 configuration, image digests and worker identity labels. An occupied unknown

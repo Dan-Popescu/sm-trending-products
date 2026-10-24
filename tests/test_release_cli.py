@@ -14,6 +14,7 @@ import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from psycopg.types.json import Jsonb
 from test_release_control import release
 
 from sm_trending_products.release_control import (
@@ -214,10 +215,46 @@ raise SystemExit(0 if bundle.get('controlled_valid') else 1)
         process, result = run("pull")
         assert process.returncode == 2 and result["reason"] == "capture_proof_missing"
         release_id = result["release_id"]
+        candidate_worker_id = result["candidate_worker_id"]
         accepted = pipeline.catalog.one("SELECT * FROM deployment_requests WHERE target='fixture'")
         assert accepted and accepted["sequence"] == 2 and accepted["release_id"] == release_id
+        before = trace.read_bytes()
+        pipeline.catalog.execute(
+            "UPDATE deployment_requests SET proof=%s WHERE target='fixture'",
+            (Jsonb({"method": "cosign_bundle", "bundle": {"controlled_valid": False}}),),
+        )
+        for command in ("apply", "pull", "rollback"):
+            arguments = (command,) if command == "pull" else (command, "--release-id", release_id)
+            process, result = run(*arguments)
+            assert (
+                process.returncode == 2 and result["reason"] == "deployment_request_journal_changed"
+            )
+        assert trace.read_bytes() == before
+        pipeline.catalog.execute(
+            "UPDATE deployment_requests SET proof=%s WHERE target='fixture'",
+            (Jsonb(accepted["proof"]),),
+        )
+        pipeline.catalog.execute(
+            "UPDATE deployment_runs SET prior_generation=prior_generation+1 WHERE release_id=%s",
+            (release_id,),
+        )
+        process, result = run("apply", "--release-id", release_id)
+        assert process.returncode == 2 and result["reason"] == "deployment_intent_changed"
+        assert trace.read_bytes() == before
+        pipeline.catalog.execute(
+            "UPDATE deployment_runs SET prior_generation=prior_generation-1 WHERE release_id=%s",
+            (release_id,),
+        )
+        authorization_file = tmp_path / "private-state" / f"authorization-{release_id}.json"
+        sealed = authorization_file.read_bytes()
+        authorization_file.unlink()
+        process, result = run("apply", "--release-id", release_id)
+        assert process.returncode == 2 and result["reason"] == "deployment_authorization_missing"
+        assert trace.read_bytes() == before
+        authorization_file.write_bytes(sealed)
+        authorization_file.chmod(0o600)
         pins = (tmp_path / "private-state/slots.env").read_text()
-        assert release("b").manifest.image in pins and result["candidate_worker_id"] in pins
+        assert release("b").manifest.image in pins and candidate_worker_id in pins
         assert "never-print-this" not in pins
         server.shutdown()
         server.server_close()
@@ -245,6 +282,8 @@ raise SystemExit(0 if bundle.get('controlled_valid') else 1)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         old = request.model_copy(update={"sequence": 1})
+        # SQL writers cannot roll back host-private monotonic request authority.
+        pipeline.catalog.execute("DELETE FROM deployment_requests WHERE target='fixture'")
         (request_path / "request.json").write_bytes(deployment_request_bytes(old))
         process, result = run("pull")
         assert process.returncode == 2 and result["reason"] == "deployment_request_replayed"

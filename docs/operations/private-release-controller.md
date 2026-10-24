@@ -104,6 +104,10 @@ exact main workflow certificate identity. The signed sequence must increase;
 changing a request at an accepted sequence or replaying an older sequence blocks.
 Request and bundle replacement is not atomic, so a partial upload may transiently
 block verification. The next poll retries while acquisition keeps running.
+Accepted bundles are retained and verified again on every mutation or resume.
+Root-private intent seals and a highest-request record protect deployment
+authority from application database writes. Preserve this private controller
+state across updates and backups; missing or mismatching authority blocks safely.
 
 The controller starts the replacement, waits for fresh durable raw captures from
 its current worker generation, drains the predecessor at its acknowledged task

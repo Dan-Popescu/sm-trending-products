@@ -20,6 +20,7 @@ from pydantic import Field
 
 from .catalog import Catalog
 from .contracts import Contract, canonical
+from .release_authorization import HostAuthorization
 from .release_capacity import CapacityBudget, HostCapacity
 from .release_control import (
     DeploymentController,
@@ -183,20 +184,18 @@ class ArtifactReader:
             {"method": "cosign_bundle", "bundle": json.loads(self.read(tag, "bundle.json"))},
         )
 
-    def request(self, trust: ReleaseTrust) -> DeploymentRequest:
+    def request(self, trust: ReleaseTrust) -> tuple[DeploymentRequest, dict]:
         request = DeploymentRequest.model_validate_json(
             self.read("pilot-deploy-request", "request.json")
         )
-        trust.verify_request(
-            request,
-            {
-                "method": "cosign_bundle",
-                "bundle": json.loads(self.read("pilot-deploy-request", "request-bundle.json")),
-            },
-        )
+        proof = {
+            "method": "cosign_bundle",
+            "bundle": json.loads(self.read("pilot-deploy-request", "request-bundle.json")),
+        }
+        trust.verify_request(request, proof)
         if request.target != self.config.target:
             raise ReleaseBlocked("deployment_request_target_mismatch")
-        return request
+        return request, proof
 
 
 class HostRuntime:
@@ -208,6 +207,7 @@ class HostRuntime:
         )
         self.reader = ArtifactReader(config)
         self.workers = CatalogWorkerGate(WorkerControl(catalog))
+        self.authorization = HostAuthorization(config.state_directory, catalog, self.trust)
         self.capacity: HostCapacity | None = None
         if not controlled_test:
             self.capacity = HostCapacity(
@@ -334,7 +334,22 @@ class HostRuntime:
         return row
 
     def apply(self, release_id: str) -> dict:
-        return self.controller(self.run(release_id)).apply(release_id)
+        row = self.run(release_id)
+        action = self.authorization.verify(row)
+        controller = self.controller(row)
+        return (
+            controller.rollback(release_id) if action == "abort" else controller.apply(release_id)
+        )
+
+    def rollback(self, release_id: str) -> dict:
+        row = self.run(release_id)
+        self.authorization.verify(row)
+        if row["phase"] not in {"committed", "retired"}:
+            self.authorization.cancel(row)
+        result = self.controller(row).rollback(release_id)
+        if result["release_id"] != release_id:
+            self.authorization.rollback(self.run(result["release_id"]), row)
+        return result
 
     def refresh_processing(self, manifest: Path | None, bundle: Path | None) -> dict:
         if (manifest is None) != (bundle is None):
@@ -384,7 +399,8 @@ class HostRuntime:
         )
         if pending:
             return self.apply(pending["release_id"])
-        request = self.reader.request(self.trust)
+        request, proof = self.reader.request(self.trust)
+        self.authorization.sequence(request)
         previous = self.catalog.one(
             "SELECT * FROM deployment_requests WHERE target=%s ORDER BY sequence DESC LIMIT 1",
             (self.config.target,),
@@ -394,7 +410,7 @@ class HostRuntime:
         if previous and request.sequence == previous["sequence"]:
             if previous["request"] != request.model_dump(mode="json"):
                 raise ReleaseBlocked("deployment_request_sequence_conflict")
-            return self.controller(self.run(previous["release_id"])).status(previous["release_id"])
+            return self.apply(previous["release_id"])
         signed = self.reader.release(request.revision, self.trust)
         if (
             hashlib.sha256(release_manifest_bytes(signed.manifest)).hexdigest()
@@ -420,33 +436,69 @@ class HostRuntime:
                 "SELECT pg_advisory_xact_lock(hashtextextended(%s,492371215))",
                 (self.config.target,),
             )
-            latest = connection.execute(
-                "SELECT * FROM deployment_requests WHERE target=%s ORDER BY sequence DESC LIMIT 1",
+            pending = connection.execute(
+                "SELECT r.* FROM deployment_runs r WHERE r.target=%s "
+                "AND r.status NOT IN ('completed','aborted') "
+                "AND (r.rollback_of IS NOT NULL OR EXISTS(SELECT 1 FROM deployment_requests q "
+                "WHERE q.release_id=r.release_id)) ORDER BY r.created_at,r.release_id LIMIT 1",
                 (self.config.target,),
             ).fetchone()
-            if latest and latest["sequence"] >= request.sequence:
-                raise ReleaseBlocked("deployment_request_concurrent")
-            plan = controller.plan(
-                signed,
-                target=self.config.target,
-                current=current,
-                current_slot=active["active_slot"],
-                current_worker_id=active["active_worker_id"],
-                schema_version=schema["version"],
-                synthetic=active["synthetic"],
-                request_id=f"signed-{request.sequence}",
-            )
-            connection.execute(
-                "INSERT INTO deployment_requests(target,sequence,request,release_id) "
-                "VALUES(%s,%s,%s,%s)",
-                (
-                    self.config.target,
-                    request.sequence,
-                    Jsonb(request.model_dump(mode="json")),
-                    plan["release_id"],
-                ),
-            )
-        return self.apply(plan["release_id"])
+            if pending:
+                accepted_id = pending["release_id"]
+            else:
+                accepted_id = self._accept_request(
+                    connection,
+                    request,
+                    proof,
+                    signed,
+                    current,
+                    active,
+                    schema["version"],
+                    controller,
+                )
+        return self.apply(accepted_id)
+
+    def _accept_request(
+        self,
+        connection,
+        request: DeploymentRequest,
+        proof: dict,
+        signed: VerifiedRelease,
+        current: VerifiedRelease,
+        active: dict,
+        schema_version: int,
+        controller: DeploymentController,
+    ) -> str:
+        self.authorization.sequence(request)
+        latest = connection.execute(
+            "SELECT * FROM deployment_requests WHERE target=%s ORDER BY sequence DESC LIMIT 1",
+            (self.config.target,),
+        ).fetchone()
+        if latest and latest["sequence"] >= request.sequence:
+            raise ReleaseBlocked("deployment_request_concurrent")
+        plan = controller.plan(
+            signed,
+            target=self.config.target,
+            current=current,
+            current_slot=active["active_slot"],
+            current_worker_id=active["active_worker_id"],
+            schema_version=schema_version,
+            synthetic=active["synthetic"],
+            request_id=f"signed-{request.sequence}",
+        )
+        connection.execute(
+            "INSERT INTO deployment_requests(target,sequence,request,proof,release_id) "
+            "VALUES(%s,%s,%s,%s,%s)",
+            (
+                self.config.target,
+                request.sequence,
+                Jsonb(request.model_dump(mode="json")),
+                Jsonb(proof),
+                plan["release_id"],
+            ),
+        )
+        self.authorization.record_request(self.run(plan["release_id"]), request, proof)
+        return plan["release_id"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -494,8 +546,12 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 if not args.release_id:
                     parser.error("command requires --release-id")
-                controller = runtime.controller(runtime.run(args.release_id))
-                result = getattr(controller, args.command)(args.release_id)
+                if args.command in {"apply", "rollback"}:
+                    result = getattr(runtime, args.command)(args.release_id)
+                else:
+                    result = runtime.controller(runtime.run(args.release_id)).status(
+                        args.release_id
+                    )
             print(canonical(result))
             return 2 if result.get("status") == "blocked" else 0
         finally:
