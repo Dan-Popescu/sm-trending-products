@@ -24,6 +24,14 @@ RETENTION_GUARD_KEY = 492371205
 ENTITY_WRITE_BATCH_SIZE = 500
 
 
+class InvalidationPending(ValueError):
+    """Evidence in this namespace is temporarily fenced during source removal."""
+
+
+class InvalidationTooLarge(ValueError):
+    """An atomic closure requires bounded durable continuation."""
+
+
 class LeaseLost(RuntimeError):
     """A worker no longer owns the right to commit this task."""
 
@@ -54,10 +62,19 @@ class Catalog:
 
     @contextmanager
     def transaction(self) -> Iterator[psycopg.Connection[dict[str, Any]]]:
-        with self.pool.connection() as connection, connection.transaction():
-            connection.execute("SET LOCAL statement_timeout='30s'")
-            connection.execute("SET LOCAL lock_timeout='10s'")
-            yield connection
+        try:
+            with self.pool.connection() as connection, connection.transaction():
+                connection.execute("SET LOCAL statement_timeout='30s'")
+                connection.execute("SET LOCAL lock_timeout='10s'")
+                yield connection
+        except psycopg.errors.ObjectNotInPrerequisiteState as error:
+            # SQL triggers are authoritative even for a late or empty-input
+            # publication. Expose the same retry contract after its rollback.
+            if (error.diag.message_primary or "").startswith("Evidence invalidation pending;"):
+                raise InvalidationPending(
+                    "Evidence invalidation pending; retry after bounded maintenance"
+                ) from None
+            raise
 
     def initialize(self) -> None:
         with self.transaction() as connection:
@@ -91,6 +108,65 @@ class Catalog:
         with self.transaction() as connection:
             return connection.execute(query, params).fetchone()
 
+    @staticmethod
+    def guard_namespace(connection, synthetic: bool | None) -> None:
+        """The SQL guard and publication triggers share the authoritative fence."""
+        try:
+            connection.execute("SELECT assert_evidence_namespace_available(%s)", (synthetic,))
+        except psycopg.errors.ObjectNotInPrerequisiteState as error:
+            if "Evidence invalidation pending" not in str(error):
+                raise
+            raise InvalidationPending(
+                "Evidence invalidation pending; retry after bounded maintenance"
+            ) from None
+
+    @contextmanager
+    def evidence_transaction(
+        self, synthetic: bool | None
+    ) -> Iterator[psycopg.Connection[dict[str, Any]]]:
+        # Attempt one bounded continuation outside the failed transaction. Never
+        # wait indefinitely or clear a durable gate merely because time elapsed.
+        guarded = False
+        try:
+            with self.transaction() as connection:
+                self.guard_namespace(connection, synthetic)
+                guarded = True
+                yield connection
+            return
+        except InvalidationPending:
+            if guarded:
+                raise
+        self.resume_invalidations(max_batches=1, max_seconds=0.1, synthetic=synthetic)
+        with self.transaction() as connection:
+            self.guard_namespace(connection, synthetic)
+            yield connection
+
+    def evidence_all(
+        self, query: str, params: Sequence[Any] = (), *, synthetic: bool | None
+    ) -> list[dict[str, Any]]:
+        with self.evidence_transaction(synthetic) as connection:
+            return list(connection.execute(query, params).fetchall())
+
+    def evidence_one(
+        self, query: str, params: Sequence[Any] = (), *, synthetic: bool | None
+    ) -> dict[str, Any] | None:
+        with self.evidence_transaction(synthetic) as connection:
+            return connection.execute(query, params).fetchone()
+
+    def pending_invalidations(self) -> list[dict[str, Any]]:
+        from .invalidation import SourceInvalidation
+
+        return SourceInvalidation(self).status()
+
+    def resume_invalidations(
+        self, *, max_batches: int = 10, max_seconds: float = 1, synthetic: bool | None = None
+    ) -> dict[str, Any]:
+        from .invalidation import SourceInvalidation
+
+        return SourceInvalidation(self).resume(
+            max_batches=max_batches, max_seconds=max_seconds, synthetic=synthetic
+        )
+
     def execute(self, query: str, params: Sequence[Any] = ()) -> None:
         with self.transaction() as connection:
             connection.execute(query, params)
@@ -110,6 +186,7 @@ class Catalog:
                 ).fetchone()
                 if not row or row["state"] != "committed":
                     raise ValueError("Replay parent is unavailable")
+                self.guard_namespace(connection, row["synthetic"])
                 current_scope = (row["source"], row["synthetic"])
                 scope = current_scope if scope is None else scope
                 if current_scope != scope:
@@ -187,6 +264,7 @@ class Catalog:
         credential_keys: dict[str, str] | None = None,
     ) -> dict[str, Any] | None:
         with self.transaction() as connection:
+            self.guard_namespace(connection, synthetic)
             connection.execute(
                 "WITH exhausted AS (SELECT task_id FROM collection_tasks "
                 "WHERE synthetic=%s AND attempts>=%s AND "
@@ -409,7 +487,7 @@ class Catalog:
                 page_clauses.append("(d.created_at,d.dataset_id)>(%s,%s)")
                 page_params.extend(last)
             page_params.append(page_size)
-            rows = self.all(
+            rows = self.evidence_all(
                 "SELECT d.dataset_id,d.source,d.synthetic,d.state,d.transform_version,"
                 "d.created_at,d.committed_at,d.min_available_at,d.max_available_at,"
                 "d.row_count,d.quarantine_count," + projection + " AS manifest "
@@ -419,6 +497,7 @@ class Catalog:
                 + " AND ".join(page_clauses)
                 + " ORDER BY d.created_at,d.dataset_id LIMIT %s",
                 page_params,
+                synthetic=synthetic,
             )
             yield from rows
             if len(rows) < page_size:
@@ -553,7 +632,7 @@ class Catalog:
         supersedes: str | None = None,
     ) -> dict:
         with self.transaction() as connection:
-            self.guard_retention(connection)
+            self.guard_namespace(connection, synthetic)
             if task:
                 self.assert_lease(connection, task)
             connection.execute(
@@ -646,6 +725,8 @@ class Catalog:
             row = connection.execute(
                 "SELECT * FROM datasets WHERE dataset_id=%s FOR UPDATE", (dataset_id,)
             ).fetchone()
+            if row:
+                self.guard_namespace(connection, row["synthetic"])
             if not row or row["state"] in ("invalidated", "deleted"):
                 raise ValueError("Dataset cannot be committed")
             if row["state"] != "committed":
@@ -730,9 +811,37 @@ class Catalog:
                     ),
                 )
 
-    def invalidate_dataset(self, dataset_id: str, reason: str) -> None:
+    def invalidate_dataset(self, dataset_id: str, reason: str) -> dict[str, Any] | None:
+        from .invalidation import SourceInvalidation
+
+        try:
+            self._invalidate_dataset_atomic(dataset_id, reason)
+        except (
+            InvalidationTooLarge,
+            InvalidationPending,
+            psycopg.errors.QueryCanceled,
+            psycopg.errors.LockNotAvailable,
+        ):
+            identifier = SourceInvalidation(self).begin(dataset_id, reason)
+            result = self.resume_invalidations(max_batches=1, max_seconds=0.1)
+            return {"invalidation_id": identifier, **result}
+        return None
+
+    def _invalidate_dataset_atomic(self, dataset_id: str, reason: str) -> None:
         with self.transaction() as connection:
+            connection.execute("SET LOCAL statement_timeout='2s'")
+            connection.execute("SET LOCAL lock_timeout='250ms'")
             self.guard_retention(connection, exclusive=True)
+            namespace = connection.execute(
+                "SELECT synthetic FROM datasets WHERE dataset_id=%s", (dataset_id,)
+            ).fetchone()
+            if namespace:
+                self.guard_namespace(connection, namespace["synthetic"])
+            wide = connection.execute(
+                "SELECT source_invalidation_wide(ARRAY[%s]) AS wide", (dataset_id,)
+            ).fetchone()
+            if wide and wide["wide"]:
+                raise InvalidationTooLarge("Source invalidation exceeds its atomic work budget")
             connection.execute(
                 "CREATE TEMP TABLE invalidated_datasets ON COMMIT DROP AS "
                 "SELECT dataset_id FROM dataset_publication_closure(ARRAY[%s]) LIMIT 10001",
@@ -742,7 +851,7 @@ class Catalog:
                 "SELECT count(*) AS count FROM invalidated_datasets"
             ).fetchone()
             if dataset_count and dataset_count["count"] > 10000:
-                raise ValueError("Source invalidation exceeds its atomic dataset budget")
+                raise InvalidationTooLarge("Source invalidation exceeds its atomic dataset budget")
             connection.execute(
                 "CREATE TEMP TABLE invalidated_artifacts ON COMMIT DROP AS "
                 "SELECT p.object_id,p.object_key FROM analytical_artifact_ancestor_ids("
@@ -753,7 +862,7 @@ class Catalog:
                 "SELECT count(*) AS count FROM invalidated_artifacts"
             ).fetchone()
             if affected and affected["count"] > 10000:
-                raise ValueError("Source invalidation exceeds its atomic artifact budget")
+                raise InvalidationTooLarge("Source invalidation exceeds its atomic artifact budget")
             connection.execute(
                 "UPDATE datasets SET state='invalidated',invalid_reason=%s "
                 "WHERE dataset_id IN (SELECT dataset_id FROM invalidated_datasets) "
@@ -791,7 +900,7 @@ class Catalog:
 
     def export_state(self) -> dict[str, Any]:
         """Logical evidence verification summary; operational backup uses pg_dump."""
-        tables = (
+        tables: tuple[str, ...] = (
             "datasets",
             "products",
             "product_links",
@@ -803,6 +912,15 @@ class Catalog:
         )
         result = {}
         with self.transaction() as connection:
+            connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            journal = connection.execute(
+                "SELECT EXISTS(SELECT 1 FROM source_invalidations) OR "
+                "EXISTS(SELECT 1 FROM source_invalidation_work) AS present"
+            ).fetchone()
+            # Empty new relations do not invalidate pre-migration fingerprints.
+            # Any persisted job, including a completed tombstone, hashes both.
+            if journal and journal["present"]:
+                tables += ("source_invalidations", "source_invalidation_work")
             for table in tables:
                 hasher = hashlib.sha256(b"[")
                 separator = b""

@@ -81,7 +81,8 @@ jobs:
         timeout-minutes: 5
         run: uv run --locked mypy src
       - name: Verify native PostgreSQL behavior
-        timeout-minutes: 10
+        # Includes bounded 12k-dataset and 50k-artifact retirement regressions.
+        timeout-minutes: 15
         run: uv run --locked pytest -vv -ra --durations=15 --junitxml=output/test-results.xml
       - name: Verify controlled benchmark and quota exhaustion
         timeout-minutes: 5

@@ -145,6 +145,7 @@ class Pipeline:
                 "COALESCE(sum((counters->>'upload_bytes')::bigint),0) AS upload_bytes "
                 "FROM operational_usage"
             ),
+            "pending_invalidations": self.catalog.pending_invalidations(),
             "coverage_warning": "Only granted sources and actually sampled entities are covered",
             "pending_live_acceptance": not any(cap["state"] == "available" for cap in capabilities),
         }
@@ -200,6 +201,8 @@ class Pipeline:
         return self.identity.set_family(product_id, family_id)
 
     def suggest_links(self, query: str, synthetic: bool = False, limit: int = 20) -> list[dict]:
+        with self.catalog.evidence_transaction(synthetic):
+            pass
         return self.identity.suggest_links(query, synthetic=synthetic, limit=limit)
 
     def datasets(self, limit: int = 100) -> list[dict]:
@@ -236,11 +239,16 @@ class Pipeline:
         )
 
     def collect_batch(self, batch_size: int = 20, synthetic: bool = False) -> dict:
+        self.catalog.resume_invalidations(max_batches=1, max_seconds=0.1, synthetic=synthetic)
+        with self.catalog.evidence_transaction(synthetic):
+            pass
         return self._collection.collect_batch(batch_size=batch_size, synthetic=synthetic)
 
     def import_records(
         self, records: list[dict], synthetic: bool = False, origin: str = "explicit_import"
     ) -> list[str]:
+        with self.catalog.evidence_transaction(synthetic):
+            pass
         groups: dict[str, list[Observation]] = defaultdict(list)
         acquired = now()
         original_digest = digest(redact(records))
@@ -316,6 +324,8 @@ class Pipeline:
         synthetic: bool = False,
         policy: AssessmentPolicy | None = None,
     ) -> dict:
+        with self.catalog.evidence_transaction(synthetic):
+            pass
         from .analytics import AssessmentIdentity
 
         as_of, policy = utc(as_of or now()), policy or AssessmentPolicy()
@@ -413,11 +423,12 @@ class Pipeline:
     def latest_assessments(self, synthetic: bool = False) -> list[dict]:
         return [
             row["payload"]
-            for row in self.catalog.all(
+            for row in self.catalog.evidence_all(
                 "SELECT c.payload FROM current_assessments c "
                 "JOIN assessment_runs r USING(run_id) WHERE c.synthetic=%s AND NOT r.invalidated "
                 "ORDER BY c.score DESC NULLS LAST,c.product_id LIMIT 10000",
                 (synthetic,),
+                synthetic=synthetic,
             )
         ]
 
@@ -436,20 +447,22 @@ class Pipeline:
             )
         return [
             row["summary"]
-            for row in self.catalog.all(
+            for row in self.catalog.evidence_all(
                 f"SELECT jsonb_build_object({projection}) AS summary "
                 "FROM current_assessments c JOIN assessment_runs r USING(run_id) "
                 "WHERE c.synthetic=%s AND NOT r.invalidated "
                 "ORDER BY c.score DESC NULLS LAST,c.product_id LIMIT %s OFFSET %s",
                 (synthetic, limit, offset),
+                synthetic=synthetic,
             )
         ]
 
     def assessment(self, product_id: str, synthetic: bool = False) -> dict | None:
-        row = self.catalog.one(
+        row = self.catalog.evidence_one(
             "SELECT c.payload FROM current_assessments c JOIN assessment_runs r USING(run_id) "
             "WHERE c.product_id=%s AND c.synthetic=%s AND NOT r.invalidated",
             (product_id, synthetic),
+            synthetic=synthetic,
         )
         return row["payload"] if row else None
 
@@ -527,7 +540,7 @@ class Pipeline:
         self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
     ) -> list[dict]:
         limit, offset = self._review_page(limit, offset)
-        return self.catalog.all(
+        return self.catalog.evidence_all(
             "SELECT task_id,source,account_id,operation,synthetic,state,created_at,due_at,"
             "completed_at,last_error,schedule_reason->>'policy_version' AS policy_version,"
             "schedule_reason->>'bucket' AS bucket,schedule_reason->>'tier' AS tier,"
@@ -539,6 +552,7 @@ class Pipeline:
             "FROM collection_tasks WHERE synthetic=%s AND schedule_reason<>'{}'::jsonb "
             "ORDER BY created_at DESC,task_id LIMIT %s OFFSET %s",
             (synthetic, limit, offset),
+            synthetic=synthetic,
         )
 
     def collection_decision(
@@ -546,7 +560,7 @@ class Pipeline:
     ) -> dict | None:
         """Read one decision and a bounded member page in the same SQL snapshot."""
         limit, offset = self._review_page(limit, offset)
-        row = self.catalog.one(
+        row = self.catalog.evidence_one(
             "WITH planned AS (SELECT *,CASE "
             "WHEN jsonb_typeof(schedule_reason->'entity_reasons')='array' "
             "THEN schedule_reason->'entity_reasons' "
@@ -568,28 +582,33 @@ class Pipeline:
             "LEFT JOIN entities e ON e.entity_key=(page.reason->>'entity_key') "
             "AND e.synthetic=p.synthetic),'[]'::jsonb) AS members FROM planned p",
             (task_id, synthetic, limit, offset),
+            synthetic=synthetic,
         )
         return redact(row) if row else None
 
     def alerts(self, synthetic: bool = False) -> list[dict]:
-        return self.catalog.all(
+        return self.catalog.evidence_all(
             "SELECT * FROM alerts WHERE synthetic=%s ORDER BY created_at DESC LIMIT 1000",
             (synthetic,),
+            synthetic=synthetic,
         )
 
     def alert_summaries(
         self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
     ) -> list[dict]:
         limit, offset = self._review_page(limit, offset)
-        return self.catalog.all(
+        return self.catalog.evidence_all(
             "SELECT alert_id,product_id,run_id,synthetic,created_at,invalidated "
             "FROM alerts WHERE synthetic=%s ORDER BY created_at DESC,alert_id LIMIT %s OFFSET %s",
             (synthetic, limit, offset),
+            synthetic=synthetic,
         )
 
     def alert(self, alert_id: str, synthetic: bool = False) -> dict | None:
-        return self.catalog.one(
-            "SELECT * FROM alerts WHERE alert_id=%s AND synthetic=%s", (alert_id, synthetic)
+        return self.catalog.evidence_one(
+            "SELECT * FROM alerts WHERE alert_id=%s AND synthetic=%s",
+            (alert_id, synthetic),
+            synthetic=synthetic,
         )
 
     def evidence(
@@ -677,6 +696,8 @@ class Pipeline:
     def schedule(
         self, budget: int = 100, synthetic: bool = False, policy: dict | None = None
     ) -> dict:
+        with self.catalog.evidence_transaction(synthetic):
+            pass
         from .scheduler import Scheduler
 
         return Scheduler(self.catalog).schedule(budget, synthetic=synthetic, policy=policy)
@@ -691,28 +712,31 @@ class Pipeline:
         return result
 
     def evaluations(self, synthetic: bool = False) -> list[dict]:
-        return self.catalog.all(
+        return self.catalog.evidence_all(
             "SELECT * FROM evaluation_runs WHERE synthetic=%s ORDER BY created_at DESC LIMIT 1000",
             (synthetic,),
+            synthetic=synthetic,
         )
 
     def evaluation_summaries(
         self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
     ) -> list[dict]:
         limit, offset = self._review_page(limit, offset)
-        return self.catalog.all(
+        return self.catalog.evidence_all(
             "SELECT evaluation_id,kind,synthetic,decision_time,parent_id,invalidated,created_at,"
             "payload->>'status' AS status,"
             "COALESCE(payload->>'target',payload#>>'{config,target}') AS target "
             "FROM evaluation_runs WHERE synthetic=%s "
             "ORDER BY created_at DESC,evaluation_id LIMIT %s OFFSET %s",
             (synthetic, limit, offset),
+            synthetic=synthetic,
         )
 
     def evaluation(self, evaluation_id: str, synthetic: bool = False) -> dict | None:
-        return self.catalog.one(
+        return self.catalog.evidence_one(
             "SELECT * FROM evaluation_runs WHERE evaluation_id=%s AND synthetic=%s",
             (evaluation_id, synthetic),
+            synthetic=synthetic,
         )
 
     def backtest(
@@ -724,6 +748,8 @@ class Pipeline:
         *,
         policy: AssessmentPolicy | None = None,
     ) -> dict:
+        with self.catalog.evidence_transaction(synthetic):
+            pass
         return self._evaluation.backtest(
             decision_times=decision_times,
             as_of=as_of,
@@ -740,6 +766,8 @@ class Pipeline:
         *,
         policy: AssessmentPolicy | None = None,
     ) -> dict:
+        with self.catalog.evidence_transaction(synthetic):
+            pass
         return self._evaluation.freeze(
             as_of=as_of, synthetic=synthetic, config=config, policy=policy
         )
@@ -750,6 +778,8 @@ class Pipeline:
     def mature_due(
         self, limit: int = 100, synthetic: bool = False, as_of: datetime | None = None
     ) -> dict:
+        with self.catalog.evidence_transaction(synthetic):
+            pass
         return self._evaluation.mature_due(limit=limit, synthetic=synthetic, as_of=as_of)
 
     def verify_live(
@@ -779,6 +809,8 @@ class Pipeline:
         dataset_ids: list[str] | None = None,
         max_rows: int = 1000,
     ) -> dict:
+        with self.catalog.evidence_transaction(synthetic):
+            pass
         from .exploration import MAX_INPUT_FILES, explore
 
         manifests: list[dict] = []

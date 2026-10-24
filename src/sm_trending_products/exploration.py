@@ -240,6 +240,8 @@ def explore(
             "SELECT * FROM datasets WHERE dataset_id=ANY(%s) ORDER BY created_at,dataset_id",
             (ids,),
         ).fetchall()
+        for namespace in {item["synthetic"] for item in actual}:
+            history.catalog.guard_namespace(transaction, namespace)
         if len(actual) != len(ids) or any(row["state"] != "committed" for row in actual):
             raise ValueError("Selected evidence was invalidated or is no longer completed")
         by_id = {item["dataset_id"]: item for item in manifests}

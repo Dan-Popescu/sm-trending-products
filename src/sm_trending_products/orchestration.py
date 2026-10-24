@@ -125,6 +125,7 @@ def source_retention(context: AssetExecutionContext) -> dict:
         {
             "status": result.get("status", "unknown"),
             "stop_reason": result.get("stop_reason", "unknown"),
+            "pending_source_invalidations": len(result.get("pending_source_invalidations", [])),
         }
     )
     if result.get("failed_objects", 0) or result.get("status") == "blocked":

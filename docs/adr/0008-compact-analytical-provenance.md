@@ -79,11 +79,13 @@ ancestors on source removal, so checking the small exposed root set suffices for
 later reads. Dataset removal closes over lineage and shared-object deliveries;
 compacted/replayed descendants cannot keep removed source facts readable.
 Policy retention queues every affected artifact through the existing deletion
-outbox. Source invalidation rejects and rolls back a closure exceeding 10,000
-datasets or artifacts; the bounded maintenance drain also limits its atomic
-closure. Sharding does not imply unlimited removal fanout. A blocked single-root
-closure requires a deliberately designed continuation protocol rather than a
-partial invalidation that could leave readable descendants. The bounded local publication memo is a performance hint; final publish
+outbox. The original atomic path rejected and rolled back a closure exceeding
+10,000 datasets or artifacts; the maintenance drain also limits its atomic
+closure. [ADR 0011](0011-bounded-source-invalidation.md) supersedes that rejection
+for oversized or expensive removals: a durable namespace fence protects bounded,
+resumable discovery and lifecycle changes. Small removals retain the atomic path.
+Sharding does not imply unlimited removal fanout or permit readable descendants
+between retirement chunks. The bounded local publication memo is a performance hint; final publish
 and detail reads still check authoritative root state.
 
 Node construction uses a bounded postorder plan: at most 1,000 nodes and

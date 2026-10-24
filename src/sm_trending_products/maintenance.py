@@ -13,6 +13,7 @@ from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from psycopg import Connection, sql
+from psycopg.errors import LockNotAvailable, QueryCanceled
 from psycopg.types.json import Jsonb
 
 from .cache import cache_object_lock
@@ -302,16 +303,39 @@ class Maintenance:
 
     def retention(self, *, apply: bool = False) -> dict[str, Any]:
         closure = self._expired_closure()
-        preview = self.catalog.all(
-            f"SELECT d.dataset_id,d.source,count(*) OVER() AS total "
-            f"FROM datasets d JOIN ({closure}) targets USING(dataset_id) "
-            "WHERE d.state<>'deleted' ORDER BY d.dataset_id LIMIT 1000"
+        roots = self.catalog.all(
+            "SELECT d.dataset_id,d.source,count(*) OVER() AS total FROM datasets d "
+            "JOIN source_policies p ON p.source=d.source AND p.verified "
+            "WHERE d.state IN ('committed','staged') AND d.created_at<clock_timestamp()-"
+            "p.retention_days*interval '1 day' ORDER BY d.created_at,d.dataset_id LIMIT 100"
         )
+        wide = self.catalog.one(
+            "SELECT source_invalidation_wide(%s) AS wide", ([row["dataset_id"] for row in roots],)
+        )
+        preview_incomplete = bool(wide and wide["wide"])
+        preview = roots
+        if not preview_incomplete:
+            try:
+                with self.catalog.transaction() as connection:
+                    connection.execute("SET LOCAL statement_timeout='2s'")
+                    preview = connection.execute(
+                        f"SELECT d.dataset_id,d.source,count(*) OVER() AS total "
+                        f"FROM datasets d JOIN ({closure} LIMIT {RETENTION_TARGET_LIMIT + 1}) "
+                        "targets USING(dataset_id) "
+                        "WHERE d.state<>'deleted' ORDER BY d.dataset_id LIMIT 1000"
+                    ).fetchall()
+            except QueryCanceled:
+                preview_incomplete = True
+                preview = roots
         result: dict[str, Any] = {
             "applied": apply,
             "dataset_count": preview[0]["total"] if preview else 0,
             "dataset_ids": [row["dataset_id"] for row in preview],
-            "preview_truncated": bool(preview and preview[0]["total"] > len(preview)),
+            "preview_truncated": preview_incomplete
+            or bool(preview and preview[0]["total"] > len(preview)),
+            "dataset_count_is_lower_bound": preview_incomplete
+            or bool(preview and preview[0]["total"] > RETENTION_TARGET_LIMIT),
+            "preview_scope": "expired_roots_only" if preview_incomplete else "bounded_closure",
             "unverified_sources": self._unverified_sources(),
         }
         if not apply:
@@ -341,8 +365,28 @@ class Maintenance:
                 budget.check()
             try:
                 return self._retire_root_batch(root_limit)
-            except _RetentionClosureTooLarge:
+            except LockNotAvailable:
+                if budget is None:
+                    raise
+                raise _BudgetExhausted("database_busy") from None
+            except (_RetentionClosureTooLarge, QueryCanceled):
                 if root_limit == 1:
+                    if budget is None:
+                        raise
+                    from .invalidation import SourceInvalidation
+
+                    root = self.catalog.one(
+                        "SELECT d.dataset_id FROM datasets d JOIN source_policies p "
+                        "ON p.source=d.source AND p.verified "
+                        "WHERE d.state IN ('committed','staged') "
+                        "AND d.created_at<clock_timestamp()-p.retention_days*interval '1 day' "
+                        "ORDER BY d.created_at,d.dataset_id LIMIT 1"
+                    )
+                    if root:
+                        SourceInvalidation(self.catalog).begin(
+                            root["dataset_id"], "retention_expired"
+                        )
+                        raise _BudgetExhausted("invalidation_pending") from None
                     raise
                 root_limit = max(1, root_limit // 2)
 
@@ -357,13 +401,28 @@ class Maintenance:
         return count
 
     def _retire_root_batch(self, root_limit: int) -> dict[str, Any]:
-        closure = self._expired_closure(root_limit)
         with self.catalog.transaction() as connection:
+            connection.execute("SET LOCAL statement_timeout='2s'")
+            connection.execute("SET LOCAL lock_timeout='250ms'")
             self.catalog.guard_retention(connection, exclusive=True)
+            roots = connection.execute(
+                "SELECT d.dataset_id FROM datasets d JOIN source_policies p "
+                "ON p.source=d.source AND p.verified WHERE d.state IN ('committed','staged') "
+                "AND d.created_at<clock_timestamp()-p.retention_days*interval '1 day' "
+                "ORDER BY d.created_at,d.dataset_id LIMIT %s",
+                (root_limit,),
+            ).fetchall()
+            root_ids = [root["dataset_id"] for root in roots]
+            wide = connection.execute(
+                "SELECT source_invalidation_wide(%s) AS wide", (root_ids,)
+            ).fetchone()
+            if wide and wide["wide"]:
+                raise _RetentionClosureTooLarge("retention_work_limit")
             connection.execute(
                 "CREATE TEMP TABLE retention_targets ON COMMIT DROP AS "
-                + closure
-                + f" LIMIT {RETENTION_TARGET_LIMIT + 1}"
+                "SELECT dataset_id FROM dataset_publication_closure(%s) "
+                f"LIMIT {RETENTION_TARGET_LIMIT + 1}",
+                (root_ids,),
             )
             if not self._guard_retention_table(connection, "retention_targets"):
                 return {
@@ -553,6 +612,7 @@ class Maintenance:
             else None,
             "pending_finalization_count": finalizing["count"] if finalizing else 0,
             "pending_artifact_gc_count": gc["count"] if gc else 0,
+            "pending_source_invalidations": self.catalog.pending_invalidations(),
         }
 
     @staticmethod
@@ -733,6 +793,15 @@ class Maintenance:
         }
         stop_reason = "no_work"
         try:
+            continuation = self.catalog.resume_invalidations(
+                # This is a separate bounded frontier, not the root retirement
+                # batch count. One scheduled invocation can drain broad graphs.
+                max_batches=1000,
+                max_seconds=min(max_seconds, 120),
+            )
+            result["invalidation_progress"] = continuation
+            if continuation["pending"]:
+                raise _BudgetExhausted("invalidation_pending")
             for _ in range(max_batches):
                 budget.check()
                 batch = self._retire_expired(budget=budget)
@@ -752,7 +821,7 @@ class Maintenance:
             stop_reason = str(error)
 
         cursor = None
-        if stop_reason not in {"deadline", "retention_closure_limit"}:
+        if stop_reason not in {"deadline", "retention_closure_limit", "invalidation_pending"}:
             while result["attempted_objects"] < max_objects:
                 try:
                     budget.check()
@@ -801,6 +870,7 @@ class Maintenance:
         result.update(self.retention_backlog())
         outstanding = (
             result["expired_root_count"]
+            or result["pending_source_invalidations"]
             or result["pending_objects"]
             or result["pending_finalization_count"]
             or result["pending_artifact_gc_count"]
@@ -916,45 +986,9 @@ class Maintenance:
 
     @staticmethod
     def _repair_entity_origins(connection: Connection[dict[str, Any]]) -> int:
-        # Use manifest metadata only; do not materialize historical Parquet under this lock.
-        connection.execute(
-            "CREATE TEMP TABLE retention_entity_replacements ON COMMIT DROP AS "
-            "SELECT e.entity_key,e.synthetic,replacement.dataset_id,replacement.account_id "
-            "FROM entities e JOIN retention_targets expired "
-            "ON expired.dataset_id=e.origin->>'dataset_id' "
-            "CROSS JOIN LATERAL ("
-            "SELECT d.dataset_id,CASE WHEN d.manifest->'task_request'->>'source'=e.source "
-            "THEN COALESCE(NULLIF(d.manifest->'task_request'->>'account_id',''),e.account_id) "
-            "ELSE e.account_id END AS account_id "
-            "FROM datasets d JOIN source_policies policy ON policy.source=d.source "
-            "WHERE d.state='committed' AND d.source=e.source AND d.synthetic=e.synthetic "
-            "AND policy.verified AND d.created_at>=clock_timestamp()-"
-            "policy.retention_days*interval '1 day' "
-            "AND d.manifest @> jsonb_build_object('normalized',jsonb_build_array("
-            "jsonb_build_object('entity_keys',jsonb_build_array(e.entity_key)))) "
-            "ORDER BY COALESCE(d.manifest->'task_request'->>'source'=e.source "
-            "AND NULLIF(d.manifest->'task_request'->>'account_id','') IS NOT NULL "
-            "AND ((e.source IN ('tiktok_ads','tiktok_commercial') "
-            "AND d.manifest->'task_request'->>'operation'='query') "
-            "OR (e.source='tiktok_display' "
-            "AND d.manifest->'task_request'->>'operation' IN ('query','list'))),false) DESC,"
-            "d.max_available_at DESC NULLS LAST,d.committed_at DESC,d.dataset_id LIMIT 1"
-            ") replacement"
-        )
-        restored = connection.execute(
-            "UPDATE entities e SET account_id=replacement.account_id,"
-            "title='',attributes='{}',origin=jsonb_build_object("
-            "'dataset_id',replacement.dataset_id,'source',e.source) "
-            "FROM retention_entity_replacements replacement "
-            "WHERE e.entity_key=replacement.entity_key AND e.synthetic=replacement.synthetic"
-        ).rowcount
-        # Current fresh origins are untouched. Expired metadata has no remaining provenance.
-        connection.execute(
-            "UPDATE entities SET title='',attributes='{}',"
-            "origin='{\"retention_purged\":true}'::jsonb "
-            "WHERE origin->>'dataset_id' IN (SELECT dataset_id FROM retention_targets)"
-        )
-        return restored
+        from .retirement import repair_entity_origins
+
+        return repair_entity_origins(connection)
 
     def _delete_pending_objects(
         self,

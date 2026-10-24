@@ -134,6 +134,7 @@ class Scheduler:
             raise ValueError("Scheduling budget must be an integer between 0 and 10000")
         supplied = SchedulerPolicy.model_validate(policy) if policy is not None else None
         with self.catalog.transaction() as connection:
+            self.catalog.guard_namespace(connection, synthetic)
             # One planner per workspace; collectors retain independent row leases.
             connection.execute("SELECT pg_advisory_xact_lock(%s)", (492371210 + int(synthetic),))
             clock = connection.execute("SELECT clock_timestamp() AS checked_at").fetchone()

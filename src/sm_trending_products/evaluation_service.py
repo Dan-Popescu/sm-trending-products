@@ -12,7 +12,7 @@ from psycopg.types.json import Jsonb
 
 from .analytics import AssessmentIdentity
 from .assessment_service import AssessmentService
-from .catalog import Catalog
+from .catalog import Catalog, InvalidationPending
 from .collector import redact
 from .contracts import (
     AssessmentPolicy,
@@ -565,6 +565,7 @@ class EvaluationService:
     def _claim_forward(self, cutoff: datetime, synthetic: bool) -> dict | None:
         token = uuid4().hex
         with self.catalog.transaction() as connection:
+            self.catalog.guard_namespace(connection, synthetic)
             connection.execute(
                 "WITH cleanup AS (SELECT f.evaluation_id,r.invalidated "
                 "FROM forward_frontier f JOIN evaluation_runs r USING(evaluation_id) "
@@ -656,6 +657,18 @@ class EvaluationService:
                 result["evaluations"].append(evaluation["evaluation_id"])
                 result["decisions"].append(decision_id)
                 result["processed"] += 1
+            except InvalidationPending:
+                # A late retirement fence is temporary backpressure, not an
+                # outcome failure. Preserve its due time for the next attempt.
+                self.catalog.execute(
+                    "UPDATE forward_frontier f SET state=CASE WHEN EXISTS ("
+                    "SELECT 1 FROM evaluation_runs r WHERE r.evaluation_id=f.evaluation_id "
+                    "AND r.invalidated) THEN 'invalidated' ELSE 'pending' END,"
+                    "lease_token=NULL,lease_until=NULL,attempts=GREATEST(0,attempts-1) "
+                    "WHERE evaluation_id=%s AND lease_token=%s",
+                    (decision_id, token),
+                )
+                raise
             except Exception:
                 invalid = self.catalog.one(
                     "SELECT invalidated FROM evaluation_runs WHERE evaluation_id=%s",

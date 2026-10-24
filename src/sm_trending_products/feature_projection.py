@@ -291,6 +291,8 @@ class FeatureProjection:
             return ProjectionRead({}, {}, {}, {})
         with self.catalog.transaction() as connection:
             self.catalog.guard_retention(connection)
+            for namespace in {scope.product.synthetic for scope in scopes}:
+                self.catalog.guard_namespace(connection, namespace)
             frontiers = self._frontiers(connection, scopes)
             records = connection.execute(
                 "SELECT p.*,d.state AS audit_state,i.state AS input_audit_state "
@@ -361,7 +363,7 @@ class FeatureProjection:
         valid_through = projection_valid_through(observations, cutoff, policy)
         input_root = input_provenance["root"]["key"] if input_provenance else None
         with self.catalog.transaction() as connection:
-            self.catalog.guard_retention(connection)
+            self.catalog.guard_namespace(connection, scope.product.synthetic)
             current = self._frontiers(connection, [scope])[scope.product.product_id]
             if current != frontier:
                 return False
@@ -449,6 +451,8 @@ class FeatureProjection:
         limit = history.settings.analysis_max_rows_per_batch
         with self.catalog.transaction() as connection:
             self.catalog.guard_retention(connection)
+            for namespace in {scope.product.synthetic for scope in scopes}:
+                self.catalog.guard_namespace(connection, namespace)
             frontiers = self._frontiers(connection, scopes)
             manifests = list(
                 self.catalog.iter_manifests(
@@ -731,7 +735,7 @@ class FeatureProjection:
             ),
         )
         with self.catalog.transaction() as connection:
-            self.catalog.guard_retention(connection)
+            self.catalog.guard_namespace(connection, scope.product.synthetic)
             if self._frontiers(connection, [scope])[scope.product.product_id] != window.frontier:
                 return False
             root = connection.execute(
@@ -761,7 +765,7 @@ class FeatureProjection:
             if staged.rowcount != 1:
                 return False
         with self.catalog.transaction() as connection:
-            self.catalog.guard_retention(connection)
+            self.catalog.guard_namespace(connection, scope.product.synthetic)
             current = connection.execute(
                 "SELECT 1 FROM feature_product_windows w JOIN derived_publications p "
                 "ON p.object_key=w.audit_root WHERE w.product_id=%s AND w.descriptor=%s "
@@ -803,6 +807,8 @@ class FeatureProjection:
         namespaces = [synthetic for synthetic, _key in identities]
         with self.catalog.transaction() as connection:
             self.catalog.guard_retention(connection)
+            for namespace in {scope.product.synthetic for scope in scopes}:
+                self.catalog.guard_namespace(connection, namespace)
             connection.execute(
                 "INSERT INTO feature_source_frontiers(entity_key,synthetic,generation) "
                 "SELECT entity_key,synthetic,nextval('feature_source_generation') "

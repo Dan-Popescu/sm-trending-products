@@ -32,11 +32,13 @@ sm-trends retention --apply --drain --max-seconds 60 --max-objects 5000
 sm-trends compact --drain --max-batches 12 --max-seconds 60
 ```
 
-Retention preview and old single-pass apply remain unchanged unless `--drain` is
-specified. The scheduled job distinguishes expected budget-limited partial work
-from remote failures or an atomic closure that exceeds its safe limit. Budget
-backlog is recorded for the next run; actual deletion failures and blocked
-closures fail the job and retain all uncompleted work for retry.
+Ordinary small retention previews and single-pass apply retain their existing
+behavior. Wide previews report an explicit lower bound instead of computing an
+unbounded shared-object closure. Use `--drain` to continue oversized removals.
+The scheduled job distinguishes expected partial work from remote failures and
+inconsistent artifact lifecycles. Budget backlog and pending invalidations remain
+durable for the next iteration; deletion failures and inconsistent lifecycles fail
+the job and retain uncompleted work for retry.
 
 ## Retention
 
@@ -54,10 +56,35 @@ lineage and shared-object closure is invalidated under the existing publication
 fence before objects become eligible for deletion. Each affected metadata family
 and object queue is limited to 10,000 rows per transaction. If that limit is
 exceeded, the transaction rolls back and retries with half as many roots, down
-to one. A single root exceeding the atomic limit rejects with `status=blocked`
-and `stop_reason=retention_closure_limit`; it never retires an arbitrary subset
-of a restricted lineage. Resolve that unusually large shared lineage before
-retrying. The result does not claim restriction-driven deletion has completed.
+to one. A bounded immediate-work probe also detects more than 1,000 adjacent
+dependencies, and a two-second statement timeout catches expensive hidden
+closures even below the output-count cap.
+
+An oversized single root registers a durable source invalidation and returns
+`status=partial`, `stop_reason=invalidation_pending`. Its live or synthetic
+namespace denies evidence reads and publication until all affected lifecycles
+are retired. Other products in that same namespace temporarily retry too; the
+opposite namespace and operational status remain available. Unknown legacy
+object-key namespaces conservatively share the gate. No timeout clears a gate.
+
+The next worker or maintenance iteration discovers and applies bounded frontier
+chunks of at most 1,000 work units. Discovery completes before lifecycle changes;
+progress and each chunk's changes commit together. Each maintenance invocation
+can resume up to 1,000 continuation chunks within its existing time budget,
+independently of `max_batches` for ordinary root/finalization batches. Object
+deletion continues through the existing retention outbox after retirement.
+`invalidation_progress` reports this separate work; ordinary `dataset_count`
+counts the synchronous retirement batches performed by the call.
+
+The CLI collection daemon keeps running on typed `InvalidationPending`: it drains
+bounded work, briefly yields while progress continues, and backs off on contention.
+It neither exits for Docker restart backoff nor waits for a human to refresh a
+page. An in-flight collection or outcome interrupted by a newly committed gate
+releases its lease without consuming a failure attempt; an outcome keeps its
+original due time. Status includes `pending_invalidations`. Normal PostgreSQL
+dumps include both continuation relations, so a restored pending gate remains
+closed before automatic continuation. Application initialization preserves the
+checkpoint rather than silently altering its fingerprint.
 
 Pending keys are read in stable `(created_at, object_key)` pages of at most 1,000.
 A failed key remains pending with its safe error category and attempt count; the
@@ -85,10 +112,12 @@ to collect other eligible relations. Repair the inconsistent evaluation lifecycl
 before retrying. SQL deletion makes dead row space reusable through PostgreSQL
 vacuum; it does not immediately shrink relation files on disk.
 
-The time limit does not cancel an already running database statement, cache-lock
-wait or storage call. Existing statement/network timeouts and bounded SDK retries
-still apply. API-operation accounting excludes the SDK's additional transport
-retry attempts; the storage usage counters record HTTP attempts separately.
+The overall maintenance time limit remains cooperative between ordinary database
+statements, cache-lock waits and storage calls. Continuation statements additionally
+use the caller's remaining deadline, capped at five seconds, with a 250 ms row-lock
+timeout and nonblocking advisory-lock acquisition. Existing network timeouts and
+bounded SDK retries still apply. API-operation accounting excludes the SDK's
+additional transport retry attempts; storage counters record HTTP attempts.
 
 Results include processed dataset/key counts, `operations`, `elapsed_seconds`,
 `status` and `stop_reason`. The following counters describe all remaining durable
@@ -98,7 +127,8 @@ work, independently from the at-most-1,000 returned dataset identifiers:
 - `pending_objects` and `oldest_pending_object_age_seconds`;
 - `pending_finalization_count`;
 - `pending_artifact_gc_count` (deleted publications whose associations are not
-  fully collected).
+  fully collected);
+- `pending_source_invalidations` (namespace-gated source removals).
 
 `artifact_relations_deleted` counts association rows removed during this call;
 `artifact_gc_completed_parents` counts publication tombstones whose association
@@ -106,10 +136,12 @@ cleanup finished. These metrics are included in scheduled retention metadata.
 An invocation with pending artifact cleanup cannot report `status=complete`.
 
 `preview_truncated` describes whether affected dataset identifiers were omitted.
-An ordinary read-only preview still covers one root batch and separately reports
-the global expired-root backlog. Remote denial and exhausted budgets remain
-visible as partial work, not successful deletion. Retention applies to both live
-and synthetic evidence under verified source policies, as before.
+`dataset_count_is_lower_bound=true` and `preview_scope=expired_roots_only` identify
+a wide preview whose reported count omits undiscovered descendants; it does not
+claim to be a full closure count. A bounded ordinary preview uses
+`preview_scope=bounded_closure` and still separately reports the global expired-root
+backlog. Remote denial and exhausted budgets remain visible as partial work.
+Retention applies to live and synthetic evidence under verified source policies.
 
 ## Compaction
 
