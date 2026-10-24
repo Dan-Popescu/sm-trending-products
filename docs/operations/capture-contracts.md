@@ -39,6 +39,19 @@ committed after its cutoff. An unknown sampling contract reports an unqualified
 window and a null deadline/lateness; a missing tolerance is not invented as zero.
 One bounded call returns at most 200 obligations.
 
+`authorized_withdrawal` is a separate outcome backed by immutable scoped removal
+authority. Its nested `withdrawal` audit retains the exact attempt, physical local
+capture clock when present, reason, authority and retirement time. `capture_status`
+reports the actual committed-capture outcome independently. Removing a locally
+secured unpublished response never fabricates a dataset receipt. Existing original
+due times and deadlines remain visible, and any lateness before withdrawal stays
+in the audit. Historical status does not expose later withdrawal decisions.
+
+An ordinary cancelled task or an old diagnostic attempt is insufficient authority
+to withdraw a different uncaptured attempt. Only an exact acknowledged receipt or
+an exact cancelled task/page/attempt can leave the pending pause frontier through
+this removal protocol. Other failed, quarantined and unknown windows remain.
+
 For a positive planned blackout, pause admission includes:
 
 - Original oldest uncaptured windows, including older still-pending policy versions.

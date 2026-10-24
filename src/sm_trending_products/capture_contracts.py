@@ -19,6 +19,21 @@ from .collector import redact
 from .contracts import Contract, digest, utc
 from .source_contracts import canonical_operation, credential_keys
 
+# A diagnostic attempt's retirement does not withdraw a later physical attempt
+# of the same original window. A missing receipt needs exact cancelled ownership;
+# an acknowledged receipt needs its exact retired capture identity.
+_WITHDRAWAL_JOIN = (
+    "LEFT JOIN LATERAL (SELECT r.* FROM capture_spool_retirements r "
+    "JOIN collection_tasks t ON t.task_id=r.task_id "
+    "WHERE r.task_id=o.task_id AND r.page_index=o.page_index "
+    "AND r.source=o.source AND r.account_id=o.account_id AND r.synthetic=o.synthetic "
+    "AND t.operation=o.operation AND r.retired_at<=%s "
+    "AND (r.capture_id=o.capture_dataset_id OR (o.capture_dataset_id IS NULL "
+    "AND t.state='cancelled' AND t.page_index=r.page_index "
+    "AND t.capture_attempt=r.capture_attempt)) "
+    "ORDER BY r.retired_at DESC,r.capture_id LIMIT 1) w ON true "
+)
+
 
 class CapturePolicy(Contract):
     source: str = Field(min_length=1)
@@ -120,18 +135,31 @@ class CaptureContracts:
             raise ValueError("Capture status limit must be between 1 and 200")
         cutoff = utc(as_of)
         rows = self.catalog.all(
-            "SELECT o.*,d.state AS dataset_state,p.version AS contract_version "
+            "SELECT o.*,d.state AS dataset_state,p.version AS contract_version,"
+            "CASE WHEN w.capture_id IS NOT NULL THEN to_jsonb(w) END AS withdrawal "
             "FROM capture_obligations o LEFT JOIN datasets d "
             "ON d.dataset_id=o.capture_dataset_id LEFT JOIN capture_policies p USING(contract_id) "
-            "WHERE o.synthetic=%s AND o.original_due_at<=%s AND o.created_at<=%s "
+            + _WITHDRAWAL_JOIN
+            + "WHERE o.synthetic=%s AND o.original_due_at<=%s AND o.created_at<=%s "
             "ORDER BY o.original_due_at,o.obligation_id LIMIT %s",
-            (synthetic, cutoff, cutoff, limit),
+            (cutoff, synthetic, cutoff, cutoff, limit),
         )
         for row in rows:
             captured = row["durable_at"] is not None and row["durable_at"] <= cutoff
             qualified = row["deadline_at"] is not None
+            row["capture_status"] = (
+                "not_captured"
+                if not captured
+                else "captured_unqualified"
+                if not qualified
+                else "captured_late"
+                if row["captured_at"] > row["deadline_at"]
+                else "captured"
+            )
             row["status"] = (
-                "retired"
+                "authorized_withdrawal"
+                if row["withdrawal"] is not None
+                else "retired"
                 if captured and row["dataset_state"] != "committed"
                 else "captured_unqualified"
                 if captured and not qualified
@@ -149,7 +177,14 @@ class CaptureContracts:
                 max(
                     0.0,
                     (
-                        (row["captured_at"] if captured else cutoff) - row["deadline_at"]
+                        (
+                            row["captured_at"]
+                            if captured
+                            else utc(row["withdrawal"]["retired_at"])
+                            if row["withdrawal"] is not None
+                            else cutoff
+                        )
+                        - row["deadline_at"]
                     ).total_seconds(),
                 )
                 if qualified
@@ -209,10 +244,12 @@ class CaptureContracts:
             "SELECT o.contract_id,min(o.original_due_at) AS oldest_due_at,count(*) AS count,"
             "bool_or(o.due_origin='legacy_created_bound') AS unknown_window "
             "FROM capture_obligations o LEFT JOIN datasets d ON d.dataset_id=o.capture_dataset_id "
-            "WHERE o.synthetic=%s AND o.original_due_at<=%s AND o.created_at<=%s "
+            + _WITHDRAWAL_JOIN
+            + "WHERE o.synthetic=%s AND o.original_due_at<=%s AND o.created_at<=%s "
+            "AND w.capture_id IS NULL "
             "AND (o.durable_at IS NULL OR o.durable_at>%s "
             "OR d.state IS DISTINCT FROM 'committed') GROUP BY o.contract_id",
-            (synthetic, cutoff, cutoff, cutoff),
+            (cutoff, synthetic, cutoff, cutoff, cutoff),
         )
         by_id = {row["contract_id"]: row for row in policies}
         # Frozen older contracts constrain their pending windows even after a new
