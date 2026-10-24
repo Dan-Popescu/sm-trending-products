@@ -146,6 +146,15 @@ def test_retained_history_counts_real_rows_and_checks_warm_delta_evicted_results
     assert imports["metrics"]["get_requests"] == 0
     assert report["phases"]["evicted"]["analysis_work"]["full_windows"] == 3
     assert report["checks"]["sampled_complete_oracle"]
+    assert report["checks"]["evicted_exact_publication"]
+    assert (
+        report["phases"]["cold"]["publication_sha256"]
+        == report["phases"]["warm_same_cutoff"]["publication_sha256"]
+    )
+    assert (
+        report["phases"]["refresh_1"]["publication_sha256"]
+        == report["phases"]["evicted"]["publication_sha256"]
+    )
     assert report["cleanup"] == {"schema_removed": True, "working_directory_removed": True}
     assert json.loads(output.read_text())["seeded_products"] == 3
     assert os.environ["TEST_DATABASE_URL"] not in output.read_text()
@@ -177,3 +186,28 @@ def test_existing_report_is_not_overwritten_by_a_new_measurement(tmp_path, monke
         RUNNER.run(RUNNER.arguments(["--products", "1", "--output", str(output)]))
     assert output.read_bytes() == original
     assert list(tmp_path.iterdir()) == [output]
+
+
+@pytest.mark.integration
+def test_eviction_without_refresh_matches_the_original_cold_publication(pipeline, tmp_path):
+    report = RUNNER.run(
+        RUNNER.arguments(
+            [
+                "--products",
+                "1",
+                "--videos-per-product",
+                "1",
+                "--refresh-waves",
+                "0",
+                "--deadline-seconds",
+                "60",
+                "--output",
+                str(tmp_path / "cold-only.json"),
+            ]
+        )
+    )
+    assert report["ok"] and report["checks"]["evicted_exact_publication"]
+    assert (
+        report["phases"]["cold"]["publication_sha256"]
+        == report["phases"]["evicted"]["publication_sha256"]
+    )

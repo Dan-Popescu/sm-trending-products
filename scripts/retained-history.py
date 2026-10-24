@@ -59,7 +59,12 @@ def arguments(argv=None):
     parser.add_argument("--max-rss-bytes", type=int, default=2 * GIB)
     parser.add_argument("--min-disk-free-bytes", type=int, default=2 * GIB)
     parser.add_argument("--max-owned-disk-bytes", type=int, default=24 * GIB)
-    parser.add_argument("--deadline-seconds", type=float, default=1800)
+    parser.add_argument(
+        "--deadline-seconds",
+        type=float,
+        default=14400,
+        help="Wall-clock guard for the entire case (default: 4 hours)",
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -406,9 +411,17 @@ def worker(config_path):
                     raise ValueError(
                         "Selected analytical observation count differs from the declared window"
                     )
+                seconds = time.perf_counter() - start
+                cpu_seconds = time.process_time() - cpu_start
+                # Hash outside the timed assessment, excluding the API-only run_id.
+                body = {key: value for key, value in payload.items() if key != "run_id"}
+                publication_sha256 = hashlib.sha256(canonical(body).encode()).hexdigest()
+                if publication_sha256 != payload["run_id"]:
+                    raise ValueError("Assessment run ID differs from its published body hash")
                 report["phases"][name] = {
-                    "seconds": time.perf_counter() - start,
-                    "cpu_process_seconds": time.process_time() - cpu_start,
+                    "seconds": seconds,
+                    "cpu_process_seconds": cpu_seconds,
+                    "publication_sha256": publication_sha256,
                     "metrics": {
                         key: pipeline.history.metrics[key] - value for key, value in before.items()
                     },
@@ -493,6 +506,7 @@ def worker(config_path):
             if canonical(initial) != canonical(warm):
                 raise ValueError("Warm result differs from exact cold publication")
             report["checks"]["cold_warm_exact_publication"] = True
+            last_publication_sha256 = report["phases"]["cold"]["publication_sha256"]
             sampled_oracle(initial, cutoff)
             del initial, warm
             for wave in range(config["refresh_waves"]):
@@ -529,12 +543,16 @@ def worker(config_path):
                         publish()
                 at = cutoff + timedelta(hours=hours * (wave + 1))
                 changed = phase(wave_name, at)
+                last_publication_sha256 = report["phases"][wave_name]["publication_sha256"]
                 sampled_oracle(changed, at)
                 report["refresh_waves_completed"] = wave + 1
                 publish()
             evict_files(settings.cache_dir)
             pipeline.catalog.execute("DELETE FROM feature_product_projections")
             phase("evicted", cutoff + timedelta(hours=hours * config["refresh_waves"]))
+            if report["phases"]["evicted"]["publication_sha256"] != last_publication_sha256:
+                raise ValueError("Evicted result differs from the last publication at that cutoff")
+            report["checks"]["evicted_exact_publication"] = True
             report["checks"]["cache_budget"] = (
                 cache_files(settings.cache_dir) <= settings.cache_max_bytes
             )

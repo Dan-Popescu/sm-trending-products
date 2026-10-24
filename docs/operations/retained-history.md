@@ -21,6 +21,9 @@ store. Each case owns a fresh random schema and working directory. The superviso
 removes only these resources, retaining the result JSON and worker log. A deadline,
 process-memory or disk stop retains the original request and partial progress;
 it is an unsuccessful measurement, not an automatic smaller workload.
+The default wall-clock guard is four hours: the earlier 30-minute default could not
+complete its own dense 1,000-product workload. Pass a shorter explicit deadline
+when intentionally probing a stop boundary.
 Use a fresh output path for each experiment; existing reports and harness archives are never overwritten.
 
 Each new case also archives the exact harness source beside the JSON and records
@@ -60,6 +63,13 @@ The supervisor's elapsed time also includes oracle verification and observation.
 The example declares a four-hour guard so dense retained history can complete
 rather than implicitly assuming a small-data deadline will suffice.
 
+Each phase records
+the SHA256 of the canonical published body, excluding the API-only `run_id`, and
+verifies it matches that content-addressed run ID. The final cache-evicted rebuild
+must exactly reproduce the last refresh publication (or cold when there are no
+refresh waves). Hash calculation is outside the recorded phase wall/CPU time;
+only the hash is retained for the comparison.
+
 HTTP Moto retains payloads up to 32 KiB in RAM and spools larger payloads into
 the owned working directory. The threshold is recorded, along with the unchanged
 soft/hard descriptor limit and an estimated upper bound on spilled-object FDs.
@@ -93,3 +103,7 @@ profiled timings separate from ordinary capacity measurements. Increase products
 progressively (1,000, 5,000, 10,000) and history (30, 90 days), preserving failed
 or stopped cases. Do not infer a successful 72-million-observation run from a
 smaller test or multiply a single-product latency into a capacity certificate.
+
+Executed cases, source mappings and measured limits are recorded in the
+[retained-history evidence](../verification/retained/README.md). The scripted
+workload and a successful seed phase alone do not establish full-case acceptance.

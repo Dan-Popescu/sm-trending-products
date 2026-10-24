@@ -1,0 +1,2037 @@
+{
+  "cases": {
+    "dense_1mb": {
+      "checks": {
+        "cache_budget": true,
+        "cold_warm_exact_publication": true,
+        "sampled_complete_oracle": true
+      },
+      "cleanup": {
+        "schema_removed": true,
+        "working_directory_removed": true
+      },
+      "commit": "045dc658f83b3860f6cbc806e2845125a3dad8de",
+      "current_phase": "evicted",
+      "cutoff": "2026-10-24T13:37:50.274789+00:00",
+      "evidence": {
+        "acceptance": "complete, all requested rows/counts/oracles/cache guards passed",
+        "original_report_name": "retained-cache-1mb.json",
+        "original_report_sha256": "3ed2d185d6250c3be4b26e9752f5ce87703ac5a9564d86f16fd27bbbab851c78"
+      },
+      "final_inventory": {
+        "datasets": {
+          "count": 12,
+          "observations": 14520
+        },
+        "derivations": {
+          "bytes": 1151694,
+          "objects": 262
+        },
+        "manifests": {
+          "canonical_bytes": 22296,
+          "objects": 12
+        },
+        "normalized": {
+          "bytes": 664199,
+          "objects": 12
+        },
+        "raw": {
+          "bytes": 692571,
+          "objects": 12
+        },
+        "sql": {
+          "total_bytes": 13484032
+        },
+        "wal_lsn": "C/1349D820"
+      },
+      "hardware": {
+        "affinity_cpus": 5,
+        "architecture": "x86_64",
+        "cgroup": {
+          "cpu.max": "400000 100000",
+          "cpu.stat": "usage_usec 9933213283\nuser_usec 8266873563\nsystem_usec 1666339720\nnice_usec 0\nnr_periods 70789\nnr_throttled 574\nthrottled_usec 19305285\nnr_bursts 0\nburst_usec 0",
+          "memory.current": "9724690432",
+          "memory.max": "17179869184",
+          "pids.max": "max"
+        },
+        "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
+        "disk_free_bytes": 10596900864,
+        "disk_total_bytes": 33770192896,
+        "filesystem": "overlayfs",
+        "kernel": "6.18.55",
+        "logical_cpus": 5,
+        "memory_headroom_bytes": 7455178752,
+        "os": "Linux",
+        "python": "3.12.14"
+      },
+      "harness_sha256": "bef1fc190a07d27107cd7ff7d4d22262e84145273e5d18ca4427fea59a1d6a0c",
+      "ok": true,
+      "oracle": {
+        "products": [
+          "p0",
+          "p3",
+          "p5"
+        ],
+        "scope": "complete rows and reference IDs; equal trajectory fixture makes sampled cohort rank identical"
+      },
+      "phases": {
+        "cold": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 6,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 937858,
+          "cpu_process_seconds": 2.770288754,
+          "inventory": {
+            "datasets": {
+              "count": 6,
+              "observations": 14400
+            },
+            "derivations": {
+              "bytes": 1073331,
+              "objects": 242
+            },
+            "manifests": {
+              "canonical_bytes": 11166,
+              "objects": 6
+            },
+            "normalized": {
+              "bytes": 608313,
+              "objects": 6
+            },
+            "raw": {
+              "bytes": 684356,
+              "objects": 6
+            },
+            "sql": {
+              "total_bytes": 13115392
+            },
+            "wal_lsn": "C/D18B4F8"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 608313,
+            "get_requests": 6,
+            "head_requests": 0,
+            "http_attempts": 248,
+            "put_requests": 242,
+            "upload_bytes": 1073331
+          },
+          "rows": 6,
+          "seconds": 4.940215325999816,
+          "selected_observations": 14400
+        },
+        "evicted": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 6,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 988445,
+          "cpu_process_seconds": 0.979333961,
+          "inventory": {
+            "datasets": {
+              "count": 12,
+              "observations": 14520
+            },
+            "derivations": {
+              "bytes": 1151694,
+              "objects": 262
+            },
+            "manifests": {
+              "canonical_bytes": 22296,
+              "objects": 12
+            },
+            "normalized": {
+              "bytes": 664199,
+              "objects": 12
+            },
+            "raw": {
+              "bytes": 692571,
+              "objects": 12
+            },
+            "sql": {
+              "total_bytes": 13484032
+            },
+            "wal_lsn": "C/1349D820"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 664199,
+            "get_requests": 12,
+            "head_requests": 1,
+            "http_attempts": 14,
+            "put_requests": 1,
+            "upload_bytes": 0
+          },
+          "rows": 6,
+          "seconds": 1.1104392939996615,
+          "selected_observations": 14520
+        },
+        "refresh_1": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 6,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 973509,
+          "cpu_process_seconds": 1.0895243189999988,
+          "inventory": {
+            "datasets": {
+              "count": 12,
+              "observations": 14520
+            },
+            "derivations": {
+              "bytes": 1151694,
+              "objects": 262
+            },
+            "manifests": {
+              "canonical_bytes": 22296,
+              "objects": 12
+            },
+            "normalized": {
+              "bytes": 664199,
+              "objects": 12
+            },
+            "raw": {
+              "bytes": 692571,
+              "objects": 12
+            },
+            "sql": {
+              "total_bytes": 13434880
+            },
+            "wal_lsn": "C/10CF19E0"
+          },
+          "metrics": {
+            "cache_hits": 1,
+            "download_bytes": 562780,
+            "get_requests": 11,
+            "head_requests": 0,
+            "http_attempts": 31,
+            "put_requests": 20,
+            "upload_bytes": 78363
+          },
+          "rows": 6,
+          "seconds": 1.286490970000159,
+          "selected_observations": 14520
+        },
+        "warm_same_cutoff": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 0,
+            "projection_hits": 6,
+            "projection_misses": 0
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 937858,
+          "cpu_process_seconds": 0.034950269999999506,
+          "inventory": {
+            "datasets": {
+              "count": 6,
+              "observations": 14400
+            },
+            "derivations": {
+              "bytes": 1073331,
+              "objects": 242
+            },
+            "manifests": {
+              "canonical_bytes": 11166,
+              "objects": 6
+            },
+            "normalized": {
+              "bytes": 608313,
+              "objects": 6
+            },
+            "raw": {
+              "bytes": 684356,
+              "objects": 6
+            },
+            "sql": {
+              "total_bytes": 13131776
+            },
+            "wal_lsn": "C/D1A9488"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 0,
+            "get_requests": 0,
+            "head_requests": 1,
+            "http_attempts": 2,
+            "put_requests": 1,
+            "upload_bytes": 0
+          },
+          "rows": 6,
+          "seconds": 0.0629535610005405,
+          "selected_observations": 14400
+        }
+      },
+      "postgresql": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+      "refresh_imports": {
+        "refresh_1": {
+          "completed_products": 6,
+          "cpu_process_seconds": 0.128632725000001,
+          "imported_observations": 120,
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 0,
+            "get_requests": 0,
+            "head_requests": 0,
+            "http_attempts": 18,
+            "put_requests": 18,
+            "upload_bytes": 75231
+          },
+          "requested_observations": 120,
+          "requested_products": 6,
+          "seconds": 0.2122576889996708
+        }
+      },
+      "refresh_waves_completed": 1,
+      "requested": {
+        "analysis_product_batch_size": 1,
+        "cache_bytes": 1000000,
+        "deadline_seconds": 180.0,
+        "history_days": 30,
+        "hot_product_batch_rows": 100,
+        "hot_products": 0,
+        "max_owned_disk_bytes": 200000000,
+        "max_rss_bytes": 2147483648,
+        "min_disk_free_bytes": 2147483648,
+        "products": 6,
+        "profile": false,
+        "refresh_waves": 1,
+        "refreshes_per_day": 4,
+        "seed_batch_rows": 5000,
+        "shared_products_per_import": 1,
+        "videos_per_product": 20
+      },
+      "scope": {
+        "analytical_lookback_days": 30,
+        "layout": "bounded product-major retained timelines; configured groups share imports; not one object per upstream request",
+        "object_store": "HTTP Moto, 32 KiB RAM/spool threshold; no provider latency claim",
+        "observed_history_span_hours": 714,
+        "postgresql_resources": "schema relation bytes measured; database server CPU/RSS and per-schema WAL attribution unavailable",
+        "source": "synthetic explicit imports, not live HTTP collection",
+        "stack": "application and Moto same child; PostgreSQL resources separately reported; Dagster/dashboard not running",
+        "wal_lsn_scope": "server-global position; concurrent schemas may contribute"
+      },
+      "seed_inventory": {
+        "datasets": {
+          "count": 6,
+          "observations": 14400
+        },
+        "derivations": {
+          "bytes": 0,
+          "objects": 0
+        },
+        "manifests": {
+          "canonical_bytes": 11166,
+          "objects": 6
+        },
+        "normalized": {
+          "bytes": 608313,
+          "objects": 6
+        },
+        "raw": {
+          "bytes": 684356,
+          "objects": 6
+        },
+        "sql": {
+          "total_bytes": 12484608
+        },
+        "wal_lsn": "C/80EFF38"
+      },
+      "seed_metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 20,
+        "put_requests": 18,
+        "upload_bytes": 1303835
+      },
+      "seed_seconds": 3.9271179319985094,
+      "seeded_observations": 14400,
+      "seeded_products": 6,
+      "status": "complete",
+      "supervisor": {
+        "elapsed_seconds": 16.342029434001233,
+        "exit_code": 0,
+        "peak_discovered_rss_bytes": 309252096,
+        "peak_owned_disk_bytes": 4096,
+        "sample_summary": {
+          "minimum_free_disk_bytes": 10537664512,
+          "peak_open_file_descriptors": 25,
+          "samples": 16
+        }
+      },
+      "synthetic": true,
+      "test_adapter_budget": {
+        "estimated_source_datasets": 6,
+        "estimated_spill_fd_upper_bound": 1042,
+        "hard_fd_limit": 16384,
+        "key_buffer_bytes": 32768,
+        "soft_fd_limit": 16384
+      },
+      "total_storage_metrics": {
+        "cache_hits": 602,
+        "download_bytes": 2997668,
+        "get_requests": 271,
+        "head_requests": 2,
+        "http_attempts": 575,
+        "put_requests": 300,
+        "upload_bytes": 2530760
+      },
+      "updated_at": "2026-10-24T09:38:04.722550+00:00",
+      "versions": {
+        "boto3": "1.43.117",
+        "moto": "5.2.4",
+        "polars": "2.0.0",
+        "psycopg": "3.3.6",
+        "pyarrow": "26.0.0",
+        "pydantic": "2.14.1"
+      }
+    },
+    "dense_2mb": {
+      "checks": {
+        "cache_budget": true,
+        "cold_warm_exact_publication": true,
+        "sampled_complete_oracle": true
+      },
+      "cleanup": {
+        "schema_removed": true,
+        "working_directory_removed": true
+      },
+      "commit": "045dc658f83b3860f6cbc806e2845125a3dad8de",
+      "current_phase": "evicted",
+      "cutoff": "2026-10-24T13:36:33.811002+00:00",
+      "evidence": {
+        "acceptance": "complete, all requested rows/counts/oracles/cache guards passed",
+        "original_report_name": "retained-cache-2mb.json",
+        "original_report_sha256": "d391f0b61b7e5e202055e200d1b969cb478c13988f309249871783d818d813ab"
+      },
+      "final_inventory": {
+        "datasets": {
+          "count": 12,
+          "observations": 14520
+        },
+        "derivations": {
+          "bytes": 1151694,
+          "objects": 262
+        },
+        "manifests": {
+          "canonical_bytes": 22296,
+          "objects": 12
+        },
+        "normalized": {
+          "bytes": 664196,
+          "objects": 12
+        },
+        "raw": {
+          "bytes": 692507,
+          "objects": 12
+        },
+        "sql": {
+          "total_bytes": 13565952
+        },
+        "wal_lsn": "B/C5E7B2E0"
+      },
+      "hardware": {
+        "affinity_cpus": 5,
+        "architecture": "x86_64",
+        "cgroup": {
+          "cpu.max": "400000 100000",
+          "cpu.stat": "usage_usec 9826508216\nuser_usec 8173910503\nsystem_usec 1652597713\nnice_usec 0\nnr_periods 70024\nnr_throttled 574\nthrottled_usec 19305285\nnr_bursts 0\nburst_usec 0",
+          "memory.current": "9459863552",
+          "memory.max": "17179869184",
+          "pids.max": "max"
+        },
+        "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
+        "disk_free_bytes": 10840825856,
+        "disk_total_bytes": 33770192896,
+        "filesystem": "overlayfs",
+        "kernel": "6.18.55",
+        "logical_cpus": 5,
+        "memory_headroom_bytes": 7720005632,
+        "os": "Linux",
+        "python": "3.12.14"
+      },
+      "harness_sha256": "bef1fc190a07d27107cd7ff7d4d22262e84145273e5d18ca4427fea59a1d6a0c",
+      "ok": true,
+      "oracle": {
+        "products": [
+          "p0",
+          "p3",
+          "p5"
+        ],
+        "scope": "complete rows and reference IDs; equal trajectory fixture makes sampled cohort rank identical"
+      },
+      "phases": {
+        "cold": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 6,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 1247645,
+          "cpu_process_seconds": 2.4878899800000003,
+          "inventory": {
+            "datasets": {
+              "count": 6,
+              "observations": 14400
+            },
+            "derivations": {
+              "bytes": 1073331,
+              "objects": 242
+            },
+            "manifests": {
+              "canonical_bytes": 11166,
+              "objects": 6
+            },
+            "normalized": {
+              "bytes": 608308,
+              "objects": 6
+            },
+            "raw": {
+              "bytes": 684291,
+              "objects": 6
+            },
+            "sql": {
+              "total_bytes": 13099008
+            },
+            "wal_lsn": "B/C3032468"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 608308,
+            "get_requests": 6,
+            "head_requests": 0,
+            "http_attempts": 248,
+            "put_requests": 242,
+            "upload_bytes": 1073331
+          },
+          "rows": 6,
+          "seconds": 3.681737033999525,
+          "selected_observations": 14400
+        },
+        "evicted": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 6,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 1308302,
+          "cpu_process_seconds": 0.9790279509999991,
+          "inventory": {
+            "datasets": {
+              "count": 12,
+              "observations": 14520
+            },
+            "derivations": {
+              "bytes": 1151694,
+              "objects": 262
+            },
+            "manifests": {
+              "canonical_bytes": 22296,
+              "objects": 12
+            },
+            "normalized": {
+              "bytes": 664196,
+              "objects": 12
+            },
+            "raw": {
+              "bytes": 692507,
+              "objects": 12
+            },
+            "sql": {
+              "total_bytes": 13565952
+            },
+            "wal_lsn": "B/C5E7B2E0"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 664196,
+            "get_requests": 12,
+            "head_requests": 1,
+            "http_attempts": 14,
+            "put_requests": 1,
+            "upload_bytes": 0
+          },
+          "rows": 6,
+          "seconds": 1.1269396759998926,
+          "selected_observations": 14520
+        },
+        "refresh_1": {
+          "analysis_work": {
+            "delta_windows": 5,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 1,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 1958199,
+          "cpu_process_seconds": 1.087215518999999,
+          "inventory": {
+            "datasets": {
+              "count": 12,
+              "observations": 14520
+            },
+            "derivations": {
+              "bytes": 1151694,
+              "objects": 262
+            },
+            "manifests": {
+              "canonical_bytes": 22296,
+              "objects": 12
+            },
+            "normalized": {
+              "bytes": 664196,
+              "objects": 12
+            },
+            "raw": {
+              "bytes": 692507,
+              "objects": 12
+            },
+            "sql": {
+              "total_bytes": 13434880
+            },
+            "wal_lsn": "B/C44D91F0"
+          },
+          "metrics": {
+            "cache_hits": 6,
+            "download_bytes": 55888,
+            "get_requests": 6,
+            "head_requests": 0,
+            "http_attempts": 26,
+            "put_requests": 20,
+            "upload_bytes": 78363
+          },
+          "rows": 6,
+          "seconds": 1.294747139001629,
+          "selected_observations": 14520
+        },
+        "warm_same_cutoff": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 0,
+            "projection_hits": 6,
+            "projection_misses": 0
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 1247645,
+          "cpu_process_seconds": 0.03289912500000014,
+          "inventory": {
+            "datasets": {
+              "count": 6,
+              "observations": 14400
+            },
+            "derivations": {
+              "bytes": 1073331,
+              "objects": 242
+            },
+            "manifests": {
+              "canonical_bytes": 11166,
+              "objects": 6
+            },
+            "normalized": {
+              "bytes": 608308,
+              "objects": 6
+            },
+            "raw": {
+              "bytes": 684291,
+              "objects": 6
+            },
+            "sql": {
+              "total_bytes": 13115392
+            },
+            "wal_lsn": "B/C3037688"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 0,
+            "get_requests": 0,
+            "head_requests": 1,
+            "http_attempts": 2,
+            "put_requests": 1,
+            "upload_bytes": 0
+          },
+          "rows": 6,
+          "seconds": 0.058492176000072504,
+          "selected_observations": 14400
+        }
+      },
+      "postgresql": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+      "refresh_imports": {
+        "refresh_1": {
+          "completed_products": 6,
+          "cpu_process_seconds": 0.1443393060000009,
+          "imported_observations": 120,
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 0,
+            "get_requests": 0,
+            "head_requests": 0,
+            "http_attempts": 18,
+            "put_requests": 18,
+            "upload_bytes": 75234
+          },
+          "requested_observations": 120,
+          "requested_products": 6,
+          "seconds": 0.22108898400074395
+        }
+      },
+      "refresh_waves_completed": 1,
+      "requested": {
+        "analysis_product_batch_size": 1,
+        "cache_bytes": 2000000,
+        "deadline_seconds": 180.0,
+        "history_days": 30,
+        "hot_product_batch_rows": 100,
+        "hot_products": 0,
+        "max_owned_disk_bytes": 200000000,
+        "max_rss_bytes": 2147483648,
+        "min_disk_free_bytes": 2147483648,
+        "products": 6,
+        "profile": false,
+        "refresh_waves": 1,
+        "refreshes_per_day": 4,
+        "seed_batch_rows": 5000,
+        "shared_products_per_import": 1,
+        "videos_per_product": 20
+      },
+      "scope": {
+        "analytical_lookback_days": 30,
+        "layout": "bounded product-major retained timelines; configured groups share imports; not one object per upstream request",
+        "object_store": "HTTP Moto, 32 KiB RAM/spool threshold; no provider latency claim",
+        "observed_history_span_hours": 714,
+        "postgresql_resources": "schema relation bytes measured; database server CPU/RSS and per-schema WAL attribution unavailable",
+        "source": "synthetic explicit imports, not live HTTP collection",
+        "stack": "application and Moto same child; PostgreSQL resources separately reported; Dagster/dashboard not running",
+        "wal_lsn_scope": "server-global position; concurrent schemas may contribute"
+      },
+      "seed_inventory": {
+        "datasets": {
+          "count": 6,
+          "observations": 14400
+        },
+        "derivations": {
+          "bytes": 0,
+          "objects": 0
+        },
+        "manifests": {
+          "canonical_bytes": 11166,
+          "objects": 6
+        },
+        "normalized": {
+          "bytes": 608308,
+          "objects": 6
+        },
+        "raw": {
+          "bytes": 684291,
+          "objects": 6
+        },
+        "sql": {
+          "total_bytes": 12484608
+        },
+        "wal_lsn": "B/C0C1C6D8"
+      },
+      "seed_metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 20,
+        "put_requests": 18,
+        "upload_bytes": 1303765
+      },
+      "seed_seconds": 3.529829802000677,
+      "seeded_observations": 14400,
+      "seeded_products": 6,
+      "status": "complete",
+      "supervisor": {
+        "elapsed_seconds": 15.434818966999956,
+        "exit_code": 0,
+        "peak_discovered_rss_bytes": 313614336,
+        "peak_owned_disk_bytes": 4096,
+        "sample_summary": {
+          "minimum_free_disk_bytes": 10785091584,
+          "peak_open_file_descriptors": 24,
+          "samples": 15
+        }
+      },
+      "synthetic": true,
+      "test_adapter_budget": {
+        "estimated_source_datasets": 6,
+        "estimated_spill_fd_upper_bound": 1042,
+        "hard_fd_limit": 16384,
+        "key_buffer_bytes": 32768,
+        "soft_fd_limit": 16384
+      },
+      "total_storage_metrics": {
+        "cache_hits": 607,
+        "download_bytes": 2582797,
+        "get_requests": 266,
+        "head_requests": 2,
+        "http_attempts": 570,
+        "put_requests": 300,
+        "upload_bytes": 2530693
+      },
+      "updated_at": "2026-10-24T09:36:47.522432+00:00",
+      "versions": {
+        "boto3": "1.43.117",
+        "moto": "5.2.4",
+        "polars": "2.0.0",
+        "psycopg": "3.3.6",
+        "pyarrow": "26.0.0",
+        "pydantic": "2.14.1"
+      }
+    },
+    "dense_3mb": {
+      "checks": {
+        "cache_budget": true,
+        "cold_warm_exact_publication": true,
+        "sampled_complete_oracle": true
+      },
+      "cleanup": {
+        "schema_removed": true,
+        "working_directory_removed": true
+      },
+      "commit": "045dc658f83b3860f6cbc806e2845125a3dad8de",
+      "current_phase": "evicted",
+      "cutoff": "2026-10-24T13:38:42.064895+00:00",
+      "evidence": {
+        "acceptance": "complete, all requested rows/counts/oracles/cache guards passed",
+        "original_report_name": "retained-cache-3mb.json",
+        "original_report_sha256": "4f3b339613fdc1b4e208a4c6698c8103aa6c27eea4cd128f3d754aa49f175ed3"
+      },
+      "final_inventory": {
+        "datasets": {
+          "count": 12,
+          "observations": 14520
+        },
+        "derivations": {
+          "bytes": 1151694,
+          "objects": 262
+        },
+        "manifests": {
+          "canonical_bytes": 22296,
+          "objects": 12
+        },
+        "normalized": {
+          "bytes": 664204,
+          "objects": 12
+        },
+        "raw": {
+          "bytes": 692585,
+          "objects": 12
+        },
+        "sql": {
+          "total_bytes": 13516800
+        },
+        "wal_lsn": "C/4272E568"
+      },
+      "hardware": {
+        "affinity_cpus": 5,
+        "architecture": "x86_64",
+        "cgroup": {
+          "cpu.max": "400000 100000",
+          "cpu.stat": "usage_usec 10012043713\nuser_usec 8335186733\nsystem_usec 1676856979\nnice_usec 0\nnr_periods 71307\nnr_throttled 576\nthrottled_usec 19337580\nnr_bursts 0\nburst_usec 0",
+          "memory.current": "9876828160",
+          "memory.max": "17179869184",
+          "pids.max": "max"
+        },
+        "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
+        "disk_free_bytes": 10439303168,
+        "disk_total_bytes": 33770192896,
+        "filesystem": "overlayfs",
+        "kernel": "6.18.55",
+        "logical_cpus": 5,
+        "memory_headroom_bytes": 7303041024,
+        "os": "Linux",
+        "python": "3.12.14"
+      },
+      "harness_sha256": "bef1fc190a07d27107cd7ff7d4d22262e84145273e5d18ca4427fea59a1d6a0c",
+      "ok": true,
+      "oracle": {
+        "products": [
+          "p0",
+          "p3",
+          "p5"
+        ],
+        "scope": "complete rows and reference IDs; equal trajectory fixture makes sampled cohort rank identical"
+      },
+      "phases": {
+        "cold": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 6,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 1247657,
+          "cpu_process_seconds": 2.7725172049999998,
+          "inventory": {
+            "datasets": {
+              "count": 6,
+              "observations": 14400
+            },
+            "derivations": {
+              "bytes": 1073331,
+              "objects": 242
+            },
+            "manifests": {
+              "canonical_bytes": 11166,
+              "objects": 6
+            },
+            "normalized": {
+              "bytes": 608317,
+              "objects": 6
+            },
+            "raw": {
+              "bytes": 684370,
+              "objects": 6
+            },
+            "sql": {
+              "total_bytes": 13156352
+            },
+            "wal_lsn": "C/3EE1B848"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 608317,
+            "get_requests": 6,
+            "head_requests": 0,
+            "http_attempts": 248,
+            "put_requests": 242,
+            "upload_bytes": 1073331
+          },
+          "rows": 6,
+          "seconds": 3.9346389820002514,
+          "selected_observations": 14400
+        },
+        "evicted": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 6,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 1308319,
+          "cpu_process_seconds": 0.9574721119999996,
+          "inventory": {
+            "datasets": {
+              "count": 12,
+              "observations": 14520
+            },
+            "derivations": {
+              "bytes": 1151694,
+              "objects": 262
+            },
+            "manifests": {
+              "canonical_bytes": 22296,
+              "objects": 12
+            },
+            "normalized": {
+              "bytes": 664204,
+              "objects": 12
+            },
+            "raw": {
+              "bytes": 692585,
+              "objects": 12
+            },
+            "sql": {
+              "total_bytes": 13516800
+            },
+            "wal_lsn": "C/4272E568"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 664204,
+            "get_requests": 12,
+            "head_requests": 1,
+            "http_attempts": 14,
+            "put_requests": 1,
+            "upload_bytes": 0
+          },
+          "rows": 6,
+          "seconds": 1.0821633279992966,
+          "selected_observations": 14520
+        },
+        "refresh_1": {
+          "analysis_work": {
+            "delta_windows": 6,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 0,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 2471372,
+          "cpu_process_seconds": 0.9344950319999992,
+          "inventory": {
+            "datasets": {
+              "count": 12,
+              "observations": 14520
+            },
+            "derivations": {
+              "bytes": 1151694,
+              "objects": 262
+            },
+            "manifests": {
+              "canonical_bytes": 22296,
+              "objects": 12
+            },
+            "normalized": {
+              "bytes": 664204,
+              "objects": 12
+            },
+            "raw": {
+              "bytes": 692585,
+              "objects": 12
+            },
+            "sql": {
+              "total_bytes": 13467648
+            },
+            "wal_lsn": "C/4152CFD8"
+          },
+          "metrics": {
+            "cache_hits": 6,
+            "download_bytes": 55887,
+            "get_requests": 6,
+            "head_requests": 0,
+            "http_attempts": 26,
+            "put_requests": 20,
+            "upload_bytes": 78363
+          },
+          "rows": 6,
+          "seconds": 1.1663076490003732,
+          "selected_observations": 14520
+        },
+        "warm_same_cutoff": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 0,
+            "projection_hits": 6,
+            "projection_misses": 0
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 1247657,
+          "cpu_process_seconds": 0.03753176499999977,
+          "inventory": {
+            "datasets": {
+              "count": 6,
+              "observations": 14400
+            },
+            "derivations": {
+              "bytes": 1073331,
+              "objects": 242
+            },
+            "manifests": {
+              "canonical_bytes": 11166,
+              "objects": 6
+            },
+            "normalized": {
+              "bytes": 608317,
+              "objects": 6
+            },
+            "raw": {
+              "bytes": 684370,
+              "objects": 6
+            },
+            "sql": {
+              "total_bytes": 13172736
+            },
+            "wal_lsn": "C/3EE20970"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 0,
+            "get_requests": 0,
+            "head_requests": 1,
+            "http_attempts": 2,
+            "put_requests": 1,
+            "upload_bytes": 0
+          },
+          "rows": 6,
+          "seconds": 0.06668953299958957,
+          "selected_observations": 14400
+        }
+      },
+      "postgresql": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+      "refresh_imports": {
+        "refresh_1": {
+          "completed_products": 6,
+          "cpu_process_seconds": 0.135265261999999,
+          "imported_observations": 120,
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 0,
+            "get_requests": 0,
+            "head_requests": 0,
+            "http_attempts": 18,
+            "put_requests": 18,
+            "upload_bytes": 75232
+          },
+          "requested_observations": 120,
+          "requested_products": 6,
+          "seconds": 0.18518690199925913
+        }
+      },
+      "refresh_waves_completed": 1,
+      "requested": {
+        "analysis_product_batch_size": 1,
+        "cache_bytes": 3000000,
+        "deadline_seconds": 180.0,
+        "history_days": 30,
+        "hot_product_batch_rows": 100,
+        "hot_products": 0,
+        "max_owned_disk_bytes": 200000000,
+        "max_rss_bytes": 2147483648,
+        "min_disk_free_bytes": 2147483648,
+        "products": 6,
+        "profile": false,
+        "refresh_waves": 1,
+        "refreshes_per_day": 4,
+        "seed_batch_rows": 5000,
+        "shared_products_per_import": 1,
+        "videos_per_product": 20
+      },
+      "scope": {
+        "analytical_lookback_days": 30,
+        "layout": "bounded product-major retained timelines; configured groups share imports; not one object per upstream request",
+        "object_store": "HTTP Moto, 32 KiB RAM/spool threshold; no provider latency claim",
+        "observed_history_span_hours": 714,
+        "postgresql_resources": "schema relation bytes measured; database server CPU/RSS and per-schema WAL attribution unavailable",
+        "source": "synthetic explicit imports, not live HTTP collection",
+        "stack": "application and Moto same child; PostgreSQL resources separately reported; Dagster/dashboard not running",
+        "wal_lsn_scope": "server-global position; concurrent schemas may contribute"
+      },
+      "seed_inventory": {
+        "datasets": {
+          "count": 6,
+          "observations": 14400
+        },
+        "derivations": {
+          "bytes": 0,
+          "objects": 0
+        },
+        "manifests": {
+          "canonical_bytes": 11166,
+          "objects": 6
+        },
+        "normalized": {
+          "bytes": 608317,
+          "objects": 6
+        },
+        "raw": {
+          "bytes": 684370,
+          "objects": 6
+        },
+        "sql": {
+          "total_bytes": 12484608
+        },
+        "wal_lsn": "C/3B8F0830"
+      },
+      "seed_metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 20,
+        "put_requests": 18,
+        "upload_bytes": 1303853
+      },
+      "seed_seconds": 4.227569868000501,
+      "seeded_observations": 14400,
+      "seeded_products": 6,
+      "status": "complete",
+      "supervisor": {
+        "elapsed_seconds": 14.4428853419995,
+        "exit_code": 0,
+        "peak_discovered_rss_bytes": 313303040,
+        "peak_owned_disk_bytes": 4096,
+        "sample_summary": {
+          "minimum_free_disk_bytes": 10385600512,
+          "peak_open_file_descriptors": 23,
+          "samples": 14
+        }
+      },
+      "synthetic": true,
+      "test_adapter_budget": {
+        "estimated_source_datasets": 6,
+        "estimated_spill_fd_upper_bound": 1042,
+        "hard_fd_limit": 16384,
+        "key_buffer_bytes": 32768,
+        "soft_fd_limit": 16384
+      },
+      "total_storage_metrics": {
+        "cache_hits": 720,
+        "download_bytes": 1878350,
+        "get_requests": 153,
+        "head_requests": 2,
+        "http_attempts": 457,
+        "put_requests": 300,
+        "upload_bytes": 2530779
+      },
+      "updated_at": "2026-10-24T09:38:55.066965+00:00",
+      "versions": {
+        "boto3": "1.43.117",
+        "moto": "5.2.4",
+        "polars": "2.0.0",
+        "psycopg": "3.3.6",
+        "pyarrow": "26.0.0",
+        "pydantic": "2.14.1"
+      }
+    },
+    "fragmented_1mb": {
+      "checks": {
+        "cache_budget": true,
+        "cold_warm_exact_publication": true,
+        "sampled_complete_oracle": true
+      },
+      "cleanup": {
+        "schema_removed": true,
+        "working_directory_removed": true
+      },
+      "commit": "045dc658f83b3860f6cbc806e2845125a3dad8de",
+      "current_phase": "evicted",
+      "cutoff": "2026-10-24T13:39:44.509060+00:00",
+      "evidence": {
+        "acceptance": "complete, all requested rows/counts/oracles/cache guards passed",
+        "original_report_name": "retained-cache-fragmented-1mb.json",
+        "original_report_sha256": "929501354cf5a8c65ae1db211ab4a434b2697fe91f279d6e5cadfe595ca878ff"
+      },
+      "final_inventory": {
+        "datasets": {
+          "count": 150,
+          "observations": 14520
+        },
+        "derivations": {
+          "bytes": 1158528,
+          "objects": 262
+        },
+        "manifests": {
+          "canonical_bytes": 278538,
+          "objects": 150
+        },
+        "normalized": {
+          "bytes": 1852392,
+          "objects": 150
+        },
+        "raw": {
+          "bytes": 758741,
+          "objects": 150
+        },
+        "sql": {
+          "total_bytes": 15990784
+        },
+        "wal_lsn": "C/860EC6D0"
+      },
+      "hardware": {
+        "affinity_cpus": 5,
+        "architecture": "x86_64",
+        "cgroup": {
+          "cpu.max": "400000 100000",
+          "cpu.stat": "usage_usec 10104652070\nuser_usec 8412390654\nsystem_usec 1692261416\nnice_usec 0\nnr_periods 71931\nnr_throttled 579\nthrottled_usec 19390455\nnr_bursts 0\nburst_usec 0",
+          "memory.current": "10074505216",
+          "memory.max": "17179869184",
+          "pids.max": "max"
+        },
+        "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
+        "disk_free_bytes": 10253090816,
+        "disk_total_bytes": 33770192896,
+        "filesystem": "overlayfs",
+        "kernel": "6.18.55",
+        "logical_cpus": 5,
+        "memory_headroom_bytes": 7105363968,
+        "os": "Linux",
+        "python": "3.12.14"
+      },
+      "harness_sha256": "bef1fc190a07d27107cd7ff7d4d22262e84145273e5d18ca4427fea59a1d6a0c",
+      "ok": true,
+      "oracle": {
+        "products": [
+          "p0",
+          "p3",
+          "p5"
+        ],
+        "scope": "complete rows and reference IDs; equal trajectory fixture makes sampled cohort rank identical"
+      },
+      "phases": {
+        "cold": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 6,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 996378,
+          "cpu_process_seconds": 3.598974395,
+          "inventory": {
+            "datasets": {
+              "count": 144,
+              "observations": 14400
+            },
+            "derivations": {
+              "bytes": 1080165,
+              "objects": 242
+            },
+            "manifests": {
+              "canonical_bytes": 267408,
+              "objects": 144
+            },
+            "normalized": {
+              "bytes": 1796508,
+              "objects": 144
+            },
+            "raw": {
+              "bytes": 750526,
+              "objects": 144
+            },
+            "sql": {
+              "total_bytes": 15679488
+            },
+            "wal_lsn": "C/7E8E5B30"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 1796508,
+            "get_requests": 144,
+            "head_requests": 0,
+            "http_attempts": 386,
+            "put_requests": 242,
+            "upload_bytes": 1080165
+          },
+          "rows": 6,
+          "seconds": 4.8340249250013585,
+          "selected_observations": 14400
+        },
+        "evicted": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 6,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 989307,
+          "cpu_process_seconds": 2.1688813069999995,
+          "inventory": {
+            "datasets": {
+              "count": 150,
+              "observations": 14520
+            },
+            "derivations": {
+              "bytes": 1158528,
+              "objects": 262
+            },
+            "manifests": {
+              "canonical_bytes": 278538,
+              "objects": 150
+            },
+            "normalized": {
+              "bytes": 1852392,
+              "objects": 150
+            },
+            "raw": {
+              "bytes": 758741,
+              "objects": 150
+            },
+            "sql": {
+              "total_bytes": 15990784
+            },
+            "wal_lsn": "C/860EC6D0"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 1852392,
+            "get_requests": 150,
+            "head_requests": 1,
+            "http_attempts": 152,
+            "put_requests": 1,
+            "upload_bytes": 0
+          },
+          "rows": 6,
+          "seconds": 2.461926506000964,
+          "selected_observations": 14520
+        },
+        "refresh_1": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 6,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 989307,
+          "cpu_process_seconds": 2.4222545990000004,
+          "inventory": {
+            "datasets": {
+              "count": 150,
+              "observations": 14520
+            },
+            "derivations": {
+              "bytes": 1158528,
+              "objects": 262
+            },
+            "manifests": {
+              "canonical_bytes": 278538,
+              "objects": 150
+            },
+            "normalized": {
+              "bytes": 1852392,
+              "objects": 150
+            },
+            "raw": {
+              "bytes": 758741,
+              "objects": 150
+            },
+            "sql": {
+              "total_bytes": 15941632
+            },
+            "wal_lsn": "C/8318B2F8"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 1852392,
+            "get_requests": 150,
+            "head_requests": 0,
+            "http_attempts": 170,
+            "put_requests": 20,
+            "upload_bytes": 78363
+          },
+          "rows": 6,
+          "seconds": 2.788647850000416,
+          "selected_observations": 14520
+        },
+        "warm_same_cutoff": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 0,
+            "projection_hits": 6,
+            "projection_misses": 0
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 996378,
+          "cpu_process_seconds": 0.03893331100000097,
+          "inventory": {
+            "datasets": {
+              "count": 144,
+              "observations": 14400
+            },
+            "derivations": {
+              "bytes": 1080165,
+              "objects": 242
+            },
+            "manifests": {
+              "canonical_bytes": 267408,
+              "objects": 144
+            },
+            "normalized": {
+              "bytes": 1796508,
+              "objects": 144
+            },
+            "raw": {
+              "bytes": 750526,
+              "objects": 144
+            },
+            "sql": {
+              "total_bytes": 15695872
+            },
+            "wal_lsn": "C/7E8EAC38"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 0,
+            "get_requests": 0,
+            "head_requests": 1,
+            "http_attempts": 2,
+            "put_requests": 1,
+            "upload_bytes": 0
+          },
+          "rows": 6,
+          "seconds": 0.06102735100103018,
+          "selected_observations": 14400
+        }
+      },
+      "postgresql": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+      "refresh_imports": {
+        "refresh_1": {
+          "completed_products": 6,
+          "cpu_process_seconds": 0.15295463800000064,
+          "imported_observations": 120,
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 0,
+            "get_requests": 0,
+            "head_requests": 0,
+            "http_attempts": 18,
+            "put_requests": 18,
+            "upload_bytes": 75229
+          },
+          "requested_observations": 120,
+          "requested_products": 6,
+          "seconds": 0.2143353739993472
+        }
+      },
+      "refresh_waves_completed": 1,
+      "requested": {
+        "analysis_product_batch_size": 1,
+        "cache_bytes": 1000000,
+        "deadline_seconds": 180.0,
+        "history_days": 30,
+        "hot_product_batch_rows": 100,
+        "hot_products": 6,
+        "max_owned_disk_bytes": 200000000,
+        "max_rss_bytes": 2147483648,
+        "min_disk_free_bytes": 2147483648,
+        "products": 6,
+        "profile": false,
+        "refresh_waves": 1,
+        "refreshes_per_day": 4,
+        "seed_batch_rows": 5000,
+        "shared_products_per_import": 1,
+        "videos_per_product": 20
+      },
+      "scope": {
+        "analytical_lookback_days": 30,
+        "layout": "bounded product-major retained timelines; configured groups share imports; not one object per upstream request",
+        "object_store": "HTTP Moto, 32 KiB RAM/spool threshold; no provider latency claim",
+        "observed_history_span_hours": 714,
+        "postgresql_resources": "schema relation bytes measured; database server CPU/RSS and per-schema WAL attribution unavailable",
+        "source": "synthetic explicit imports, not live HTTP collection",
+        "stack": "application and Moto same child; PostgreSQL resources separately reported; Dagster/dashboard not running",
+        "wal_lsn_scope": "server-global position; concurrent schemas may contribute"
+      },
+      "seed_inventory": {
+        "datasets": {
+          "count": 144,
+          "observations": 14400
+        },
+        "derivations": {
+          "bytes": 0,
+          "objects": 0
+        },
+        "manifests": {
+          "canonical_bytes": 267408,
+          "objects": 144
+        },
+        "normalized": {
+          "bytes": 1796508,
+          "objects": 144
+        },
+        "raw": {
+          "bytes": 750526,
+          "objects": 144
+        },
+        "sql": {
+          "total_bytes": 15032320
+        },
+        "wal_lsn": "C/79593480"
+      },
+      "seed_metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 434,
+        "put_requests": 432,
+        "upload_bytes": 2814442
+      },
+      "seed_seconds": 7.727448007999556,
+      "seeded_observations": 14400,
+      "seeded_products": 6,
+      "status": "complete",
+      "supervisor": {
+        "elapsed_seconds": 24.48874904299919,
+        "exit_code": 0,
+        "peak_discovered_rss_bytes": 311562240,
+        "peak_owned_disk_bytes": 4096,
+        "sample_summary": {
+          "minimum_free_disk_bytes": 10168066048,
+          "peak_open_file_descriptors": 13,
+          "samples": 24
+        }
+      },
+      "synthetic": true,
+      "test_adapter_budget": {
+        "estimated_source_datasets": 144,
+        "estimated_spill_fd_upper_bound": 1456,
+        "hard_fd_limit": 16384,
+        "key_buffer_bytes": 32768,
+        "soft_fd_limit": 16384
+      },
+      "total_storage_metrics": {
+        "cache_hits": 594,
+        "download_bytes": 8384162,
+        "get_requests": 831,
+        "head_requests": 2,
+        "http_attempts": 1549,
+        "put_requests": 714,
+        "upload_bytes": 4048199
+      },
+      "updated_at": "2026-10-24T09:40:06.957480+00:00",
+      "versions": {
+        "boto3": "1.43.117",
+        "moto": "5.2.4",
+        "polars": "2.0.0",
+        "psycopg": "3.3.6",
+        "pyarrow": "26.0.0",
+        "pydantic": "2.14.1"
+      }
+    },
+    "fragmented_8mb": {
+      "checks": {
+        "cache_budget": true,
+        "cold_warm_exact_publication": true,
+        "sampled_complete_oracle": true
+      },
+      "cleanup": {
+        "schema_removed": true,
+        "working_directory_removed": true
+      },
+      "commit": "045dc658f83b3860f6cbc806e2845125a3dad8de",
+      "current_phase": "evicted",
+      "cutoff": "2026-10-24T13:40:56.262731+00:00",
+      "evidence": {
+        "acceptance": "complete, all requested rows/counts/oracles/cache guards passed",
+        "original_report_name": "retained-cache-fragmented-8mb.json",
+        "original_report_sha256": "31d2c6dd3c11a473d9318c91068d4f62b8aa313b92358ccac1f2ed1a1082da60"
+      },
+      "final_inventory": {
+        "datasets": {
+          "count": 150,
+          "observations": 14520
+        },
+        "derivations": {
+          "bytes": 1158528,
+          "objects": 262
+        },
+        "manifests": {
+          "canonical_bytes": 278538,
+          "objects": 150
+        },
+        "normalized": {
+          "bytes": 1852393,
+          "objects": 150
+        },
+        "raw": {
+          "bytes": 758729,
+          "objects": 150
+        },
+        "sql": {
+          "total_bytes": 15745024
+        },
+        "wal_lsn": "C/D1AEFEC8"
+      },
+      "hardware": {
+        "affinity_cpus": 5,
+        "architecture": "x86_64",
+        "cgroup": {
+          "cpu.max": "400000 100000",
+          "cpu.stat": "usage_usec 10213407183\nuser_usec 8505643186\nsystem_usec 1707763996\nnice_usec 0\nnr_periods 72649\nnr_throttled 581\nthrottled_usec 19455241\nnr_bursts 0\nburst_usec 0",
+          "memory.current": "10323701760",
+          "memory.max": "17179869184",
+          "pids.max": "max"
+        },
+        "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
+        "disk_free_bytes": 10014908416,
+        "disk_total_bytes": 33770192896,
+        "filesystem": "overlayfs",
+        "kernel": "6.18.55",
+        "logical_cpus": 5,
+        "memory_headroom_bytes": 6856167424,
+        "os": "Linux",
+        "python": "3.12.14"
+      },
+      "harness_sha256": "bef1fc190a07d27107cd7ff7d4d22262e84145273e5d18ca4427fea59a1d6a0c",
+      "ok": true,
+      "oracle": {
+        "products": [
+          "p0",
+          "p3",
+          "p5"
+        ],
+        "scope": "complete rows and reference IDs; equal trajectory fixture makes sampled cohort rank identical"
+      },
+      "phases": {
+        "cold": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 6,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 2440806,
+          "cpu_process_seconds": 3.7438957399999993,
+          "inventory": {
+            "datasets": {
+              "count": 144,
+              "observations": 14400
+            },
+            "derivations": {
+              "bytes": 1080165,
+              "objects": 242
+            },
+            "manifests": {
+              "canonical_bytes": 267408,
+              "objects": 144
+            },
+            "normalized": {
+              "bytes": 1796503,
+              "objects": 144
+            },
+            "raw": {
+              "bytes": 750510,
+              "objects": 144
+            },
+            "sql": {
+              "total_bytes": 15458304
+            },
+            "wal_lsn": "C/CB76CA58"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 1796503,
+            "get_requests": 144,
+            "head_requests": 0,
+            "http_attempts": 386,
+            "put_requests": 242,
+            "upload_bytes": 1080165
+          },
+          "rows": 6,
+          "seconds": 5.144832680998661,
+          "selected_observations": 14400
+        },
+        "evicted": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 6,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 2501464,
+          "cpu_process_seconds": 2.380455107999998,
+          "inventory": {
+            "datasets": {
+              "count": 150,
+              "observations": 14520
+            },
+            "derivations": {
+              "bytes": 1158528,
+              "objects": 262
+            },
+            "manifests": {
+              "canonical_bytes": 278538,
+              "objects": 150
+            },
+            "normalized": {
+              "bytes": 1852393,
+              "objects": 150
+            },
+            "raw": {
+              "bytes": 758729,
+              "objects": 150
+            },
+            "sql": {
+              "total_bytes": 15745024
+            },
+            "wal_lsn": "C/D1AEFEC8"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 1852393,
+            "get_requests": 150,
+            "head_requests": 1,
+            "http_attempts": 152,
+            "put_requests": 1,
+            "upload_bytes": 0
+          },
+          "rows": 6,
+          "seconds": 2.6940831079991767,
+          "selected_observations": 14520
+        },
+        "refresh_1": {
+          "analysis_work": {
+            "delta_windows": 6,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 0,
+            "projection_hits": 0,
+            "projection_misses": 6
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 3672897,
+          "cpu_process_seconds": 1.044489453999999,
+          "inventory": {
+            "datasets": {
+              "count": 150,
+              "observations": 14520
+            },
+            "derivations": {
+              "bytes": 1158528,
+              "objects": 262
+            },
+            "manifests": {
+              "canonical_bytes": 278538,
+              "objects": 150
+            },
+            "normalized": {
+              "bytes": 1852393,
+              "objects": 150
+            },
+            "raw": {
+              "bytes": 758729,
+              "objects": 150
+            },
+            "sql": {
+              "total_bytes": 15695872
+            },
+            "wal_lsn": "C/CD6896D0"
+          },
+          "metrics": {
+            "cache_hits": 6,
+            "download_bytes": 55890,
+            "get_requests": 6,
+            "head_requests": 0,
+            "http_attempts": 26,
+            "put_requests": 20,
+            "upload_bytes": 78363
+          },
+          "rows": 6,
+          "seconds": 1.2271441899993079,
+          "selected_observations": 14520
+        },
+        "warm_same_cutoff": {
+          "analysis_work": {
+            "delta_windows": 0,
+            "duplicate_rebuild_windows": 0,
+            "full_windows": 0,
+            "projection_hits": 6,
+            "projection_misses": 0
+          },
+          "assessment_bytes": 24698,
+          "cache_bytes": 2440806,
+          "cpu_process_seconds": 0.045940558999999936,
+          "inventory": {
+            "datasets": {
+              "count": 144,
+              "observations": 14400
+            },
+            "derivations": {
+              "bytes": 1080165,
+              "objects": 242
+            },
+            "manifests": {
+              "canonical_bytes": 267408,
+              "objects": 144
+            },
+            "normalized": {
+              "bytes": 1796503,
+              "objects": 144
+            },
+            "raw": {
+              "bytes": 750510,
+              "objects": 144
+            },
+            "sql": {
+              "total_bytes": 15474688
+            },
+            "wal_lsn": "C/CBB41F28"
+          },
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 0,
+            "get_requests": 0,
+            "head_requests": 1,
+            "http_attempts": 2,
+            "put_requests": 1,
+            "upload_bytes": 0
+          },
+          "rows": 6,
+          "seconds": 0.0737174120004056,
+          "selected_observations": 14400
+        }
+      },
+      "postgresql": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+      "refresh_imports": {
+        "refresh_1": {
+          "completed_products": 6,
+          "cpu_process_seconds": 0.15794456699999948,
+          "imported_observations": 120,
+          "metrics": {
+            "cache_hits": 0,
+            "download_bytes": 0,
+            "get_requests": 0,
+            "head_requests": 0,
+            "http_attempts": 18,
+            "put_requests": 18,
+            "upload_bytes": 75239
+          },
+          "requested_observations": 120,
+          "requested_products": 6,
+          "seconds": 0.25324587400064047
+        }
+      },
+      "refresh_waves_completed": 1,
+      "requested": {
+        "analysis_product_batch_size": 1,
+        "cache_bytes": 8000000,
+        "deadline_seconds": 180.0,
+        "history_days": 30,
+        "hot_product_batch_rows": 100,
+        "hot_products": 6,
+        "max_owned_disk_bytes": 200000000,
+        "max_rss_bytes": 2147483648,
+        "min_disk_free_bytes": 2147483648,
+        "products": 6,
+        "profile": false,
+        "refresh_waves": 1,
+        "refreshes_per_day": 4,
+        "seed_batch_rows": 5000,
+        "shared_products_per_import": 1,
+        "videos_per_product": 20
+      },
+      "scope": {
+        "analytical_lookback_days": 30,
+        "layout": "bounded product-major retained timelines; configured groups share imports; not one object per upstream request",
+        "object_store": "HTTP Moto, 32 KiB RAM/spool threshold; no provider latency claim",
+        "observed_history_span_hours": 714,
+        "postgresql_resources": "schema relation bytes measured; database server CPU/RSS and per-schema WAL attribution unavailable",
+        "source": "synthetic explicit imports, not live HTTP collection",
+        "stack": "application and Moto same child; PostgreSQL resources separately reported; Dagster/dashboard not running",
+        "wal_lsn_scope": "server-global position; concurrent schemas may contribute"
+      },
+      "seed_inventory": {
+        "datasets": {
+          "count": 144,
+          "observations": 14400
+        },
+        "derivations": {
+          "bytes": 0,
+          "objects": 0
+        },
+        "manifests": {
+          "canonical_bytes": 267408,
+          "objects": 144
+        },
+        "normalized": {
+          "bytes": 1796503,
+          "objects": 144
+        },
+        "raw": {
+          "bytes": 750510,
+          "objects": 144
+        },
+        "sql": {
+          "total_bytes": 14811136
+        },
+        "wal_lsn": "C/C7D5EDA0"
+      },
+      "seed_metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 434,
+        "put_requests": 432,
+        "upload_bytes": 2814421
+      },
+      "seed_seconds": 7.199032337999597,
+      "seeded_observations": 14400,
+      "seeded_products": 6,
+      "status": "complete",
+      "supervisor": {
+        "elapsed_seconds": 21.449973962000513,
+        "exit_code": 0,
+        "peak_discovered_rss_bytes": 312639488,
+        "peak_owned_disk_bytes": 4096,
+        "sample_summary": {
+          "minimum_free_disk_bytes": 9939468288,
+          "peak_open_file_descriptors": 14,
+          "samples": 21
+        }
+      },
+      "synthetic": true,
+      "test_adapter_budget": {
+        "estimated_source_datasets": 144,
+        "estimated_spill_fd_upper_bound": 1456,
+        "hard_fd_limit": 16384,
+        "key_buffer_bytes": 32768,
+        "soft_fd_limit": 16384
+      },
+      "total_storage_metrics": {
+        "cache_hits": 858,
+        "download_bytes": 4258145,
+        "get_requests": 429,
+        "head_requests": 2,
+        "http_attempts": 1147,
+        "put_requests": 714,
+        "upload_bytes": 4048188
+      },
+      "updated_at": "2026-10-24T09:41:15.859113+00:00",
+      "versions": {
+        "boto3": "1.43.117",
+        "moto": "5.2.4",
+        "polars": "2.0.0",
+        "psycopg": "3.3.6",
+        "pyarrow": "26.0.0",
+        "pydantic": "2.14.1"
+      }
+    }
+  },
+  "limits": [
+    "Only the measured GET/byte/work counters describe these small fixtures. Timings are not extrapolated.",
+    "The current-window descriptor byte total after a delta was not separately captured. No priority-eviction change or same-budget improvement is claimed.",
+    "Sources and local windows currently share the ordinary bounded LRU admission/eviction policy. Cache pressure safely falls back to full rebuilds; public oracle checks remain passing.",
+    "Other task-owned tests shared this machine. PostgreSQL CPU/RSS and attributable WAL are not measured."
+  ],
+  "method": "Same clean application/harness revision; separate complete cases with independent timestamps. Dense imports hold 2,400 observations; fragmented imports hold 100. Every case has six products, 20 videos/product and 120 points/video, plus one refresh of 20 observations/product.",
+  "payload_scope": {
+    "attributes": [
+      "creator_id"
+    ],
+    "cumulative_counters": [
+      "view_count"
+    ],
+    "excluded": [
+      "price",
+      "sales",
+      "cost",
+      "transcript",
+      "media"
+    ]
+  },
+  "scope": "small native SQL/HTTP Moto cache-pressure characterization, not a massive-capacity or provider-latency measurement"
+}

@@ -66,3 +66,7 @@ Actual target-VPS sizing, provider behavior and source grants remain separate
 acceptance gates under T14/T15. Source-derived data and exact numerical/temporal
 meaning must not change to make a load result look better. A stopped large case
 must retain a partial report with the requested and completed work distinguished.
+
+Code delivery for this follow-up is recorded in [PR72](https://github.com/Dan-Popescu/sm-trending-products/pull/72) (retained harness and historical entity writes), [PR73](https://github.com/Dan-Popescu/sm-trending-products/pull/73) (exact analytical CPU), [PR74](https://github.com/Dan-Popescu/sm-trending-products/pull/74) (large invalidation), and [PR76](https://github.com/Dan-Popescu/sm-trending-products/pull/76) (dated cost model). The measured backup checkpoint follow-up [#71](https://github.com/Dan-Popescu/sm-trending-products/issues/71) shipped in [PR75](https://github.com/Dan-Popescu/sm-trending-products/pull/75).
+
+Cache-pressure measurements also identified [#77](https://github.com/Dan-Popescu/sm-trending-products/issues/77), implemented by [PR78](https://github.com/Dan-Popescu/sm-trending-products/pull/78). Consult its [same-budget evidence](../verification/cache-window-priority.md) before repeating the older different-budget comparison. Large-case acceptance remains a separate [#67](https://github.com/Dan-Popescu/sm-trending-products/issues/67) deliverable; the [retained evidence](../verification/retained/README.md) explicitly labels partial cases and source revisions. GitHub remains authoritative for open/merged state.

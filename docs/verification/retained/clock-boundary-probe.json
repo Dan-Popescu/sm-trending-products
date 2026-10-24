@@ -1,0 +1,173 @@
+{
+  "analytical_lookback_days": 30,
+  "application_checkout": "6ccf295f239abc06b8caa6ccea0fd2855f2d2459",
+  "limits": [
+    "All trajectories and collection boundaries align. Heterogeneous asynchronous products may expire at different times.",
+    "Same-cutoff publication reuse is not advancing-clock publication cost. Every advancing cutoff in this probe changed the published body.",
+    "No scalar timing from this small probe is extrapolated to the large workload."
+  ],
+  "measurements": {
+    "cold": {
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 55420,
+        "get_requests": 3,
+        "head_requests": 0,
+        "http_attempts": 125,
+        "put_requests": 122,
+        "upload_bytes": 100496
+      },
+      "observations": 720,
+      "wall_seconds": 1.6279553519998444,
+      "work": {
+        "delta_windows": 0,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 3,
+        "projection_hits": 0,
+        "projection_misses": 3
+      }
+    },
+    "initial_plus_15min": {
+      "metrics": {
+        "cache_hits": 3,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 1,
+        "put_requests": 1,
+        "upload_bytes": 10607
+      },
+      "observations": 720,
+      "wall_seconds": 0.10285884000040824,
+      "work": {
+        "delta_windows": 3,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 0,
+        "projection_hits": 0,
+        "projection_misses": 3
+      }
+    },
+    "initial_plus_30min": {
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 1,
+        "put_requests": 1,
+        "upload_bytes": 10604
+      },
+      "observations": 720,
+      "wall_seconds": 0.021379457000875846,
+      "work": {
+        "delta_windows": 0,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 0,
+        "projection_hits": 3,
+        "projection_misses": 0
+      }
+    },
+    "new_wave_6h": {
+      "metrics": {
+        "cache_hits": 3,
+        "download_bytes": 25452,
+        "get_requests": 3,
+        "head_requests": 0,
+        "http_attempts": 14,
+        "put_requests": 11,
+        "upload_bytes": 22955
+      },
+      "observations": 726,
+      "wall_seconds": 0.24710133600092377,
+      "work": {
+        "delta_windows": 3,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 0,
+        "projection_hits": 0,
+        "projection_misses": 3
+      }
+    },
+    "new_wave_plus_15min": {
+      "metrics": {
+        "cache_hits": 3,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 8,
+        "put_requests": 8,
+        "upload_bytes": 21824
+      },
+      "observations": 720,
+      "wall_seconds": 0.2258942289990955,
+      "work": {
+        "delta_windows": 3,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 0,
+        "projection_hits": 0,
+        "projection_misses": 3
+      }
+    },
+    "new_wave_plus_30min": {
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 0,
+        "http_attempts": 1,
+        "put_requests": 1,
+        "upload_bytes": 10604
+      },
+      "observations": 720,
+      "wall_seconds": 0.028813552999054082,
+      "work": {
+        "delta_windows": 0,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 0,
+        "projection_hits": 3,
+        "projection_misses": 0
+      }
+    },
+    "same_cutoff": {
+      "metrics": {
+        "cache_hits": 0,
+        "download_bytes": 0,
+        "get_requests": 0,
+        "head_requests": 1,
+        "http_attempts": 2,
+        "put_requests": 1,
+        "upload_bytes": 0
+      },
+      "observations": 720,
+      "wall_seconds": 0.046339381000507274,
+      "work": {
+        "delta_windows": 0,
+        "duplicate_rebuild_windows": 0,
+        "full_windows": 0,
+        "projection_hits": 3,
+        "projection_misses": 0
+      }
+    }
+  },
+  "payload_scope": {
+    "attributes": [
+      "creator_id"
+    ],
+    "cumulative_counters": [
+      "view_count"
+    ],
+    "excluded": [
+      "price",
+      "sales",
+      "cost",
+      "transcript",
+      "media"
+    ]
+  },
+  "products": 3,
+  "scope": "native SQL/HTTP Moto semantic clock-boundary probe, not a throughput or capacity measurement",
+  "seed_interval_hours": 6,
+  "seed_observations_per_video": 120,
+  "source_report_sha256": "f9f587e1b71cfbe9014b2803587ee15298f1f126de727254552c383149ee8d60",
+  "test_source_sha256": "7ec64dc54e5ea2f2f83928fd11367a4a70ac6e3ec6d1cc7f35681360f33d45ff",
+  "videos_per_product": 2
+}
