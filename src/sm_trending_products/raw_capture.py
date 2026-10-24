@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import fcntl
-import json
-import os
 from collections.abc import Callable
+from datetime import datetime
+from functools import partial
 from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from .capture_spool import CaptureSpool
 from .catalog import InvalidationPending, LeaseLost
 from .collection import SourceCollection
 from .collector import CollectionError
@@ -23,6 +23,7 @@ class RawCaptureService:
         self.settings, self.catalog, self.history = settings, catalog, history
         self.collector, self.worker_id = collector, worker_id
         self.worker_generation: int | None = None
+        self.spool = CaptureSpool(settings, catalog, history)
         self.collection = SourceCollection(settings, catalog, history, collector, worker_id)
         self.replay = ReplayService(catalog, history, collector)
 
@@ -132,6 +133,7 @@ class RawCaptureService:
                     kind="raw_capture_error" if business_error else "raw_capture",
                     capture=receipt["capture"],
                     quarantine=[{"reason": "captured_envelope_invalid"}] if error else (),
+                    publication_guard=partial(self.spool.assert_publishable, receipt=receipt),
                 )
                 if error:
                     if business_error:
@@ -194,6 +196,8 @@ class RawCaptureService:
             "invalid_request",
             "schema",
             "invalid_retry_hint",
+            "capture_retention_expired",
+            "capture_source_removed",
         }
         no_attempt = category in {"rate_limited", "quota_exhausted"}
         with self.catalog.transaction() as connection:
@@ -267,52 +271,32 @@ class RawCaptureService:
             raise CollectionError("invalid_capture_receipt", 300)
 
     def _remove_committed_spool(self, capture_id: str, receipt: dict) -> None:
-        directory = self.settings.spool_dir / "captures"
-        path = directory / f"{capture_id}.json"
-        if not path.exists():
-            return
-        with (directory / f"capture-{capture_id[:2]}.lock").open("a+b") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            if path.is_symlink():
-                raise CollectionError("capture_spool_symlink")
-            try:
-                stored = json.loads(path.read_bytes())
-            except FileNotFoundError:
-                return
-            if stored != receipt:
-                raise CollectionError("capture_identity_mismatch")
-            path.unlink()
-            handle = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(handle)
-            finally:
-                os.close(handle)
+        self.spool.remove_committed(capture_id, receipt)
 
     def cleanup_committed_spool(self, limit: int = 20) -> int:
         """Retry local cleanup only after verifying the committed remote receipt."""
-        directory = self.settings.spool_dir / "captures"
-        if not directory.exists():
-            return 0
-        processed = 0
-        for path in directory.iterdir():
-            if processed >= limit:
-                break
-            if path.suffix != ".json" or len(path.stem) != 64:
-                continue
-            processed += 1
-            dataset = self.catalog.one(
-                "SELECT * FROM datasets WHERE dataset_id=%s AND state='committed' "
-                "AND manifest->>'kind' IN ('raw_capture','raw_capture_error') "
-                "AND manifest->>'acquisition_protocol'='1'",
-                (path.stem,),
-            )
-            if dataset:
-                try:
-                    self._remove_committed_spool(path.stem, self.history.raw(dataset))
-                except (OSError, ValueError, CollectionError):
-                    # Preserve the receipt until an exact remote copy is readable.
-                    continue
-        return processed
+        return self.spool.scan(
+            limit, apply=True, retention=False, remove_committed=self._remove_committed_spool
+        )["committed"]
+
+    def maintain_spool(self, limit: int = 20, *, apply: bool = False) -> dict:
+        return self.spool.scan(limit, apply=apply)
+
+    def close(self) -> None:
+        self.spool.close()
+
+    def request_spool_removal(
+        self,
+        source: str,
+        account_id: str,
+        synthetic: bool,
+        reason: str,
+        *,
+        captured_before: datetime | None = None,
+    ) -> dict:
+        return self.spool.request_removal(
+            source, account_id, synthetic, reason, captured_before=captured_before
+        )
 
     def _claim_publication(self, synthetic: bool) -> dict | None:
         with self.catalog.transaction() as connection:
@@ -343,6 +327,13 @@ class RawCaptureService:
 
     def _publication_guard(self, lease: dict):
         def guard(connection):
+            self.catalog.guard_inputs(connection, [lease["dataset_id"]])
+            # Claims lock the parent before its lease. Match that order before
+            # child publication/FK checks so concurrent takeover cannot deadlock.
+            connection.execute(
+                "SELECT dataset_id FROM datasets WHERE dataset_id=%s FOR KEY SHARE",
+                (lease["dataset_id"],),
+            )
             current = connection.execute(
                 "SELECT 1 FROM capture_publication_leases WHERE dataset_id=%s AND worker_id=%s "
                 "AND fence=%s AND lease_until>clock_timestamp() FOR UPDATE",
@@ -350,7 +341,6 @@ class RawCaptureService:
             ).fetchone()
             if not current:
                 raise LeaseLost("Capture publication lease expired or replaced")
-            self.catalog.guard_inputs(connection, [lease["dataset_id"]])
 
         return guard
 

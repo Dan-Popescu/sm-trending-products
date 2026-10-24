@@ -30,6 +30,22 @@ failed. Fixed lock shards and explicit admission reservations bound local spool
 resources; corrupt/incomplete receipts fail closed rather than being silently
 replaced by a new source request.
 
+`test_raw_capture_recovery.py` verifies immutable business-error diagnostics,
+independent attempt identity after archive, shared rate-limit cooldown,
+crash-idempotent attempt advancement and recovery after access denial. Original
+query scope and page stay fixed. Display requested/missing-member diagnostics
+appear only after normalization.
+
+`test_capture_spool.py` verifies preview/apply of orphan retention, scoped
+revocation with workspace separation, preservation during ordinary credential
+denial, progressing cleanup after a pending prefix, and source-offline partial
+receipt removal using durable reservation metadata. It holds a real HTTP request
+in flight while registering revocation: maintenance skips the active writer,
+the completed body becomes durable, and publication is rejected under the new
+policy. Registered revoked receipts use existing dataset invalidation and retire
+their normalized children. Temporary S3 cleanup failures preserve local bytes
+while independent source acquisition continues.
+
 Legacy regression checks run `test_collector_contract.py`,
 `test_collection_review.py`, `test_replay_delivery.py`, and
 `test_replay_versions.py` alongside these scenarios. Rust formatting, Clippy with

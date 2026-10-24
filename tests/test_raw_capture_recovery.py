@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from test_raw_capture import ACCOUNT, datasets, enqueue, one_shot_pages, page, service
 
@@ -142,3 +146,42 @@ def test_adopting_final_receipt_retires_crash_leftover_disk_reservation(pipeline
     monkeypatch.delenv("TIKTOK_DISPLAY_ACCESS_TOKEN")
     assert pipeline.collector.capture(request, task) == receipt
     assert not reservation.exists()
+
+
+def test_normalizer_parent_fence_precedes_lease_lock_during_concurrent_claim(pipeline):
+    acquisition = service(pipeline)
+    with one_shot_pages([page()]) as (endpoint, _):
+        enqueue(pipeline, endpoint)
+        assert acquisition.capture_batch(1, True)["processed"] == 1
+    lease = acquisition._claim_publication(True)
+    entered, active = threading.Event(), {}
+
+    def publish_guard():
+        with pipeline.catalog.transaction() as connection:
+            active["pid"] = connection.info.backend_pid
+            entered.set()
+            acquisition._publication_guard(lease)(connection)
+
+    with ThreadPoolExecutor(1) as pool:
+        with pipeline.catalog.transaction() as claim:
+            claim.execute(
+                "SELECT 1 FROM datasets WHERE dataset_id=%s FOR UPDATE", (lease["dataset_id"],)
+            )
+            future = pool.submit(publish_guard)
+            assert entered.wait(5)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if pipeline.catalog.one(
+                    "SELECT cardinality(pg_blocking_pids(%s)) AS count", (active["pid"],)
+                )["count"]:
+                    break
+                time.sleep(0.01)
+            else:
+                pytest.fail("Publisher did not wait on the locked raw parent")
+            # A claimant holding the parent must still be able to obtain its
+            # lease row; the waiting publisher cannot hold them in reverse.
+            claim.execute(
+                "SELECT 1 FROM capture_publication_leases WHERE dataset_id=%s FOR UPDATE NOWAIT",
+                (lease["dataset_id"],),
+            )
+        future.result(timeout=5)

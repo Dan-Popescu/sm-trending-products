@@ -157,7 +157,8 @@ fn sync_directory(directory: &Path) -> Result<()> {
         .map_err(io_error)
 }
 
-fn reserve(directory: &Path, id: &str, maximum: u64) -> Result<PathBuf> {
+fn reserve(directory: &Path, input: &Input, maximum: u64) -> Result<PathBuf> {
+    let id = &input.capture_id;
     let lock = open_private(&directory.join(".budget.lock"))?;
     lock.lock().map_err(io_error)?;
     let own = directory.join(format!("{id}.reserve"));
@@ -178,12 +179,25 @@ fn reserve(directory: &Path, id: &str, maximum: u64) -> Result<PathBuf> {
                 return Err(CollectorError::new("capture", "capture_spool_capacity"));
             }
         }
-        let file = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(&own)
             .map_err(io_error)?;
+        let metadata = json!({
+            "reservation_version":"1",
+            "capture":{"capture_id":input.capture_id,"task_id":input.task_id,
+                       "page_index":input.page_index,"capture_attempt":input.capture_attempt,
+                       "started_at":Utc::now()},
+            "request":{"source":input.request.source,"account_id":input.request.account_id,
+                       "synthetic":input.request.synthetic},
+        });
+        file.write_all(
+            &serde_json::to_vec(&metadata)
+                .map_err(|_| CollectorError::new("capture", "capture_serialization_failed"))?,
+        )
+        .map_err(io_error)?;
         file.sync_all().map_err(io_error)?;
         sync_directory(directory)?;
     }
@@ -246,7 +260,12 @@ pub async fn capture(bytes: &[u8], directory: &Path, maximum: u64) -> Result<Val
         release_reservation(directory, &input.capture_id)?;
         return Ok(receipt);
     }
-    let reservation = reserve(directory, &input.capture_id, maximum)?;
+    let reservation = reserve(directory, &input, maximum)?;
+    let started_at = File::open(&reservation)
+        .ok()
+        .and_then(|file| serde_json::from_reader::<_, Value>(file).ok())
+        .and_then(|value| value["capture"]["started_at"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| Utc::now().to_rfc3339());
     let mut secrets: Vec<String> = std::env::vars()
         .filter_map(|(name, value)| {
             let name = name.to_ascii_uppercase();
@@ -305,6 +324,7 @@ pub async fn capture(bytes: &[u8], directory: &Path, maximum: u64) -> Result<Val
             "page_index":input.page_index,"worker_id":input.worker_id,
             "lease_version":input.lease_version,"request_fingerprint":input.request_fingerprint,
             "capture_attempt":input.capture_attempt,
+            "started_at":started_at,
             "captured_at":captured_at,
         });
         if let Some(generation) = input.worker_generation {

@@ -52,14 +52,39 @@ Response checksums cover the stored JSON span, so floating-point re-encoding
 cannot break recovery. A complete temporary receipt can be adopted after a
 crash. An incomplete or corrupt receipt fails closed and stays available for
 investigation. Reservations survive crashes; retrying the same task can reuse
-its reservation. There is no automatic deletion of orphaned unshipped receipts.
+its reservation. Adopting a complete final receipt also retires a leftover
+reservation from the rename-to-cleanup crash window.
+
+A separate bounded spool-maintenance module uses a progressing directory iterator
+instead of rescanning a fixed pending prefix. It verifies complete receipt
+checksums, skips active writer locks, and preserves unshipped inputs during
+ordinary capacity cleanup. Transient S3 failures leave local copies protected
+without blocking acquisition. Empty abandoned reservations with no input bytes
+can be released. New reservations durably record nonsecret source/account,
+workspace and task/page/attempt scope before HTTP, so incomplete private files
+can also be retired under an authoritative removal request.
+
+Legal removal is distinct from eviction. Maintenance previews by default and
+applies deletion only under a verified source retention deadline, an existing
+catalog invalidation, or an explicit PostgreSQL source/account/workspace cutoff
+revocation. Credential expiry alone never destroys unshipped inputs. Explicit
+cutoffs cover an acquisition started before the cutoff, including an in-flight
+request that completes later. Retention for complete receipts starts at physical
+capture time; an incomplete reservation receives an additional collector-timeout
+grace. The exact task/page/attempt is durably cancelled before removing bytes;
+registered datasets retire through the existing invalidation lifecycle.
+Publication-time guards under the retention fence reject expired/revoked receipts
+and recheck current live source access. A stale in-memory body cannot republish
+after its local file is removed. The scoped spool-removal API does not replace
+the existing remote-history source-removal procedure for other datasets.
 
 Publish the receipt through the existing immutable S3 raw object and
 staged/committed dataset manifest lifecycle. A raw-only dataset has zero
 observations, `kind="raw_capture"`, and `acquisition_protocol="1"`. Its identity
 is the hash of `{capture_of: task_id, page_index, protocol: "1"}`. The manifest's
 `capture` object contains `capture_id`, `task_id`, `page_index`, `worker_id`,
-`lease_version`, `capture_attempt`, `request_fingerprint`, and `captured_at`. Registered acquisition
+`lease_version`, `capture_attempt`, `request_fingerprint`, `started_at`, and
+`captured_at`. Registered acquisition
 also includes the actual acquiring `worker_generation`; unregistered legacy
 callers omit it. Worker identity/generation and
 physical acquisition time always describe the process that obtained the body;
@@ -87,11 +112,11 @@ Normalized children use existing immutable replay publication and parent lineage
 Raw-parent replay reserves a processing availability clock independently from
 the original observation time. It never backdates derived knowledge to a delayed
 source response. Record schema failures produce a derived quarantine while
-leaving raw data available for a later supported transformation. Existing legacy
+leaving raw data available for a later supported transformation.
 Display query requested/missing-member diagnostics are computed in the derived
 publication after normalization, while the raw acquisition receipt stays pristine.
-Existing legacy
-datasets, v1 identifiers/hashes and v2 replay aliases retain their prior contracts.
+Existing legacy datasets, v1 identifiers/hashes and v2 replay aliases retain their
+prior contracts.
 Raw parents participate in existing source invalidation, retention, backup and
 object verification; zero-row parents are already excluded from compaction.
 
