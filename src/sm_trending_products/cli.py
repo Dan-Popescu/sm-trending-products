@@ -7,6 +7,7 @@ import json
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,24 @@ def parser() -> argparse.ArgumentParser:
     worker.add_argument("--batch-size", type=int, default=20)
     worker.add_argument("--loop", action="store_true")
     worker.add_argument("--poll-seconds", type=float, default=10)
+    for name, description in (
+        ("worker-status", "Inspect registered worker generation, drain state and owned leases"),
+        ("worker-drain", "Block new claims; the owning worker acknowledges settled work"),
+        ("worker-resume", "Resume an acknowledged drained worker generation"),
+    ):
+        control = command(name, description)
+        control.add_argument("--worker-id", required=True)
+        if name in {"worker-drain", "worker-resume"}:
+            control.add_argument("--generation", required=True, type=int)
+        if name == "worker-drain":
+            control.add_argument(
+                "--timeout-seconds", type=float, default=5, help="Maximum admission-lock wait"
+            )
+            control.add_argument(
+                "--wait-seconds",
+                type=float,
+                help="Also wait for acknowledgement, or report blocked",
+            )
     schedule = command(
         "schedule", "Allocate exploration and refresh tasks within quotas", synthetic=True
     )
@@ -268,40 +287,91 @@ def dispatch(pipeline, args):
             from .catalog import InvalidationPending
 
             stop = threading.Event()
-            if args.loop:
-                signal.signal(signal.SIGTERM, lambda *_: stop.set())
-                signal.signal(signal.SIGINT, lambda *_: stop.set())
             if not 0 < args.poll_seconds <= 60:
                 raise ValueError("Poll interval must be positive and at most 60 seconds")
-            while not stop.is_set():
+            control = pipeline.worker_control
+            session = pipeline.start_worker(synthetic)
+            generation = session["generation"]
+            previous = {
+                number: signal.signal(number, lambda *_: stop.set())
+                for number in (signal.SIGTERM, signal.SIGINT)
+            }
+
+            def wait(seconds: float) -> None:
+                # A long poll must not look like a crashed fixed worker slot.
+                deadline = time.monotonic() + seconds
+                while (remaining := deadline - time.monotonic()) > 0:
+                    if stop.wait(min(remaining, 10)):
+                        return
+                    if control.heartbeat(pipeline.worker_id, generation)["state"] != "running":
+                        return
+
+            try:
+                while not stop.is_set():
+                    state = control.heartbeat(pipeline.worker_id, generation)["state"]
+                    if state != "running":
+                        # Stay alive when remotely drained: an exit would trigger
+                        # Compose's restart policy and undo the deployment barrier.
+                        control.acknowledge_drain(pipeline.worker_id, generation)
+                        if not args.loop:
+                            return {"status": "drained"}
+                        wait(min(args.poll_seconds, 1))
+                        continue
+                    try:
+                        result = pipeline.collect_batch(
+                            args.batch_size, synthetic=synthetic, should_stop=stop.is_set
+                        )
+                    except InvalidationPending:
+                        progress = pipeline.catalog.resume_invalidations(
+                            max_batches=1000, max_seconds=0.8, synthetic=synthetic
+                        )
+                        result = {"status": "invalidation_pending", "invalidations": progress}
+                    state = control.acknowledge_drain(pipeline.worker_id, generation)["state"]
+                    if not args.loop:
+                        return result
+                    print(canonical(result), flush=True)
+                    if state != "running":
+                        wait(min(args.poll_seconds, 1))
+                        continue
+                    if result.get("status") == "invalidation_pending":
+                        progress = result["invalidations"]
+                        wait(0.01 if progress["processed"] else min(args.poll_seconds, 0.25))
+                        continue
+                    # Drain busy work without delaying full batches. Signals are
+                    # also checked before every task, inside collect_batch.
+                    if (
+                        result.get("processed", 0) < args.batch_size
+                        or result.get("errors")
+                        or result.get("waiting")
+                        or result.get("quota_waiting")
+                    ):
+                        wait(args.poll_seconds)
+                return {"status": "stopped"}
+            finally:
                 try:
-                    result = pipeline.collect_batch(args.batch_size, synthetic=synthetic)
-                except InvalidationPending:
-                    # A retirement gate is temporary backpressure, not a failed
-                    # collection task. Keep the daemon alive and finish its
-                    # persisted work without waiting for another cron/restart.
-                    progress = pipeline.catalog.resume_invalidations(
-                        max_batches=1000, max_seconds=0.8, synthetic=synthetic
-                    )
-                    result = {"status": "invalidation_pending", "invalidations": progress}
-                if not args.loop:
-                    return result
-                print(canonical(result), flush=True)
-                if result.get("status") == "invalidation_pending":
-                    progress = result["invalidations"]
-                    stop.wait(0.01 if progress["processed"] else min(args.poll_seconds, 0.25))
-                    continue
-                # Drain a busy queue without an artificial pause between bounded
-                # batches. Empty/partial work and backpressure still wait, and
-                # every next batch checks the signal event before claiming work.
-                if (
-                    result.get("processed", 0) < args.batch_size
-                    or result.get("errors")
-                    or result.get("waiting")
-                    or result.get("quota_waiting")
-                ):
-                    stop.wait(args.poll_seconds)
-            return {"status": "stopped"}
+                    control.finish(pipeline.worker_id, generation)
+                finally:
+                    for number, handler in previous.items():
+                        signal.signal(number, handler)
+        case "worker-status":
+            state = pipeline.worker_control.status(args.worker_id)
+            if state is None:
+                raise ValueError("Unknown worker")
+            return state
+        case "worker-drain":
+            if args.wait_seconds is not None and not 0 < args.wait_seconds <= 3600:
+                raise ValueError("Drain wait must be positive and at most 3600 seconds")
+            control = pipeline.worker_control
+            state = control.request_drain(
+                args.worker_id, args.generation, timeout_seconds=args.timeout_seconds
+            )
+            if state.get("ok") is False or args.wait_seconds is None:
+                return state
+            return control.wait_drained(
+                args.worker_id, args.generation, timeout_seconds=args.wait_seconds
+            )
+        case "worker-resume":
+            return pipeline.worker_control.resume(args.worker_id, args.generation)
         case "schedule":
             return pipeline.schedule(
                 args.budget, synthetic=synthetic, policy=read_json(args.policy_file)
