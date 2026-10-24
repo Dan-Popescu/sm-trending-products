@@ -176,7 +176,19 @@ services:
 
   capture-planner:
     <<: *pipeline-service
-    image: ${ACQUISITION_PLANNER_IMAGE:-${PIPELINE_IMAGE:-sm-trending-products:local}}
+    image: ${ACQUISITION_PLANNER_BLUE_IMAGE:-${ACQUISITION_PLANNER_IMAGE:-${PIPELINE_IMAGE:-sm-trending-products:local}}}
+    command: [python, -m, sm_trending_products.capture_coordinator, --loop]
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    mem_limit: ${ACQUISITION_PLANNER_MEMORY_LIMIT:-512m}
+    cpus: ${ACQUISITION_PLANNER_CPUS:-0.5}
+    restart: unless-stopped
+
+  capture-planner-green:
+    <<: *pipeline-service
+    image: ${ACQUISITION_PLANNER_GREEN_IMAGE:-${ACQUISITION_PLANNER_IMAGE:-${PIPELINE_IMAGE:-sm-trending-products:local}}}
+    profiles: [rollout]
     command: [python, -m, sm_trending_products.capture_coordinator, --loop]
     depends_on:
       initialize:

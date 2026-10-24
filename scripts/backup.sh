@@ -64,7 +64,7 @@ writer_services=()
 if [[ "$online" != true ]]; then
   while IFS= read -r service; do
     case "$service" in
-      worker|worker-green|capture-planner|normalizer|dagster-daemon|dagster-webserver|dashboard)
+      worker|worker-green|capture-planner|capture-planner-green|normalizer|dagster-daemon|dagster-webserver|dashboard)
         writer_services+=("$service") ;;
     esac
   done < <(docker compose ps --services --status running)

@@ -69,3 +69,24 @@ def test_independent_runtime_blocks_legacy_source_path_before_any_request(pipeli
     monkeypatch.setattr(pipeline._collection, "collect_batch", forbidden)
     with pytest.raises(ValueError, match="Independent acquisition"):
         pipeline.collect_batch(synthetic=True)
+
+
+def test_operator_spool_revocation_requires_explicit_apply_and_preserves_workspace(pipeline):
+    arguments = [
+        "capture-spool-revoke",
+        "--source",
+        "tiktok_display",
+        "--account-id",
+        "fixture-account",
+        "--reason",
+        "source_removed",
+        "--synthetic",
+    ]
+    preview = dispatch(pipeline, parser().parse_args(arguments))
+    assert preview["preview"] is True and preview["synthetic"] is True
+    assert pipeline.catalog.all("SELECT * FROM capture_spool_revocations") == []
+    applied = dispatch(pipeline, parser().parse_args([*arguments, "--apply"]))
+    assert applied
+    rows = pipeline.catalog.all("SELECT * FROM capture_spool_revocations")
+    assert len(rows) == 1 and rows[0]["synthetic"] is True
+    assert rows[0]["source"] == "tiktok_display" and rows[0]["account_id"] == "fixture-account"

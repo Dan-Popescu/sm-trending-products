@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import signal
 import threading
+import time
 from typing import TYPE_CHECKING
 
 from .catalog import InvalidationPending
@@ -38,6 +39,19 @@ def run_worker(
     # Registering it as an acquisition worker would misrepresent drain evidence.
     session = pipeline.start_worker(synthetic) if mode != "publish-captures" else None
     generation = session["generation"] if session else None
+
+    def wait(seconds: float) -> None:
+        deadline = time.monotonic() + seconds
+        while not stop.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or stop.wait(min(remaining, 10)):
+                return
+            if (
+                generation is not None
+                and control.heartbeat(pipeline.worker_id, generation)["state"] != "running"
+            ):
+                return
+
     previous = {
         number: signal.signal(number, lambda *_: stop.set())
         for number in (signal.SIGTERM, signal.SIGINT)
@@ -50,7 +64,7 @@ def run_worker(
                     control.acknowledge_drain(pipeline.worker_id, generation)
                     if not loop:
                         return {"status": "drained"}
-                    stop.wait(min(poll_seconds, 1))
+                    wait(min(poll_seconds, 1))
                     continue
             try:
                 result = operation(batch_size, synthetic=synthetic, should_stop=stop.is_set)
@@ -66,14 +80,14 @@ def run_worker(
             print(canonical(result), flush=True)
             if result.get("status") == "invalidation_pending":
                 progress = result["invalidations"]
-                stop.wait(0.01 if progress["processed"] else min(poll_seconds, 0.25))
+                wait(0.01 if progress["processed"] else min(poll_seconds, 0.25))
             elif (
                 result.get("processed", 0) < batch_size
                 or result.get("errors")
                 or result.get("waiting")
                 or result.get("quota_waiting")
             ):
-                stop.wait(poll_seconds)
+                wait(poll_seconds)
         return {"status": "stopped"}
     finally:
         try:

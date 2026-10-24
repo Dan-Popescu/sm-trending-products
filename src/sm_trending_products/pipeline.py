@@ -93,7 +93,10 @@ class Pipeline:
         try:
             self.history.flush_usage()
         finally:
-            self.catalog.close()
+            try:
+                self._raw_capture.close()
+            finally:
+                self.catalog.close()
 
     @property
     def identity(self):
@@ -295,6 +298,22 @@ class Pipeline:
     ) -> dict:
         return self._raw_capture.publish_pending(
             batch_size, synthetic=synthetic, should_stop=should_stop
+        )
+
+    def maintain_capture_spool(self, limit: int = 20, *, apply: bool = False) -> dict:
+        return self._raw_capture.maintain_spool(limit, apply=apply)
+
+    def revoke_capture_spool(
+        self,
+        source: str,
+        account_id: str,
+        synthetic: bool,
+        reason: str,
+        *,
+        captured_before: datetime | None = None,
+    ) -> dict:
+        return self._raw_capture.request_spool_removal(
+            source, account_id, synthetic, reason, captured_before=captured_before
         )
 
     def collect_batch(

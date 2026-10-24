@@ -45,6 +45,15 @@ The explicit 4-vCPU pilot profile budgets a 768-MiB, 0.75-CPU candidate and
 unmodified larger limits on other roles may conservatively block overlap. The
 capacity module's default budget remains more conservative.
 
+For the 4-vCPU/16-GiB starting profile, append
+[`deploy/production-4cpu.env.example`](../../deploy/production-4cpu.env.example)
+to the private runtime environment before supplying credentials. Its running
+role CPU ceilings total 3 CPUs; one 0.75-CPU replacement and the configured
+0.25-CPU reserve fit within four. Running memory ceilings total 7.25 GiB before
+the replacement. Actual available memory and disk must still pass admission;
+these configured limits do not certify throughput or recovery windows. Other
+applications on the VPS count toward admission and can block overlap.
+
 Create `/etc/sm-trends` as root, mode 0700. Copy
 `deploy/controller/release-controller.example.json` to
 `/etc/sm-trends/release-controller.json`, substitute the repository/trust settings,

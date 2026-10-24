@@ -85,6 +85,24 @@ def parser() -> argparse.ArgumentParser:
     capture_status.add_argument("--as-of")
     capture_status.add_argument("--limit", type=int, default=200)
     capture_status.epilog = "Example: sm-trends capture-status --limit 100"
+    spool = command("capture-spool", "Inspect or apply authorized local receipt maintenance")
+    spool.add_argument("--limit", type=int, default=20)
+    spool.add_argument("--apply", action="store_true", help="Default is a read-only preview")
+    spool.epilog = "Example: sm-trends capture-spool --limit 20; sm-trends capture-spool --apply"
+    revoke = command(
+        "capture-spool-revoke",
+        "Record scoped authorization to remove retained local inputs",
+        synthetic=True,
+    )
+    revoke.add_argument("--source", required=True)
+    revoke.add_argument("--account-id", required=True)
+    revoke.add_argument("--reason", required=True)
+    revoke.add_argument("--captured-before")
+    revoke.add_argument("--apply", action="store_true", help="Default previews without revoking")
+    revoke.epilog = (
+        "Example: sm-trends capture-spool-revoke --source tiktok_display "
+        "--account-id ACCOUNT --reason source_removed --apply"
+    )
     pause = command(
         "capture-pause",
         "Assess a bounded blackout against verified recovery windows",
@@ -333,6 +351,22 @@ def dispatch(pipeline, args):
                 CapturePolicy.model_validate(read_json(args.file)), synthetic=synthetic
             )
             return {"contract_id": identity, "synthetic": synthetic}
+        case "capture-spool":
+            return pipeline.maintain_capture_spool(args.limit, apply=args.apply)
+        case "capture-spool-revoke":
+            before = utc(args.captured_before) if args.captured_before else cutoff
+            if not args.apply:
+                return {
+                    "preview": True,
+                    "source": args.source,
+                    "account_id": args.account_id,
+                    "synthetic": synthetic,
+                    "reason": args.reason,
+                    "captured_before": before,
+                }
+            return pipeline.revoke_capture_spool(
+                args.source, args.account_id, synthetic, args.reason, captured_before=before
+            )
         case "capture-status":
             return pipeline.capture_contracts.status(
                 as_of=cutoff, synthetic=synthetic, limit=args.limit

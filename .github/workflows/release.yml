@@ -1,6 +1,10 @@
 name: Publish verified release
 
 on:
+  workflow_run:
+    workflows: [Verify pipeline]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       revision:
@@ -22,7 +26,12 @@ concurrency:
 
 jobs:
   publish:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -31,7 +40,7 @@ jobs:
       packages: write
       id-token: write
     env:
-      RELEASE_REVISION: ${{ inputs.revision }}
+      RELEASE_REVISION: ${{ inputs.revision || github.event.workflow_run.head_sha }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -52,7 +61,7 @@ jobs:
           uv run --locked python -m sm_trending_products.release_artifacts verify-ci --runs "$RUNNER_TEMP/verified-runs.json" --revision "$RELEASE_REVISION" --repository "$GITHUB_REPOSITORY"
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ inputs.revision }}
+          ref: ${{ env.RELEASE_REVISION }}
           persist-credentials: false
       - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
         with:
@@ -91,8 +100,8 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ steps.image.outputs.repository }}:revision-${{ inputs.revision }}
-          labels: org.opencontainers.image.revision=${{ inputs.revision }}
+          tags: ${{ steps.image.outputs.repository }}:revision-${{ env.RELEASE_REVISION }}
+          labels: org.opencontainers.image.revision=${{ env.RELEASE_REVISION }}
       - name: Write canonical digest-bound release manifest
         if: steps.existing.outputs.found != 'true'
         env:
@@ -108,7 +117,7 @@ jobs:
           cosign sign-blob --yes --bundle output/release/bundle.json output/release/manifest.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-${{ inputs.revision }}
+          name: release-${{ env.RELEASE_REVISION }}
           path: output/release/
           if-no-files-found: error
       - name: Publish immutable candidate files
