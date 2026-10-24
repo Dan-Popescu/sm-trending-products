@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from psycopg.types.json import Jsonb
@@ -25,6 +26,7 @@ class SourceCollection:
     ):
         self.settings, self.catalog, self.history = settings, catalog, history
         self.collector, self.worker_id = collector, worker_id
+        self.worker_generation: int | None = None
 
     def _require_access(self, source: str, account_id: str) -> None:
         cap = self.catalog.one(
@@ -81,7 +83,13 @@ class SourceCollection:
                     request[target] = payload.pop(source)
         return request
 
-    def collect_batch(self, batch_size: int = 20, synthetic: bool = False) -> dict:
+    def collect_batch(
+        self,
+        batch_size: int = 20,
+        synthetic: bool = False,
+        *,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> dict:
         if not 1 <= batch_size <= 1000:
             raise ValueError("Batch size must be between 1 and 1000")
         result: dict[str, Any] = {
@@ -91,6 +99,9 @@ class SourceCollection:
             "synthetic": synthetic,
         }
         for _ in range(batch_size):
+            if should_stop is not None and should_stop():
+                result["draining"] = True
+                break
             current_credentials = credential_keys(synthetic)
             task = self.catalog.claim(
                 self.worker_id,
@@ -98,6 +109,7 @@ class SourceCollection:
                 synthetic,
                 self.settings.max_attempts,
                 credential_keys=current_credentials,
+                worker_generation=self.worker_generation,
             )
             if task is None:
                 waiting = self.catalog.quota_waiting(

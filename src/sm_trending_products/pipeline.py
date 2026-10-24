@@ -9,7 +9,7 @@ import shutil
 import socket
 import uuid
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -34,6 +34,7 @@ from .history import History, HistoryIndexPending
 from .provenance import Provenance
 from .replay import ReplayService
 from .settings import Settings
+from .worker_control import WorkerControl
 
 
 def _filesystem_space(directory: Path) -> dict:
@@ -238,11 +239,28 @@ class Pipeline:
             idempotency_key=idempotency_key,
         )
 
-    def collect_batch(self, batch_size: int = 20, synthetic: bool = False) -> dict:
+    @property
+    def worker_control(self) -> WorkerControl:
+        return WorkerControl(self.catalog)
+
+    def start_worker(self, synthetic: bool = False) -> dict:
+        session = self.worker_control.register(self.worker_id, synthetic=synthetic)
+        self._collection.worker_generation = session["generation"]
+        return session
+
+    def collect_batch(
+        self,
+        batch_size: int = 20,
+        synthetic: bool = False,
+        *,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> dict:
         self.catalog.resume_invalidations(max_batches=1, max_seconds=0.1, synthetic=synthetic)
         with self.catalog.evidence_transaction(synthetic):
             pass
-        return self._collection.collect_batch(batch_size=batch_size, synthetic=synthetic)
+        return self._collection.collect_batch(
+            batch_size=batch_size, synthetic=synthetic, should_stop=should_stop
+        )
 
     def import_records(
         self, records: list[dict], synthetic: bool = False, origin: str = "explicit_import"
