@@ -1,0 +1,300 @@
+{
+  "baseline_commit": "0f2500fbece79c7eb6a7a190f848ac831a2f0537",
+  "scope": "Actual native archive/current/alert SQL transaction. Synthetic metadata only; no S3 staging, source collection or feature computation. execute-call count includes publication guards and excludes transaction timeout setters. Client process CPU excludes PostgreSQL server CPU; RSS is cumulative, not VPS consumption.",
+  "python": "3.12.14",
+  "postgresql": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+  "implementation_sha256": "01eaecb74777ea2dd66da1e70ec5829528d1bc77a95ba265852732af816cd064",
+  "cases": [
+    {
+      "products": 100,
+      "scenario": "first_alerts",
+      "baseline": {
+        "samples": [
+          {
+            "elapsed_ms": 222.4951919997693,
+            "client_cpu_ms": 49.680575000000005,
+            "sql_execute_calls": 407
+          },
+          {
+            "elapsed_ms": 205.93789200211177,
+            "client_cpu_ms": 54.446825999999945,
+            "sql_execute_calls": 407
+          },
+          {
+            "elapsed_ms": 142.36767599868472,
+            "client_cpu_ms": 47.81389399999991,
+            "sql_execute_calls": 407
+          }
+        ],
+        "median_elapsed_ms": 205.93789200211177,
+        "median_client_cpu_ms": 49.680575000000005,
+        "median_sql_execute_calls": 407
+      },
+      "batched": {
+        "samples": [
+          {
+            "elapsed_ms": 53.306179001083365,
+            "client_cpu_ms": 16.4077789999999,
+            "sql_execute_calls": 13
+          },
+          {
+            "elapsed_ms": 144.7238440014189,
+            "client_cpu_ms": 15.133668999999905,
+            "sql_execute_calls": 13
+          },
+          {
+            "elapsed_ms": 25.862449998385273,
+            "client_cpu_ms": 12.582877000000048,
+            "sql_execute_calls": 13
+          }
+        ],
+        "median_elapsed_ms": 53.306179001083365,
+        "median_client_cpu_ms": 15.133668999999905,
+        "median_sql_execute_calls": 13
+      }
+    },
+    {
+      "products": 100,
+      "scenario": "cooldown",
+      "baseline": {
+        "samples": [
+          {
+            "elapsed_ms": 178.85387699789135,
+            "client_cpu_ms": 52.99107000000003,
+            "sql_execute_calls": 307
+          },
+          {
+            "elapsed_ms": 64.18399299946032,
+            "client_cpu_ms": 31.428513999999907,
+            "sql_execute_calls": 307
+          },
+          {
+            "elapsed_ms": 65.19693499649293,
+            "client_cpu_ms": 30.919547999999963,
+            "sql_execute_calls": 307
+          }
+        ],
+        "median_elapsed_ms": 65.19693499649293,
+        "median_client_cpu_ms": 31.428513999999907,
+        "median_sql_execute_calls": 307
+      },
+      "batched": {
+        "samples": [
+          {
+            "elapsed_ms": 28.087030001188396,
+            "client_cpu_ms": 12.138533999999979,
+            "sql_execute_calls": 12
+          },
+          {
+            "elapsed_ms": 29.01603599821101,
+            "client_cpu_ms": 14.849519999999838,
+            "sql_execute_calls": 12
+          },
+          {
+            "elapsed_ms": 19.069147998379776,
+            "client_cpu_ms": 10.979050000000212,
+            "sql_execute_calls": 12
+          }
+        ],
+        "median_elapsed_ms": 28.087030001188396,
+        "median_client_cpu_ms": 12.138533999999979,
+        "median_sql_execute_calls": 12
+      }
+    },
+    {
+      "products": 100,
+      "scenario": "no_alerts",
+      "baseline": {
+        "samples": [
+          {
+            "elapsed_ms": 38.48801200001617,
+            "client_cpu_ms": 21.245939000000156,
+            "sql_execute_calls": 107
+          },
+          {
+            "elapsed_ms": 37.45596699809539,
+            "client_cpu_ms": 20.884445000000085,
+            "sql_execute_calls": 107
+          },
+          {
+            "elapsed_ms": 36.195861001033336,
+            "client_cpu_ms": 20.19604000000008,
+            "sql_execute_calls": 107
+          }
+        ],
+        "median_elapsed_ms": 37.45596699809539,
+        "median_client_cpu_ms": 20.884445000000085,
+        "median_sql_execute_calls": 107
+      },
+      "batched": {
+        "samples": [
+          {
+            "elapsed_ms": 17.2538769984385,
+            "client_cpu_ms": 10.706559000000171,
+            "sql_execute_calls": 9
+          },
+          {
+            "elapsed_ms": 17.37221999792382,
+            "client_cpu_ms": 10.574257000000031,
+            "sql_execute_calls": 9
+          },
+          {
+            "elapsed_ms": 21.599452000373276,
+            "client_cpu_ms": 13.117545000000064,
+            "sql_execute_calls": 9
+          }
+        ],
+        "median_elapsed_ms": 17.37221999792382,
+        "median_client_cpu_ms": 10.706559000000171,
+        "median_sql_execute_calls": 9
+      }
+    },
+    {
+      "products": 1000,
+      "scenario": "first_alerts",
+      "baseline": {
+        "samples": [
+          {
+            "elapsed_ms": 954.03146299941,
+            "client_cpu_ms": 403.433175,
+            "sql_execute_calls": 4007
+          },
+          {
+            "elapsed_ms": 898.988464003196,
+            "client_cpu_ms": 398.6792620000004,
+            "sql_execute_calls": 4007
+          },
+          {
+            "elapsed_ms": 1098.730108999007,
+            "client_cpu_ms": 450.548768,
+            "sql_execute_calls": 4007
+          }
+        ],
+        "median_elapsed_ms": 954.03146299941,
+        "median_client_cpu_ms": 403.433175,
+        "median_sql_execute_calls": 4007
+      },
+      "batched": {
+        "samples": [
+          {
+            "elapsed_ms": 229.39960900112055,
+            "client_cpu_ms": 115.64517000000008,
+            "sql_execute_calls": 37
+          },
+          {
+            "elapsed_ms": 224.72273400126141,
+            "client_cpu_ms": 120.68365200000031,
+            "sql_execute_calls": 37
+          },
+          {
+            "elapsed_ms": 246.11819699930493,
+            "client_cpu_ms": 145.56862900000002,
+            "sql_execute_calls": 37
+          }
+        ],
+        "median_elapsed_ms": 229.39960900112055,
+        "median_client_cpu_ms": 120.68365200000031,
+        "median_sql_execute_calls": 37
+      }
+    },
+    {
+      "products": 1000,
+      "scenario": "cooldown",
+      "baseline": {
+        "samples": [
+          {
+            "elapsed_ms": 1602.2585649989196,
+            "client_cpu_ms": 330.6742360000001,
+            "sql_execute_calls": 3007
+          },
+          {
+            "elapsed_ms": 1654.0756290014542,
+            "client_cpu_ms": 465.61141000000015,
+            "sql_execute_calls": 3007
+          },
+          {
+            "elapsed_ms": 1001.4974049990997,
+            "client_cpu_ms": 360.90049400000004,
+            "sql_execute_calls": 3007
+          }
+        ],
+        "median_elapsed_ms": 1602.2585649989196,
+        "median_client_cpu_ms": 360.90049400000004,
+        "median_sql_execute_calls": 3007
+      },
+      "batched": {
+        "samples": [
+          {
+            "elapsed_ms": 215.81459200024256,
+            "client_cpu_ms": 129.69765300000046,
+            "sql_execute_calls": 32
+          },
+          {
+            "elapsed_ms": 187.94164099745103,
+            "client_cpu_ms": 101.8374099999999,
+            "sql_execute_calls": 32
+          },
+          {
+            "elapsed_ms": 301.4626069998485,
+            "client_cpu_ms": 105.68983400000053,
+            "sql_execute_calls": 32
+          }
+        ],
+        "median_elapsed_ms": 215.81459200024256,
+        "median_client_cpu_ms": 105.68983400000053,
+        "median_sql_execute_calls": 32
+      }
+    },
+    {
+      "products": 1000,
+      "scenario": "no_alerts",
+      "baseline": {
+        "samples": [
+          {
+            "elapsed_ms": 608.9354469986574,
+            "client_cpu_ms": 274.7214480000002,
+            "sql_execute_calls": 1007
+          },
+          {
+            "elapsed_ms": 456.13240700186,
+            "client_cpu_ms": 245.07761799999983,
+            "sql_execute_calls": 1007
+          },
+          {
+            "elapsed_ms": 376.4380800021172,
+            "client_cpu_ms": 209.04672200000007,
+            "sql_execute_calls": 1007
+          }
+        ],
+        "median_elapsed_ms": 456.13240700186,
+        "median_client_cpu_ms": 245.07761799999983,
+        "median_sql_execute_calls": 1007
+      },
+      "batched": {
+        "samples": [
+          {
+            "elapsed_ms": 178.0993350002973,
+            "client_cpu_ms": 124.3259959999996,
+            "sql_execute_calls": 17
+          },
+          {
+            "elapsed_ms": 143.9162579990807,
+            "client_cpu_ms": 95.20864200000022,
+            "sql_execute_calls": 17
+          },
+          {
+            "elapsed_ms": 143.04713300225558,
+            "client_cpu_ms": 96.9133040000001,
+            "sql_execute_calls": 17
+          }
+        ],
+        "median_elapsed_ms": 143.9162579990807,
+        "median_client_cpu_ms": 96.9133040000001,
+        "median_sql_execute_calls": 17
+      }
+    }
+  ],
+  "all_current_payloads_exact": true,
+  "all_alert_counts_exact": true,
+  "process_cumulative_peak_rss_kib": 131392
+}

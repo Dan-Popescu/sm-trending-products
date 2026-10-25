@@ -13,9 +13,8 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
-from psycopg.types.json import Jsonb
-
 from .assessment_archive import AssessmentArchive
+from .assessment_publisher import AssessmentPublisher
 from .assessment_service import AssessmentService
 from .capture_contracts import CaptureContracts
 from .catalog import Catalog
@@ -445,42 +444,7 @@ class Pipeline:
         }
         publication = self._assessment_archive.stage(body, publication_scope)
         run_id = publication.run_id
-        with self.catalog.transaction() as connection:
-            self._assessment_archive.commit(connection, publication)
-            for row in rows:
-                connection.execute(
-                    "INSERT INTO current_assessments(product_id,run_id,synthetic,score,payload) "
-                    "VALUES(%s,%s,%s,%s,%s) ON CONFLICT(product_id) DO UPDATE SET "
-                    "run_id=EXCLUDED.run_id,"
-                    "score=EXCLUDED.score,payload=EXCLUDED.payload WHERE "
-                    "(SELECT as_of FROM assessment_runs "
-                    "WHERE run_id=current_assessments.run_id)<=%s",
-                    (
-                        row["product_id"],
-                        run_id,
-                        synthetic,
-                        row.get("score"),
-                        Jsonb(redact(row)),
-                        as_of,
-                    ),
-                )
-                if row.get("score") is None or row["score"] < policy.alert_threshold:
-                    continue
-                connection.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext(%s))", ("alert:" + row["product_id"],)
-                )
-                recent = connection.execute(
-                    "SELECT 1 FROM alerts WHERE product_id=%s AND NOT invalidated "
-                    "AND created_at>clock_timestamp()-%s*interval '1 hour'",
-                    (row["product_id"], policy.cooldown_hours),
-                ).fetchone()
-                if not recent:
-                    alert_id = digest({"run_id": run_id, "product_id": row["product_id"]})
-                    connection.execute(
-                        "INSERT INTO alerts(alert_id,product_id,run_id,synthetic,payload) "
-                        "VALUES(%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
-                        (alert_id, row["product_id"], run_id, synthetic, Jsonb(row)),
-                    )
+        AssessmentPublisher(self.catalog, self._assessment_archive).publish(publication)
         return {"run_id": run_id, **body}
 
     def assessment_snapshot(self, run_id: str, synthetic: bool = False) -> dict | None:
