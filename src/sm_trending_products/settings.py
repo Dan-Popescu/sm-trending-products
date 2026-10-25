@@ -14,7 +14,7 @@ class PlanningSettings(BaseSettings):
     scheduler_request_budget: int = Field(default=500, ge=0, le=10_000)
     acquisition_enabled: bool = False
     collection_schedule_minutes: int = Field(default=5, ge=1, le=60)
-    assessment_schedule_minutes: int = Field(default=15, ge=1, le=60)
+    assessment_schedule_minutes: int = Field(default=60, ge=1, le=60)
     maintenance_schedule_minutes: int = Field(default=15, ge=1, le=60)
 
     @model_validator(mode="after")

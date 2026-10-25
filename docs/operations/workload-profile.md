@@ -17,14 +17,15 @@ Use `--videos-per-request` to declare lower grouping and
 
 The deployment now admits up to `SCHEDULER_REQUEST_BUDGET=500` new physical tasks
 every `COLLECTION_SCHEDULE_MINUTES=5`, independently of
-`ASSESSMENT_SCHEDULE_MINUTES=15`. This is an upper planning bound of 144,000
+`ASSESSMENT_SCHEDULE_MINUTES=60`. This is an upper planning bound of 144,000
 tasks/day, not a source grant, measured throughput or a sizing certificate.
 Intervals must divide an hour. Candidate scan limits, queue backpressure,
 available accounts and protected exploration still constrain actual scheduling.
 
-The [historical storage guide](history-storage.md) explains the inherited
-15-minute assessment default, the distinction between a new current assessment
-and a historical replay, and the constraints on future S3 cold storage.
+The [cadence comparison](assessment-cadence.md) explains the hourly assessment
+default and the accepted delay/transient-signal tradeoff for multi-day product
+decisions. The [historical storage guide](history-storage.md) distinguishes a new
+current assessment from a historical replay and explains future S3 cold storage.
 Rust continues to reserve every real HTTP attempt against authoritative quotas.
 Increasing planning admission does not bypass those controls.
 

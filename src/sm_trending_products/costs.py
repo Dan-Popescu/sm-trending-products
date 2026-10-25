@@ -30,7 +30,7 @@ class Workload(Contract):
     history_days: int = Field(gt=0, le=3650)
     month_days: int = Field(default=30, gt=0, le=31)
     videos_per_request: int = Field(default=20, gt=0, le=20)
-    assessment_runs_per_day: Positive = Decimal(96)
+    assessment_runs_per_day: Positive = Decimal(24)
     assessment_retention_days: int = Field(default=90, gt=0, le=3650)
     operating_age_days: int = Field(default=365, gt=0, le=36500)
 

@@ -68,6 +68,17 @@ T14 must not promise a capacity number before measurement. This plan builds the 
 
 ## Published issues
 
+The approved [resource-efficiency specification](../../specs/resource-efficiency.md)
+tracks the next measured optimizations and the clarified ecommerce cadence:
+
+| Slice | GitHub issue | Delivery constraint |
+| --- | --- | --- |
+| Shared validated observation decoding | [#113](https://github.com/Dan-Popescu/sm-trending-products/issues/113) | Preserve exact existing evidence |
+| Batched current/alert publication | [#114](https://github.com/Dan-Popescu/sm-trending-products/issues/114) | Preserve atomicity and concurrency |
+| Bounded compaction encoding | [#115](https://github.com/Dan-Popescu/sm-trending-products/issues/115) | Keep byte-identical format; reject regressive native-column candidates |
+| Workload-aware archives | [#116](https://github.com/Dan-Popescu/sm-trending-products/issues/116) | SQL 040 after compatible handover |
+| Hourly commerce assessments | [#117](https://github.com/Dan-Popescu/sm-trending-products/issues/117) | Collection and scoring unchanged |
+
 The approved [lossless-history specification](../../specs/lossless-history.md)
 tracks the 2026-10-25 storage follow-up:
 
