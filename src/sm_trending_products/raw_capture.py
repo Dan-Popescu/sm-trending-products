@@ -18,6 +18,44 @@ from .replay import ReplayService
 from .source_contracts import credential_keys, raw_capture_identity
 
 
+def _publication_claim_sql(pending: bool) -> str:
+    if pending:
+        # Keep candidate sorting entirely inside the pending relation. OFFSET 0
+        # prevents flattening it back into a full-history join when stale stats
+        # still describe a previously large backlog. LATERAL and the outer LIMIT
+        # probe/lock one parent at a time, rather than locking the whole backlog.
+        return (
+            "SELECT selected.dataset_id FROM ("
+            "SELECT p.dataset_id FROM capture_publication_pending p "
+            "LEFT JOIN capture_publication_leases l USING(dataset_id) WHERE p.synthetic=%s "
+            "AND (l.dataset_id IS NULL OR (l.lease_until<clock_timestamp() "
+            "AND l.retry_at<=clock_timestamp())) "
+            "ORDER BY COALESCE(l.retry_at,p.created_at),p.created_at,p.dataset_id OFFSET 0"
+            ") candidate CROSS JOIN LATERAL ("
+            "SELECT d.dataset_id FROM datasets d LEFT JOIN capture_publication_leases l "
+            "USING(dataset_id) WHERE d.dataset_id=candidate.dataset_id AND d.synthetic=%s "
+            "AND d.state='committed' AND d.manifest->>'kind'='raw_capture' "
+            "AND d.manifest->>'acquisition_protocol'='1' "
+            "AND (l.dataset_id IS NULL OR (l.lease_until<clock_timestamp() "
+            "AND l.retry_at<=clock_timestamp())) "
+            "AND NOT EXISTS(SELECT 1 FROM datasets child WHERE child.supersedes=d.dataset_id "
+            "AND child.transform_version='1' AND child.state='committed' OFFSET 0) "
+            "FOR UPDATE OF d SKIP LOCKED LIMIT 1) selected LIMIT 1"
+        )
+    return (
+        "SELECT d.dataset_id FROM datasets d LEFT JOIN capture_publication_leases l "
+        "USING(dataset_id) WHERE d.synthetic=%s AND d.state='committed' "
+        "AND d.manifest->>'kind'='raw_capture' "
+        "AND d.manifest->>'acquisition_protocol'='1' "
+        "AND (l.dataset_id IS NULL OR (l.lease_until<clock_timestamp() "
+        "AND l.retry_at<=clock_timestamp())) "
+        "AND NOT EXISTS(SELECT 1 FROM datasets child WHERE child.supersedes=d.dataset_id "
+        "AND child.transform_version='1' AND child.state='committed') "
+        "ORDER BY COALESCE(l.retry_at,d.created_at),d.created_at,d.dataset_id "
+        "FOR UPDATE OF d SKIP LOCKED LIMIT 1"
+    )
+
+
 class RawCaptureService:
     def __init__(self, settings, catalog, history, collector, worker_id):
         self.settings, self.catalog, self.history = settings, catalog, history
@@ -383,18 +421,24 @@ class RawCaptureService:
     def _claim_publication(self, synthetic: bool) -> dict | None:
         with self.catalog.transaction() as connection:
             self.catalog.guard_namespace(connection, synthetic)
+            # A bridge image supports schemas 35/36 while compatible acquisition
+            # predecessor is still running. Discover expansion on every claim;
+            # older signed releases still require their declared schema range.
+            frontier = connection.execute(
+                "SELECT to_regclass('capture_publication_pending') IS NOT NULL AS available"
+            ).fetchone()
+            pending = bool(frontier and frontier["available"])
+            if not pending:
+                schema = connection.execute(
+                    "SELECT max(version) AS version FROM schema_migrations"
+                ).fetchone()
+                if not schema or schema["version"] not in {35, 36}:
+                    raise RuntimeError(
+                        "Capture publication projection is missing after schema expansion"
+                    )
             row = connection.execute(
-                "SELECT d.dataset_id FROM datasets d LEFT JOIN capture_publication_leases l "
-                "USING(dataset_id) WHERE d.synthetic=%s AND d.state='committed' "
-                "AND d.manifest->>'kind'='raw_capture' "
-                "AND d.manifest->>'acquisition_protocol'='1' "
-                "AND (l.dataset_id IS NULL OR (l.lease_until<clock_timestamp() "
-                "AND l.retry_at<=clock_timestamp())) "
-                "AND NOT EXISTS(SELECT 1 FROM datasets child WHERE child.supersedes=d.dataset_id "
-                "AND child.transform_version='1' AND child.state='committed') "
-                "ORDER BY COALESCE(l.retry_at,d.created_at),d.created_at,d.dataset_id "
-                "FOR UPDATE OF d SKIP LOCKED LIMIT 1",
-                (synthetic,),
+                _publication_claim_sql(pending),
+                (synthetic, synthetic) if pending else (synthetic,),
             ).fetchone()
             if not row:
                 return None
@@ -403,7 +447,9 @@ class RawCaptureService:
                 "VALUES(%s,%s,clock_timestamp()+%s*interval '1 second') "
                 "ON CONFLICT(dataset_id) DO UPDATE SET worker_id=EXCLUDED.worker_id,"
                 "fence=capture_publication_leases.fence+1,lease_until=EXCLUDED.lease_until,"
-                "attempts=capture_publication_leases.attempts+1,last_error=NULL RETURNING *",
+                "attempts=capture_publication_leases.attempts+1,last_error=NULL "
+                "WHERE capture_publication_leases.lease_until<clock_timestamp() "
+                "AND capture_publication_leases.retry_at<=clock_timestamp() RETURNING *",
                 (row["dataset_id"], self.worker_id, self.settings.lease_seconds),
             ).fetchone()
 

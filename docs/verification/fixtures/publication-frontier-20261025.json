@@ -1,0 +1,114 @@
+{
+  "date": "2026-10-25",
+  "baseline_commit": "ac5ddcb9e8713e311b6772528e48b0ee8ade9b33",
+  "scope": "Isolated native PostgreSQL metadata-only selection; not source collection, normalization, S3, whole-stack CPU/RAM or VPS capacity",
+  "fixture": "metadata-only; publication triggers bypassed only during private-schema seeding",
+  "python": "3.12.14",
+  "postgresql": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+  "declared_host": {
+    "executor_cpu_quota": 4,
+    "executor_memory_gib": 16,
+    "postgres_container_cpu_limit": 1,
+    "postgres_container_memory_gib_limit": 2,
+    "concurrent_test_activity": "other isolated native tests; timing is not an exclusive-host or production claim"
+  },
+  "query_sha256": "a1ba85e8c54902a937b0b6540c86cac35ba3ec5fba840e5275b7609af3c46a87",
+  "full_local_artifact_sha256": "e7c13ad57e746cf7c37479bbbce7710be6c31102627d5b1ecf56e3b644cf7094",
+  "completed_parents": 500000,
+  "completed_v1_children": 500000,
+  "pending_parents": 0,
+  "seed_seconds": 43.30693767899993,
+  "baseline_sql": {
+    "median_ms": 3348.581433000163,
+    "p95_ms": 5372.047667000061,
+    "samples_ms": [
+      5372.047667000061,
+      2972.258729000032,
+      3348.581433000163,
+      3307.280711999965,
+      4056.0445300000083
+    ]
+  },
+  "treatment_sql": {
+    "median_ms": 1.0783019999962562,
+    "p95_ms": 3.0764730001919816,
+    "samples_ms": [
+      3.0764730001919816,
+      0.990867000155049,
+      1.0866949999126518,
+      1.0783019999962562,
+      0.7751719999760098
+    ]
+  },
+  "treatment_actual_method": {
+    "median_ms": 2.598312999907648,
+    "p95_ms": 3.5857159998613497,
+    "samples_ms": [
+      2.711635999958162,
+      2.5047759997960384,
+      2.598312999907648,
+      1.8581500000891538,
+      3.5857159998613497
+    ]
+  },
+  "stale_statistics_prior_backlog": 5000,
+  "stale_statistics_actual_method": {
+    "median_ms": 1.6233799999554321,
+    "p95_ms": 3.371892999894044,
+    "samples_ms": [
+      3.371892999894044,
+      1.7437770000015007,
+      1.55895399984729,
+      1.6233799999554321,
+      1.5526170000157435
+    ]
+  },
+  "treatment_explain": {
+    "execution_ms": 0.046,
+    "retained_dataset_visits": [
+      {
+        "Node Type": "Index Scan",
+        "Index Name": "datasets_pkey",
+        "Alias": "d",
+        "Actual Loops": 0,
+        "Actual Rows": 0,
+        "Shared Hit Blocks": 0
+      },
+      {
+        "Node Type": "Index Only Scan",
+        "Index Name": "capture_committed_normalization_parent",
+        "Alias": "child",
+        "Actual Loops": 0,
+        "Actual Rows": 0,
+        "Shared Hit Blocks": 0
+      }
+    ]
+  },
+  "stale_statistics_explain": {
+    "execution_ms": 0.053,
+    "retained_dataset_visits": [
+      {
+        "Node Type": "Index Scan",
+        "Index Name": "datasets_pkey",
+        "Alias": "d",
+        "Actual Loops": 0,
+        "Actual Rows": 0,
+        "Shared Hit Blocks": 0
+      },
+      {
+        "Node Type": "Index Only Scan",
+        "Index Name": "capture_committed_normalization_parent",
+        "Alias": "child",
+        "Actual Loops": 0,
+        "Actual Rows": 0,
+        "Shared Hit Blocks": 0
+      }
+    ]
+  },
+  "storage_bytes": {
+    "pending_projection": 1802240,
+    "child_parent_index": 62398464
+  },
+  "latency_limit": "Five wall-time samples; p95 is nearest-rank empirical maximum here, not a statistical production bound",
+  "cleanup": "Private benchmark schema dropped; no source calls or deployed data changed"
+}

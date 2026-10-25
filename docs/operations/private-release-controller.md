@@ -176,17 +176,19 @@ read these root-only files. After disaster recovery, keep the deployment timer
 disabled until the restored SQL, actual containers and private controller state
 are reconciled; an older SQL dump must not silently reset deployment authority.
 
-## Additive capture-recovery schema expansion
+## Additive capture schema expansions
 
-The capture-recovery image supports schemas 35 and 36. Migration 036 adds only
+The current bridge image supports schemas 35 through 37. Migration 036 adds only
 the indexed active-task recovery frontier; the durable receipt and task remain
 authoritative. The same recovery query works before the index exists, but bounded
 indexed execution requires expansion. It is not a second queue or evidence store.
 
 For an existing schema-35 host, first qualify and finish the normal signed
 handover to a bridge image declaring support for 35–36, while the database stays
-at 35. Move every retained acquisition/processing role to a compatible image
-before applying the additive migration through the trusted maintenance procedure.
+at 35. The current 35–37 image can bridge both expansions; the earlier 35–36
+recovery image can bridge migration 036 only. Move every retained
+acquisition/processing role to a compatible image before applying the additive
+migrations through the trusted maintenance procedure.
 The release controller does not execute migrations. Index creation briefly
 requires database locks; measure its duration and source-deadline headroom on the
 target host before expansion. The controlled fixture is not a deployment proof.
@@ -195,3 +197,19 @@ A previously signed 35-only manifest stays incompatible with schema 36. Do not
 edit its signed bytes or relax the host's schema checks. After expansion, rollback
 must use an already qualified image whose declared range includes 36; keep that
 bridge available. A fresh installation can initialize the current schema directly.
+
+Migration 037 adds the reconstructible pending-normalization projection, dataset
+maintenance hooks, a committed-child lookup index and the atomic lease-takeover
+guard. Before expanding to 37, finish handover of every retained role to a signed
+35–37 image while still on 35 or 36. On those older schemas normalization keeps
+its existing query; it discovers the new projection after expansion without a
+restart. Actual acquisition/recovery also works on 35 without the new task index.
+
+The migration's exclusive dataset-table lock drains row-locking publication
+claimers before lease-trigger DDL and backfill. Ordinary dataset reads and source
+HTTP/local spooling remain available; remote dataset staging/commit and new
+publisher claims wait. Index creation and one-time history backfill must fit the
+configured transaction/statement/lock timeouts and source deadline headroom.
+The controlled 500,000-parent experiment is not a production migration window.
+After expansion, only rollback images declaring support for 37 are admissible;
+neither an older 35-only nor 35–36 signature becomes compatible automatically.
