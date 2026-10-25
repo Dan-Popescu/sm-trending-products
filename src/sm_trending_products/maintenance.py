@@ -294,6 +294,7 @@ class Maintenance:
             WITH RECURSIVE roots AS (
                 SELECT d.dataset_id FROM datasets d
                 JOIN source_policies p ON p.source=d.source AND p.verified
+                AND p.retention_days IS NOT NULL
                 WHERE d.state IN ('committed','staged')
                 AND d.created_at < clock_timestamp()-p.retention_days*interval '1 day'
                 ORDER BY d.created_at,d.dataset_id LIMIT {root_limit}
@@ -306,6 +307,7 @@ class Maintenance:
         roots = self.catalog.all(
             "SELECT d.dataset_id,d.source,count(*) OVER() AS total FROM datasets d "
             "JOIN source_policies p ON p.source=d.source AND p.verified "
+            "AND p.retention_days IS NOT NULL "
             "WHERE d.state IN ('committed','staged') AND d.created_at<clock_timestamp()-"
             "p.retention_days*interval '1 day' ORDER BY d.created_at,d.dataset_id LIMIT 100"
         )
@@ -377,7 +379,7 @@ class Maintenance:
 
                     root = self.catalog.one(
                         "SELECT d.dataset_id FROM datasets d JOIN source_policies p "
-                        "ON p.source=d.source AND p.verified "
+                        "ON p.source=d.source AND p.verified AND p.retention_days IS NOT NULL "
                         "WHERE d.state IN ('committed','staged') "
                         "AND d.created_at<clock_timestamp()-p.retention_days*interval '1 day' "
                         "ORDER BY d.created_at,d.dataset_id LIMIT 1"
@@ -407,7 +409,8 @@ class Maintenance:
             self.catalog.guard_retention(connection, exclusive=True)
             roots = connection.execute(
                 "SELECT d.dataset_id FROM datasets d JOIN source_policies p "
-                "ON p.source=d.source AND p.verified WHERE d.state IN ('committed','staged') "
+                "ON p.source=d.source AND p.verified AND p.retention_days IS NOT NULL "
+                "WHERE d.state IN ('committed','staged') "
                 "AND d.created_at<clock_timestamp()-p.retention_days*interval '1 day' "
                 "ORDER BY d.created_at,d.dataset_id LIMIT %s",
                 (root_limit,),
@@ -584,6 +587,7 @@ class Maintenance:
             "SELECT count(*) AS count,GREATEST(0,EXTRACT(EPOCH FROM clock_timestamp()-"
             "min(d.created_at+p.retention_days*interval '1 day')))::float8 AS oldest_age_seconds "
             "FROM datasets d JOIN source_policies p ON p.source=d.source AND p.verified "
+            "AND p.retention_days IS NOT NULL "
             "WHERE d.state IN ('committed','staged') AND "
             "d.created_at<clock_timestamp()-p.retention_days*interval '1 day'"
         )

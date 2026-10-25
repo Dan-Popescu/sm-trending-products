@@ -63,6 +63,8 @@ Preserve useful history; this delivery does not introduce voluntary age deletion
 or an S3 lifecycle rule. Source-specific expiry requirements and withdrawals
 remain authoritative. A 30-day analytical lookback limits one calculation's
 inputs; it does not mean older data should be deleted.
+The [source retention procedure](source-retention.md) explains explicitly
+verified unlimited policies and the distinction from an unknown source policy.
 
 Cheaper S3 storage with slower retrieval is a future option for genuinely inactive
 archives. Old shared parts may still be referenced by a current or pending

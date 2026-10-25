@@ -4,6 +4,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 
 def test_help_is_available_without_credentials():
     environment = {
@@ -60,3 +62,48 @@ def test_source_defaults_are_canonical_at_command_dispatch(tmp_path):
             application = Commands()
             dispatch(application, parser().parse_args(arguments))
             assert application.operation == expected
+
+
+def test_verify_live_retention_options_are_exclusive_and_keep_source_evidence_separate(tmp_path):
+    from sm_trending_products.cli import dispatch, parser
+
+    payload = tmp_path / "payload.json"
+    payload.write_text("{}")
+    arguments = [
+        "verify-live",
+        "--source",
+        "tiktok_display",
+        "--account-id",
+        "account",
+        "--payload-file",
+        str(payload),
+        "--approve-use",
+        "--evidence",
+        "account-approval",
+    ]
+
+    class Commands:
+        def verify_live(self, *args, **kwargs):
+            return kwargs
+
+    with pytest.raises(SystemExit):
+        parser().parse_args(arguments)
+    with pytest.raises(SystemExit):
+        parser().parse_args(arguments + ["--retention-days", "7", "--source-retention-unlimited"])
+    result = dispatch(
+        Commands(),
+        parser().parse_args(
+            arguments
+            + [
+                "--source-retention-unlimited",
+                "--source-retention-evidence",
+                "source-contract",
+            ]
+        ),
+    )
+    assert result == {
+        "evidence": "account-approval",
+        "retention_days": None,
+        "source_retention_unlimited": True,
+        "source_retention_evidence": "source-contract",
+    }
