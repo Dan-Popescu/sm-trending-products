@@ -1,0 +1,404 @@
+{
+  "complete": true,
+  "started_at": "2026-10-25T09:13:01.642401+00:00",
+  "source_commit": "d3ed19ad792d739d77670587d755bfefb6f92708",
+  "synthetic": true,
+  "harness_sha256": "35ffc1d5f8f0af68b09e46eb1efc71f47ab72c6e1d66ddcd3644ffc5badd9660",
+  "collector_sha256": "23b554f2fa9e6784195d61dbe8a5ac0c354dd8e77935afd6542d8b1077e42d75",
+  "collector_profile": "caller_supplied; debug in the recorded local qualification",
+  "measurement_limits": [
+    "Short low-stock workload; no retained-history or live-source capacity claim",
+    "Native roles share one CPU affinity; other agents share the four-CPU host quota",
+    "PSS apportions shared resident pages; it excludes host/OS and kernel memory",
+    "No dashboard browser session or heavy analytical job is included",
+    "The local S3 emulator is measured separately and is not a VPS application role",
+    "No VPS provider, source grant or external network latency is measured",
+    "PostgreSQL uses isolated-container CPU and cgroup memory, not process PSS"
+  ],
+  "workload": {
+    "idle_seconds_requested": 60.0,
+    "active_seconds_requested": 60.0,
+    "capture_arrivals_per_second": 0.5,
+    "records_per_capture": 20,
+    "drain_seconds_limit": 30.0,
+    "admitted_tasks": 30,
+    "source_requests": 31,
+    "captures": 31,
+    "normalized": 31,
+    "observations": 620,
+    "total_tasks": 31,
+    "unfinished_tasks": 0,
+    "quarantined_tasks": 0
+  },
+  "host": {
+    "cpu_quota": "400000 100000",
+    "memory_limit_bytes": "17179869184",
+    "application_affinity_cpu": 0
+  },
+  "readiness": {
+    "complete_repository_load": true,
+    "running_workspace_repositories": [
+      {
+        "name": "__repository__"
+      }
+    ]
+  },
+  "phases": {
+    "startup": {
+      "seconds": 29.765606098000035,
+      "sample_count": 58,
+      "roles": {
+        "s3_fixture": {
+          "cpu_seconds": 0.010000000000000009,
+          "mean_occupied_cpu_cores": 0.0003359582185921594,
+          "pss_p50_bytes": 67009536,
+          "pss_p95_bytes": 67191808,
+          "peak_process_count": 1,
+          "pss_sample_count": 58
+        },
+        "capture": {
+          "cpu_seconds": 0.61,
+          "mean_occupied_cpu_cores": 0.020493451334121705,
+          "pss_p50_bytes": 79338496,
+          "pss_p95_bytes": 83077120,
+          "peak_process_count": 1,
+          "pss_sample_count": 58
+        },
+        "normalizer": {
+          "cpu_seconds": 0.63,
+          "mean_occupied_cpu_cores": 0.021165367771306023,
+          "pss_p50_bytes": 78841856,
+          "pss_p95_bytes": 82613248,
+          "peak_process_count": 1,
+          "pss_sample_count": 58
+        },
+        "planner": {
+          "cpu_seconds": 0.64,
+          "mean_occupied_cpu_cores": 0.021501325989898182,
+          "pss_p50_bytes": 78215168,
+          "pss_p95_bytes": 82089984,
+          "peak_process_count": 1,
+          "pss_sample_count": 58
+        },
+        "dagster_webserver": {
+          "cpu_seconds": 4.02,
+          "mean_occupied_cpu_cores": 0.13505520387404796,
+          "pss_p50_bytes": 290631680,
+          "pss_p95_bytes": 291246080,
+          "peak_process_count": 2,
+          "pss_sample_count": 58
+        },
+        "dagster_daemon": {
+          "cpu_seconds": 4.050000000000001,
+          "mean_occupied_cpu_cores": 0.13606307852982447,
+          "pss_p50_bytes": 265499648,
+          "pss_p95_bytes": 266310656,
+          "peak_process_count": 2,
+          "pss_sample_count": 58
+        },
+        "dashboard": {
+          "cpu_seconds": 0.69,
+          "mean_occupied_cpu_cores": 0.023181117082858978,
+          "pss_p50_bytes": 43364352,
+          "pss_p95_bytes": 44672000,
+          "peak_process_count": 1,
+          "pss_sample_count": 58
+        },
+        "postgres": {
+          "cpu_seconds": 1.163801999999997,
+          "mean_occupied_cpu_cores": 0.03909888467139909,
+          "pss_p50_bytes": null,
+          "pss_p95_bytes": null,
+          "peak_process_count": 18,
+          "pss_sample_count": 0
+        }
+      },
+      "application_pss_p50_bytes": 835888128,
+      "application_pss_p95_bytes": 837316608,
+      "application_pss_sample_count": 58,
+      "postgres_cgroup_memory_p95_bytes": 149467136,
+      "postgres_cgroup_working_set_p95_bytes": 86777856,
+      "postgres_inactive_file_p95_bytes": 62689280,
+      "runtime_cpu_cores_excluding_s3_fixture": 0.3965584292534564,
+      "runtime_percent_of_four_cpu_excluding_s3_fixture": 9.91396073133641,
+      "synchronized_app_pss_plus_pg_cgroup_memory_p95_bytes": 984667136,
+      "synchronized_combined_memory_sample_count": 58
+    },
+    "idle": {
+      "seconds": 59.698865220000016,
+      "sample_count": 114,
+      "roles": {
+        "s3_fixture": {
+          "cpu_seconds": 0.0,
+          "mean_occupied_cpu_cores": 0.0,
+          "pss_p50_bytes": 66953216,
+          "pss_p95_bytes": 67008512,
+          "peak_process_count": 1,
+          "pss_sample_count": 114
+        },
+        "capture": {
+          "cpu_seconds": 0.030000000000000027,
+          "mean_occupied_cpu_cores": 0.0005025221147746302,
+          "pss_p50_bytes": 78176256,
+          "pss_p95_bytes": 79338496,
+          "peak_process_count": 1,
+          "pss_sample_count": 114
+        },
+        "normalizer": {
+          "cpu_seconds": 0.0,
+          "mean_occupied_cpu_cores": 0.0,
+          "pss_p50_bytes": 77778944,
+          "pss_p95_bytes": 78841856,
+          "peak_process_count": 1,
+          "pss_sample_count": 114
+        },
+        "planner": {
+          "cpu_seconds": 0.04999999999999993,
+          "mean_occupied_cpu_cores": 0.0008375368579577151,
+          "pss_p50_bytes": 77161472,
+          "pss_p95_bytes": 78212096,
+          "peak_process_count": 1,
+          "pss_sample_count": 114
+        },
+        "dagster_webserver": {
+          "cpu_seconds": 0.35999999999999943,
+          "mean_occupied_cpu_cores": 0.006030265377295547,
+          "pss_p50_bytes": 291686400,
+          "pss_p95_bytes": 293102592,
+          "peak_process_count": 2,
+          "pss_sample_count": 114
+        },
+        "dagster_daemon": {
+          "cpu_seconds": 2.9099999999999993,
+          "mean_occupied_cpu_cores": 0.04874464513313907,
+          "pss_p50_bytes": 266680320,
+          "pss_p95_bytes": 420608000,
+          "peak_process_count": 3,
+          "pss_sample_count": 114
+        },
+        "dashboard": {
+          "cpu_seconds": 0.13,
+          "mean_occupied_cpu_cores": 0.0021775958306900624,
+          "pss_p50_bytes": 43337728,
+          "pss_p95_bytes": 43402240,
+          "peak_process_count": 1,
+          "pss_sample_count": 114
+        },
+        "postgres": {
+          "cpu_seconds": 1.100877999999998,
+          "mean_occupied_cpu_cores": 0.01844051802229546,
+          "pss_p50_bytes": null,
+          "pss_p95_bytes": null,
+          "peak_process_count": 11,
+          "pss_sample_count": 0
+        }
+      },
+      "application_pss_p50_bytes": 839393280,
+      "application_pss_p95_bytes": 986635264,
+      "application_pss_sample_count": 114,
+      "postgres_cgroup_memory_p95_bytes": 146931712,
+      "postgres_cgroup_working_set_p95_bytes": 84242432,
+      "postgres_inactive_file_p95_bytes": 62689280,
+      "runtime_cpu_cores_excluding_s3_fixture": 0.07673308333615249,
+      "runtime_percent_of_four_cpu_excluding_s3_fixture": 1.9183270834038122,
+      "synchronized_app_pss_plus_pg_cgroup_memory_p95_bytes": 1133337600,
+      "synchronized_combined_memory_sample_count": 114
+    },
+    "active": {
+      "seconds": 59.97760228800007,
+      "sample_count": 209,
+      "roles": {
+        "s3_fixture": {
+          "cpu_seconds": 0.6199999999999999,
+          "mean_occupied_cpu_cores": 0.01033719215754721,
+          "pss_p50_bytes": 67810304,
+          "pss_p95_bytes": 68246528,
+          "peak_process_count": 1,
+          "pss_sample_count": 209
+        },
+        "capture": {
+          "cpu_seconds": 1.9299999999999997,
+          "mean_occupied_cpu_cores": 0.03217867881300986,
+          "pss_p50_bytes": 90942464,
+          "pss_p95_bytes": 91995136,
+          "peak_process_count": 2,
+          "pss_sample_count": 209
+        },
+        "normalizer": {
+          "cpu_seconds": 1.1600000000000001,
+          "mean_occupied_cpu_cores": 0.0193405530689593,
+          "pss_p50_bytes": 105202688,
+          "pss_p95_bytes": 106651648,
+          "peak_process_count": 1,
+          "pss_sample_count": 209
+        },
+        "planner": {
+          "cpu_seconds": 0.06000000000000005,
+          "mean_occupied_cpu_cores": 0.001000373434601344,
+          "pss_p50_bytes": 77159424,
+          "pss_p95_bytes": 78381056,
+          "peak_process_count": 1,
+          "pss_sample_count": 209
+        },
+        "dagster_webserver": {
+          "cpu_seconds": 0.47000000000000064,
+          "mean_occupied_cpu_cores": 0.007836258571043864,
+          "pss_p50_bytes": 290207744,
+          "pss_p95_bytes": 293431296,
+          "peak_process_count": 2,
+          "pss_sample_count": 209
+        },
+        "dagster_daemon": {
+          "cpu_seconds": 19.5,
+          "mean_occupied_cpu_cores": 0.32512136624543647,
+          "pss_p50_bytes": 420837376,
+          "pss_p95_bytes": 583361536,
+          "peak_process_count": 11,
+          "pss_sample_count": 209
+        },
+        "dashboard": {
+          "cpu_seconds": 0.20000000000000007,
+          "mean_occupied_cpu_cores": 0.0033345781153378113,
+          "pss_p50_bytes": 43321344,
+          "pss_p95_bytes": 43398144,
+          "peak_process_count": 1,
+          "pss_sample_count": 209
+        },
+        "postgres": {
+          "cpu_seconds": 4.420827000000003,
+          "mean_occupied_cpu_cores": 0.07370796482947257,
+          "pss_p50_bytes": null,
+          "pss_p95_bytes": null,
+          "peak_process_count": 14,
+          "pss_sample_count": 0
+        }
+      },
+      "application_pss_p50_bytes": 1021880320,
+      "application_pss_p95_bytes": 1190113280,
+      "application_pss_sample_count": 209,
+      "postgres_cgroup_memory_p95_bytes": 157073408,
+      "postgres_cgroup_working_set_p95_bytes": 93110272,
+      "postgres_inactive_file_p95_bytes": 64819200,
+      "runtime_cpu_cores_excluding_s3_fixture": 0.46251977307786124,
+      "runtime_percent_of_four_cpu_excluding_s3_fixture": 11.562994326946532,
+      "synchronized_app_pss_plus_pg_cgroup_memory_p95_bytes": 1346740224,
+      "synchronized_combined_memory_sample_count": 209
+    },
+    "drain": {
+      "seconds": 7.0250112219998755,
+      "sample_count": 15,
+      "roles": {
+        "s3_fixture": {
+          "cpu_seconds": 0.040000000000000036,
+          "mean_occupied_cpu_cores": 0.005693941082219775,
+          "pss_p50_bytes": 68287488,
+          "pss_p95_bytes": 68297728,
+          "peak_process_count": 1,
+          "pss_sample_count": 15
+        },
+        "capture": {
+          "cpu_seconds": 0.18999999999999995,
+          "mean_occupied_cpu_cores": 0.0270462201405439,
+          "pss_p50_bytes": 90950656,
+          "pss_p95_bytes": 90950656,
+          "peak_process_count": 1,
+          "pss_sample_count": 15
+        },
+        "normalizer": {
+          "cpu_seconds": 0.030000000000000027,
+          "mean_occupied_cpu_cores": 0.004270455811664831,
+          "pss_p50_bytes": 105533440,
+          "pss_p95_bytes": 105538560,
+          "peak_process_count": 1,
+          "pss_sample_count": 15
+        },
+        "planner": {
+          "cpu_seconds": 0.0,
+          "mean_occupied_cpu_cores": 0.0,
+          "pss_p50_bytes": 77161472,
+          "pss_p95_bytes": 77161472,
+          "peak_process_count": 1,
+          "pss_sample_count": 15
+        },
+        "dagster_webserver": {
+          "cpu_seconds": 0.03000000000000025,
+          "mean_occupied_cpu_cores": 0.004270455811664863,
+          "pss_p50_bytes": 290402304,
+          "pss_p95_bytes": 290418688,
+          "peak_process_count": 2,
+          "pss_sample_count": 15
+        },
+        "dagster_daemon": {
+          "cpu_seconds": 0.10999999999999943,
+          "mean_occupied_cpu_cores": 0.015658337976104286,
+          "pss_p50_bytes": 439814144,
+          "pss_p95_bytes": 439830528,
+          "peak_process_count": 5,
+          "pss_sample_count": 15
+        },
+        "dashboard": {
+          "cpu_seconds": 0.010000000000000009,
+          "mean_occupied_cpu_cores": 0.0014234852705549438,
+          "pss_p50_bytes": 43275264,
+          "pss_p95_bytes": 43275264,
+          "peak_process_count": 1,
+          "pss_sample_count": 15
+        },
+        "postgres": {
+          "cpu_seconds": 0.1746959999999973,
+          "mean_occupied_cpu_cores": 0.02486771828248624,
+          "pss_p50_bytes": null,
+          "pss_p95_bytes": null,
+          "peak_process_count": 10,
+          "pss_sample_count": 0
+        }
+      },
+      "application_pss_p50_bytes": 1047133184,
+      "application_pss_p95_bytes": 1047171072,
+      "application_pss_sample_count": 15,
+      "postgres_cgroup_memory_p95_bytes": 156094464,
+      "postgres_cgroup_working_set_p95_bytes": 91086848,
+      "postgres_inactive_file_p95_bytes": 65081344,
+      "runtime_cpu_cores_excluding_s3_fixture": 0.07753667329301907,
+      "runtime_percent_of_four_cpu_excluding_s3_fixture": 1.9384168323254767,
+      "synchronized_app_pss_plus_pg_cgroup_memory_p95_bytes": 1203244032,
+      "synchronized_combined_memory_sample_count": 15
+    }
+  },
+  "cleanup_complete": true,
+  "finished_at": "2026-10-25T09:15:46.709446+00:00",
+  "raw_report_sha256": "d93e97a795026096d50850365a851b40dbf597ac9f6e130762baebb70471b62e",
+  "scope_notes": [
+    "Only 20 distinct synthetic videos are reobserved; there is no retained large history or product population.",
+    "Default live Dagster schedules remained enabled; at least one empty opportunity_rankings job finished successfully during the active window.",
+    "Completion means all captured and queued test tasks were normalized; it does not claim all periodic Dagster jobs drained before bounded cleanup.",
+    "PSS and PostgreSQL cgroup memory use separate accounting methods; their synchronized sum is a planning reference, not whole-host RAM.",
+    "The PostgreSQL fixture was capped at 0.25 CPU and 512 MiB; the pilot profile proposes 0.5 CPU and 2 GiB."
+  ],
+  "resource_constraints": {
+    "postgres_cpu_cores": 0.25,
+    "postgres_memory_bytes": 536870912,
+    "app_cpu_affinity_count": 1,
+    "application_pss_stop_bound_bytes": 1468006400,
+    "fixture_memory_check": "Docker inspect before cleanup: NanoCpus=250000000, Memory=536870912."
+  },
+  "observed_scheduled_job_evidence": [
+    "2026-10-25 09:15:28 +0000 - dagster - DEBUG - opportunity_rankings - 41422fa5-2d1a-46fb-bd24-33fb7b735bcd - 39180 - RUN_SUCCESS - Finished execution of run for \"opportunity_rankings\"."
+  ],
+  "reference_analytics": {
+    "1000_products_90_days": {
+      "source": "docs/verification/retained/retained-1000-90-complete.json",
+      "dirty_waves": 4,
+      "cpu_process_seconds": 1366.5800196719997,
+      "percent_of_four_cpu_averaged_over_24h": 0.3954224593958332,
+      "limit": "Analytical application and Moto CPU only; excludes PostgreSQL and other roles. Different retained fixture and source version; do not add as a full-stack forecast."
+    },
+    "3000_products_30_days": {
+      "source": "docs/verification/retained/retained-3000-30-final-partial.json",
+      "dirty_waves": 4,
+      "cpu_process_seconds": 6871.565605621,
+      "percent_of_four_cpu_averaged_over_24h": 1.9883002331079282,
+      "limit": "Analytical application and Moto CPU only; excludes PostgreSQL and other roles. Different retained fixture and source version; do not add as a full-stack forecast."
+    }
+  }
+}

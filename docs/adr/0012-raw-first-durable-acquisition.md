@@ -149,6 +149,15 @@ inside both staging and commit transactions, so expired owners cannot publish.
 Failed decoders back off independently and do not starve other parents. Decoding
 occurs entirely from archived receipts, without source calls or access tokens.
 
+Schema 037 adds a disposable pending-parent eligibility projection, maintained
+transactionally by dataset hooks including compatible old-image writes. Claims
+enumerate and sort pending/retry work before probing and locking one parent at
+a time; retained completed history no longer drives ordinary polling. Committed
+v1 children remain the sole completion fact. A one-time guarded schema backfill
+reconstructs existing eligibility; schema-35/36 bridge claims retain the prior
+query until expansion. The [selection verification](../verification/publication-frontier.md)
+records stale-statistics, lock-order, rollout and measurement limits.
+
 Normalized children use existing immutable replay publication and parent lineage.
 Raw-parent replay reserves a processing availability clock independently from
 the original observation time. It never backdates derived knowledge to a delayed
