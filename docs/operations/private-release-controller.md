@@ -175,3 +175,23 @@ host-admin backup. The application PostgreSQL/S3 checkpoint deliberately cannot
 read these root-only files. After disaster recovery, keep the deployment timer
 disabled until the restored SQL, actual containers and private controller state
 are reconciled; an older SQL dump must not silently reset deployment authority.
+
+## Additive capture-recovery schema expansion
+
+The capture-recovery image supports schemas 35 and 36. Migration 036 adds only
+the indexed active-task recovery frontier; the durable receipt and task remain
+authoritative. The same recovery query works before the index exists, but bounded
+indexed execution requires expansion. It is not a second queue or evidence store.
+
+For an existing schema-35 host, first qualify and finish the normal signed
+handover to a bridge image declaring support for 35–36, while the database stays
+at 35. Move every retained acquisition/processing role to a compatible image
+before applying the additive migration through the trusted maintenance procedure.
+The release controller does not execute migrations. Index creation briefly
+requires database locks; measure its duration and source-deadline headroom on the
+target host before expansion. The controlled fixture is not a deployment proof.
+
+A previously signed 35-only manifest stays incompatible with schema 36. Do not
+edit its signed bytes or relax the host's schema checks. After expansion, rollback
+must use an already qualified image whose declared range includes 36; keep that
+bridge available. A fresh installation can initialize the current schema directly.

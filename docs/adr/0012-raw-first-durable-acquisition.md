@@ -104,10 +104,41 @@ adoption cannot rewrite them to manufacture replacement readiness. Synthetic
 Only a committed raw dataset permits fenced source cursor advancement. Existing
 task lease/version and namespace/retention publication checks remain authoritative.
 Local spool removal follows remote commit, and cleanup failure does not undo a
-successful capture. Subsequent acquisition batches retry cleanup only after
+successful capture. A committed business-error receipt remains local until the
+exact task/page/attempt also settles; a crash between commit and attempt
+advancement must retain a source-free recovery input. Subsequent acquisition
+batches retry cleanup only after
 reading and verifying an identical committed remote receipt. Legacy task/page
 deliveries must finish through their legacy recovery path rather than refetching
 them under a new identity.
+
+Complete checksum-verified local receipts are recovered under the existing task
+lease independently of new source HTTP admission. Recovery cannot fetch a
+replacement body, does not increment the source failure counter, and preserves
+the original acquiring worker/generation and physical clocks. Only the exact
+stored task/page/attempt may reopen an `attempt_limit` quarantine; other
+quarantines and cancelled tasks remain blocked. Retry due times, worker drain,
+namespace fencing, current source access, retention and revocation still apply.
+A bounded progressing local scan prevents a recurring directory prefix from
+starving later inputs. An additional progressing page of active task identities
+recovers already committed business errors whose local files an older image
+removed before settlement, using exact dataset-ID lookups and verified remote
+bytes rather than retained-history scans. Ordinary budget-admitted Rust adoption
+can win before the local scan; it discounts only that new claim's increment,
+retaining the original request's failure accounting through repeated storage or
+invalidation pauses. No new observation or completion lifecycle is introduced.
+Receipt-only recovery alternates with existing priority-ordered source admission;
+the turn persists across one-item batches. A failed-receipt backlog therefore
+cannot occupy every admission slot while a higher-priority fresh obligation is
+due and the spool still has room. Existing priority, quota and retry backoff
+remain authoritative; this does not promise equal service across priority tiers.
+Migration 036 adds only a partial task index for progressing recovery pages,
+including exact attempt-limit quarantines. Page selection takes a fixed number
+of potential tasks before evaluating due time and lease expiry, so a future-due
+prefix cannot cause an unbounded filtered scan. The same query remains
+functionally compatible with schema 35, but its bounded query-work guarantee
+requires the new index. Index construction is a one-time additive migration,
+not a claim that schema expansion has no write-lock or temporary-space cost.
 
 A separate publisher claims committed raw parents using short PostgreSQL
 transactions and `SKIP LOCKED`. Lease rows contain only worker ownership, fence,
