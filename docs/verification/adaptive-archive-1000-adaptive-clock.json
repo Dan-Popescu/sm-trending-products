@@ -1,0 +1,95 @@
+{
+  "baseline_revision": "0f2500f",
+  "candidate_revision": "4c52fdac831b90a21398bf720e13aff0295d0604",
+  "mode": "adaptive",
+  "scenario": "clock",
+  "products": 1000,
+  "interval_minutes": 60,
+  "scope": "archive stage/commit; native PostgreSQL + local HTTP Moto; source preparation excluded",
+  "runs": [
+    {
+      "logical_bytes": 3303442,
+      "simple_gzip_bytes": 155019,
+      "simple_gzip_cpu_seconds": 0.0424532860000042,
+      "upload_bytes": 153237,
+      "put_requests": 8,
+      "stage_cpu_seconds": 0.31082116299999996,
+      "stage_elapsed_seconds": 0.3965923190007743,
+      "rss_before_bytes": 354480128,
+      "rss_peak_bytes": 362143744,
+      "rss_increase_bytes": 7663616,
+      "commit_cpu_seconds": 0.000554362999999114,
+      "commit_elapsed_seconds": 0.0029598879991681315,
+      "representation": "packed-shared-assessment-v1"
+    },
+    {
+      "logical_bytes": 3303442,
+      "simple_gzip_bytes": 155019,
+      "simple_gzip_cpu_seconds": 0.038859903999998835,
+      "upload_bytes": 3714,
+      "put_requests": 2,
+      "stage_cpu_seconds": 0.32407844200000113,
+      "stage_elapsed_seconds": 0.3324857150000753,
+      "rss_before_bytes": 375844864,
+      "rss_peak_bytes": 377810944,
+      "rss_increase_bytes": 1966080,
+      "commit_cpu_seconds": 0.0005488649999989548,
+      "commit_elapsed_seconds": 0.002630342001793906,
+      "representation": "packed-shared-assessment-v1"
+    },
+    {
+      "logical_bytes": 3303442,
+      "simple_gzip_bytes": 155019,
+      "simple_gzip_cpu_seconds": 0.13015608100000975,
+      "upload_bytes": 3714,
+      "put_requests": 2,
+      "stage_cpu_seconds": 0.8514040979999962,
+      "stage_elapsed_seconds": 0.8653311210000538,
+      "rss_before_bytes": 383553536,
+      "rss_peak_bytes": 383651840,
+      "rss_increase_bytes": 98304,
+      "commit_cpu_seconds": 0.000827495999999428,
+      "commit_elapsed_seconds": 0.0026934769994113594,
+      "representation": "packed-shared-assessment-v1"
+    },
+    {
+      "logical_bytes": 3303442,
+      "simple_gzip_bytes": 155019,
+      "simple_gzip_cpu_seconds": 0.039585603999995556,
+      "upload_bytes": 3714,
+      "put_requests": 2,
+      "stage_cpu_seconds": 0.32755262300000254,
+      "stage_elapsed_seconds": 0.35905075800110353,
+      "rss_before_bytes": 383852544,
+      "rss_peak_bytes": 383864832,
+      "rss_increase_bytes": 12288,
+      "commit_cpu_seconds": 0.00114560899999816,
+      "commit_elapsed_seconds": 0.0035098719999950845,
+      "representation": "packed-shared-assessment-v1"
+    }
+  ],
+  "cold_pages": [
+    {
+      "limit": 1,
+      "get_requests": 4,
+      "download_bytes": 33993,
+      "cpu_seconds": 0.06280498799999634,
+      "elapsed_seconds": 0.07116783799938275,
+      "rss_before_bytes": 383889408,
+      "rss_peak_bytes": 384016384,
+      "rss_increase_bytes": 126976
+    },
+    {
+      "limit": 200,
+      "get_requests": 5,
+      "download_bytes": 63809,
+      "cpu_seconds": 0.11191819700000138,
+      "elapsed_seconds": 0.1301238169980934,
+      "rss_before_bytes": 383946752,
+      "rss_peak_bytes": 384008192,
+      "rss_increase_bytes": 61440
+    }
+  ],
+  "exact_snapshot_verified": true,
+  "process_peak_rss_bytes": 388952064
+}

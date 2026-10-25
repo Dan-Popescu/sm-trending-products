@@ -8,6 +8,7 @@ remain in history; a reference page never hydrates a whole analytical universe.
 from __future__ import annotations
 
 import hashlib
+import tempfile
 from collections import OrderedDict, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -26,12 +27,122 @@ MAX_DEPTH = 64
 NODE_REUSE_CACHE = 8192
 PLAN_NODES = 1000
 PLAN_BYTES = 4_000_000
+PUBLICATION_PLAN_BYTES = 4_000_000
+PUBLICATION_PLAN_NODES = 1000
 
 
 @dataclass(frozen=True)
 class PublicationScope:
     input_provenance: Any
     roots: tuple[dict[str, Any], ...]
+
+
+class AnalyticalRecordTooLarge(ValueError):
+    """One analytical value cannot fit the decoded record budget."""
+
+
+class PublicationPlanLimit(ValueError):
+    """A disposable candidate reached its bounded planning admission budget."""
+
+
+@dataclass(frozen=True)
+class _SpoolNode:
+    offset: int
+    size: int
+    descriptor: dict[str, Any]
+    synthetic: bool
+    children: tuple[dict[str, Any], ...]
+
+
+class PublicationPlan:
+    """Compare physical publication costs before uploading either candidate.
+
+    Temporary files may live on tmpfs. Each candidate admits at most 4 MB of
+    physical bodies plus conservatively charged metadata and at most 1000 nodes.
+    This disposable plan is not a publication authority. SQL inventory and
+    ordinary source/child guards remain decisive.
+    """
+
+    def __init__(self, owner: Provenance):
+        self.owner = owner
+        self.spool = tempfile.SpooledTemporaryFile(max_size=1_000_000, mode="w+b")
+        self.nodes: dict[str, _SpoolNode] = {}
+        self.known: set[str] | None = None
+        self.bytes = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.spool.close()
+        self.nodes.clear()
+        self.known = None
+
+    def records(self, records, synthetic, *, ordered=True):
+        return self.owner._records_tree(records, synthetic, ordered, self.node)
+
+    def node(self, body, synthetic, *, children=()):
+        encoded, descriptor = self.owner._encode_node(body, synthetic)
+        key = descriptor["key"]
+        if key not in self.nodes:
+            # Child descriptors already belong to the logical rows; charging
+            # their serialized size and reference/entry overhead is deliberately
+            # conservative, including already committed nodes.
+            metadata = 512 + len(canonical(descriptor).encode())
+            metadata += sum(16 + len(canonical(child).encode()) for child in children)
+            charge = len(encoded) + metadata
+            if (
+                self.bytes + charge > PUBLICATION_PLAN_BYTES
+                or len(self.nodes) >= PUBLICATION_PLAN_NODES
+            ):
+                raise PublicationPlanLimit(
+                    "Analytical publication plan exceeds its byte/node budget"
+                )
+            self.spool.seek(0, 2)
+            offset = self.spool.tell()
+            self.spool.write(encoded)
+            self.nodes[key] = _SpoolNode(
+                offset, len(encoded), descriptor, synthetic, tuple(children)
+            )
+            self.bytes += charge
+        return descriptor
+
+    def cost(self) -> tuple[int, int]:
+        """Return bytes and PUTs of uncommitted nodes, checking physical identity."""
+        self.known = set()
+        keys = list(self.nodes)
+        for start in range(0, len(keys), 1000):
+            for row in self.owner.catalog.all(
+                "SELECT object_key,state,object_sha256,object_bytes FROM derived_publications "
+                "WHERE object_key=ANY(%s)",
+                (keys[start : start + 1000],),
+            ):
+                if row["state"] == "committed":
+                    expected = self.nodes[row["object_key"]].descriptor
+                    if (row["object_sha256"], row["object_bytes"]) != (
+                        expected["sha256"],
+                        expected["bytes"],
+                    ):
+                        raise ValueError("Immutable provenance descriptor collision")
+                    self.known.add(row["object_key"])
+        missing = [node for key, node in self.nodes.items() if key not in self.known]
+        return sum(node.size for node in missing), len(missing)
+
+    def publish(self) -> None:
+        if self.known is None:
+            self.cost()
+        assert self.known is not None
+        for key, node in self.nodes.items():
+            if key in self.known:
+                self.owner._remember(node.descriptor)
+                continue
+            self.spool.seek(node.offset)
+            self.owner._publish_node(
+                self.spool.read(node.size),
+                node.descriptor,
+                node.synthetic,
+                children=node.children,
+            )
 
 
 @dataclass(frozen=True)
@@ -406,9 +517,17 @@ class Provenance:
         self, records: Mapping[str, Any], synthetic: bool, *, ordered: bool = True
     ) -> dict[str, Any] | list:
         """Store bounded analytical records with stable content-addressed partitions."""
+        plan = _NodePlan(self)
+        result = self._records_tree(records, synthetic, ordered, plan.node)
+        plan.flush()
+        return result
+
+    def plan(self) -> PublicationPlan:
+        return PublicationPlan(self)
+
+    def _records_tree(self, records, synthetic, ordered, node):
         if not records:
             return []
-        plan = _NodePlan(self)
         positions = {key: index for index, key in enumerate(records)}
 
         def build(items: list[tuple[str, Any]], prefix: str) -> dict[str, Any]:
@@ -425,16 +544,16 @@ class Provenance:
             }
             if len(items) <= 100 and len(canonical(body).encode()) <= MAX_NODE_BYTES:
                 return {
-                    **plan.node(body, synthetic, children=self.roots(body["records"])),
+                    **node(body, synthetic, children=self.roots(body["records"])),
                     "prefix": prefix,
                 }
             if len(items) == 1 or depth >= MAX_DEPTH:
-                raise ValueError("Analytical record exceeds its bounded page budget")
+                raise AnalyticalRecordTooLarge("Analytical record exceeds its bounded page budget")
             groups: dict[str, list[tuple[str, Any]]] = defaultdict(list)
             for key, value in items:
                 groups[hashlib.sha256(key.encode()).hexdigest()[depth]].append((key, value))
             children = [build(groups[key], prefix + key) for key in sorted(groups)]
-            node = plan.node(
+            descriptor = node(
                 {
                     "schema_version": "1",
                     "kind": "branch",
@@ -445,10 +564,9 @@ class Provenance:
                 synthetic,
                 children=children,
             )
-            return {**node, "prefix": prefix}
+            return {**descriptor, "prefix": prefix}
 
         root = build(sorted(records.items()), "")
-        plan.flush()
         return {"format": "sharded-records-v1", "root": root, "count": root["count"]}
 
     def record(self, value: Any, record_id: str) -> Any:

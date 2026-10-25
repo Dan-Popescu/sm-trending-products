@@ -1,0 +1,450 @@
+{
+  "kind": "preimplementation cost-only encoder prototype",
+  "baseline_revision": "0f2500f",
+  "scope": "1000 synthetic products, actual assessment engine and compact summaries; no SQL, HTTP, or publication authority",
+  "limitations": [
+    "Manual model links omit normal review-decision records.",
+    "The provisional template representation is not the shipped publication implementation.",
+    "Lifecycle, withdrawal, and page memory correctness are established by native tests and final implementation, not these estimates."
+  ],
+  "results": [
+    {
+      "scenario": "clock_only",
+      "products": 1000,
+      "runs": [
+        {
+          "run": 0,
+          "shared": {
+            "bytes": 147150,
+            "puts": 19,
+            "cpu_seconds": 0.12567205599999998
+          },
+          "full_blocks": {
+            "bytes": 141758,
+            "puts": 19,
+            "cpu_seconds": 0.0706615610000001
+          },
+          "packed": {
+            "bytes": 106033,
+            "puts": 7,
+            "cpu_seconds": 0.0356138210000001
+          },
+          "packed_shared": {
+            "bytes": 108896,
+            "puts": 8,
+            "cpu_seconds": 0.1272558779999997
+          },
+          "simple_gzip": {
+            "bytes": 114606,
+            "puts": 1,
+            "cpu_seconds": 0.03921697000000002
+          }
+        },
+        {
+          "run": 1,
+          "shared": {
+            "bytes": 3344,
+            "puts": 2,
+            "cpu_seconds": 0.13139147799999984
+          },
+          "full_blocks": {
+            "bytes": 141785,
+            "puts": 19,
+            "cpu_seconds": 0.08316721500000002
+          },
+          "packed": {
+            "bytes": 106043,
+            "puts": 7,
+            "cpu_seconds": 0.04072768100000035
+          },
+          "packed_shared": {
+            "bytes": 3360,
+            "puts": 2,
+            "cpu_seconds": 0.1912423419999998
+          },
+          "simple_gzip": {
+            "bytes": 114606,
+            "puts": 1,
+            "cpu_seconds": 0.06244769700000008
+          }
+        },
+        {
+          "run": 2,
+          "shared": {
+            "bytes": 3342,
+            "puts": 2,
+            "cpu_seconds": 0.14075877100000023
+          },
+          "full_blocks": {
+            "bytes": 141776,
+            "puts": 19,
+            "cpu_seconds": 0.13281686199999987
+          },
+          "packed": {
+            "bytes": 106048,
+            "puts": 7,
+            "cpu_seconds": 0.05044838699999987
+          },
+          "packed_shared": {
+            "bytes": 3359,
+            "puts": 2,
+            "cpu_seconds": 0.23007544800000002
+          },
+          "simple_gzip": {
+            "bytes": 114606,
+            "puts": 1,
+            "cpu_seconds": 0.07120587199999973
+          }
+        },
+        {
+          "run": 3,
+          "shared": {
+            "bytes": 3391,
+            "puts": 2,
+            "cpu_seconds": 0.20424607999999989
+          },
+          "full_blocks": {
+            "bytes": 141756,
+            "puts": 19,
+            "cpu_seconds": 0.14096908500000005
+          },
+          "packed": {
+            "bytes": 106045,
+            "puts": 7,
+            "cpu_seconds": 0.07760422200000017
+          },
+          "packed_shared": {
+            "bytes": 3353,
+            "puts": 2,
+            "cpu_seconds": 0.5291692709999998
+          },
+          "simple_gzip": {
+            "bytes": 114602,
+            "puts": 1,
+            "cpu_seconds": 0.04382871800000032
+          }
+        },
+        {
+          "run": 4,
+          "shared": {
+            "bytes": 3392,
+            "puts": 2,
+            "cpu_seconds": 0.1348510489999999
+          },
+          "full_blocks": {
+            "bytes": 141756,
+            "puts": 19,
+            "cpu_seconds": 0.0694539040000004
+          },
+          "packed": {
+            "bytes": 106043,
+            "puts": 7,
+            "cpu_seconds": 0.03550983999999957
+          },
+          "packed_shared": {
+            "bytes": 3353,
+            "puts": 2,
+            "cpu_seconds": 0.14144391199999973
+          },
+          "simple_gzip": {
+            "bytes": 114605,
+            "puts": 1,
+            "cpu_seconds": 0.035559949999999674
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "sparse_5_percent",
+      "products": 1000,
+      "runs": [
+        {
+          "run": 0,
+          "shared": {
+            "bytes": 147150,
+            "puts": 19,
+            "cpu_seconds": 0.17647439899999995
+          },
+          "full_blocks": {
+            "bytes": 141758,
+            "puts": 19,
+            "cpu_seconds": 0.06879337699999954
+          },
+          "packed": {
+            "bytes": 106033,
+            "puts": 7,
+            "cpu_seconds": 0.036006779000000044
+          },
+          "packed_shared": {
+            "bytes": 108896,
+            "puts": 8,
+            "cpu_seconds": 0.09354847900000074
+          },
+          "simple_gzip": {
+            "bytes": 114606,
+            "puts": 1,
+            "cpu_seconds": 0.04957641699999993
+          }
+        },
+        {
+          "run": 1,
+          "shared": {
+            "bytes": 147108,
+            "puts": 19,
+            "cpu_seconds": 0.23193030600000064
+          },
+          "full_blocks": {
+            "bytes": 141798,
+            "puts": 19,
+            "cpu_seconds": 0.08386737799999988
+          },
+          "packed": {
+            "bytes": 106060,
+            "puts": 7,
+            "cpu_seconds": 0.04796144999999985
+          },
+          "packed_shared": {
+            "bytes": 108908,
+            "puts": 8,
+            "cpu_seconds": 0.1060465930000003
+          },
+          "simple_gzip": {
+            "bytes": 114624,
+            "puts": 1,
+            "cpu_seconds": 0.044733379000000184
+          }
+        },
+        {
+          "run": 2,
+          "shared": {
+            "bytes": 147086,
+            "puts": 19,
+            "cpu_seconds": 0.24987814700000044
+          },
+          "full_blocks": {
+            "bytes": 141798,
+            "puts": 19,
+            "cpu_seconds": 0.08959719400000044
+          },
+          "packed": {
+            "bytes": 106051,
+            "puts": 7,
+            "cpu_seconds": 0.0490448670000001
+          },
+          "packed_shared": {
+            "bytes": 108901,
+            "puts": 8,
+            "cpu_seconds": 0.12126238500000053
+          },
+          "simple_gzip": {
+            "bytes": 114611,
+            "puts": 1,
+            "cpu_seconds": 0.05374170400000011
+          }
+        },
+        {
+          "run": 3,
+          "shared": {
+            "bytes": 147152,
+            "puts": 19,
+            "cpu_seconds": 0.23629911000000003
+          },
+          "full_blocks": {
+            "bytes": 141785,
+            "puts": 19,
+            "cpu_seconds": 0.09140684200000049
+          },
+          "packed": {
+            "bytes": 106038,
+            "puts": 7,
+            "cpu_seconds": 0.042870859999999844
+          },
+          "packed_shared": {
+            "bytes": 108879,
+            "puts": 8,
+            "cpu_seconds": 0.11743431599999976
+          },
+          "simple_gzip": {
+            "bytes": 114622,
+            "puts": 1,
+            "cpu_seconds": 0.04451810800000011
+          }
+        },
+        {
+          "run": 4,
+          "shared": {
+            "bytes": 147162,
+            "puts": 19,
+            "cpu_seconds": 0.23181405800000032
+          },
+          "full_blocks": {
+            "bytes": 141795,
+            "puts": 19,
+            "cpu_seconds": 0.06870088799999952
+          },
+          "packed": {
+            "bytes": 106038,
+            "puts": 7,
+            "cpu_seconds": 0.03975698700000052
+          },
+          "packed_shared": {
+            "bytes": 108884,
+            "puts": 8,
+            "cpu_seconds": 0.1145836530000004
+          },
+          "simple_gzip": {
+            "bytes": 114628,
+            "puts": 1,
+            "cpu_seconds": 0.03665406799999982
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "all_updated",
+      "products": 1000,
+      "runs": [
+        {
+          "run": 0,
+          "shared": {
+            "bytes": 147150,
+            "puts": 19,
+            "cpu_seconds": 0.14248450499999876
+          },
+          "full_blocks": {
+            "bytes": 141758,
+            "puts": 19,
+            "cpu_seconds": 0.08578755199999932
+          },
+          "packed": {
+            "bytes": 106033,
+            "puts": 7,
+            "cpu_seconds": 0.04383556900000052
+          },
+          "packed_shared": {
+            "bytes": 108896,
+            "puts": 8,
+            "cpu_seconds": 0.15581807900000122
+          },
+          "simple_gzip": {
+            "bytes": 114606,
+            "puts": 1,
+            "cpu_seconds": 0.04162562800000025
+          }
+        },
+        {
+          "run": 1,
+          "shared": {
+            "bytes": 147058,
+            "puts": 19,
+            "cpu_seconds": 0.14774280800000028
+          },
+          "full_blocks": {
+            "bytes": 141738,
+            "puts": 19,
+            "cpu_seconds": 0.08479575600000011
+          },
+          "packed": {
+            "bytes": 106039,
+            "puts": 7,
+            "cpu_seconds": 0.0467424059999999
+          },
+          "packed_shared": {
+            "bytes": 108891,
+            "puts": 8,
+            "cpu_seconds": 0.1703499940000004
+          },
+          "simple_gzip": {
+            "bytes": 114535,
+            "puts": 1,
+            "cpu_seconds": 0.03682237700000002
+          }
+        },
+        {
+          "run": 2,
+          "shared": {
+            "bytes": 147054,
+            "puts": 19,
+            "cpu_seconds": 0.17742986600000066
+          },
+          "full_blocks": {
+            "bytes": 141698,
+            "puts": 19,
+            "cpu_seconds": 0.07380105400000048
+          },
+          "packed": {
+            "bytes": 106114,
+            "puts": 7,
+            "cpu_seconds": 0.04097203099999902
+          },
+          "packed_shared": {
+            "bytes": 108958,
+            "puts": 8,
+            "cpu_seconds": 0.08983040499999895
+          },
+          "simple_gzip": {
+            "bytes": 114523,
+            "puts": 1,
+            "cpu_seconds": 0.03729176299999892
+          }
+        },
+        {
+          "run": 3,
+          "shared": {
+            "bytes": 147122,
+            "puts": 19,
+            "cpu_seconds": 0.12186865600000019
+          },
+          "full_blocks": {
+            "bytes": 141806,
+            "puts": 19,
+            "cpu_seconds": 0.07227673100000054
+          },
+          "packed": {
+            "bytes": 106076,
+            "puts": 7,
+            "cpu_seconds": 0.03580401099999975
+          },
+          "packed_shared": {
+            "bytes": 108929,
+            "puts": 8,
+            "cpu_seconds": 0.09555667500000098
+          },
+          "simple_gzip": {
+            "bytes": 114619,
+            "puts": 1,
+            "cpu_seconds": 0.03487890499999935
+          }
+        },
+        {
+          "run": 4,
+          "shared": {
+            "bytes": 147138,
+            "puts": 19,
+            "cpu_seconds": 0.12248260299999991
+          },
+          "full_blocks": {
+            "bytes": 141748,
+            "puts": 19,
+            "cpu_seconds": 0.06760909299999973
+          },
+          "packed": {
+            "bytes": 106066,
+            "puts": 7,
+            "cpu_seconds": 0.03973437900000043
+          },
+          "packed_shared": {
+            "bytes": 108911,
+            "puts": 8,
+            "cpu_seconds": 0.1322168260000005
+          },
+          "simple_gzip": {
+            "bytes": 114596,
+            "puts": 1,
+            "cpu_seconds": 0.037448787999998956
+          }
+        }
+      ]
+    }
+  ]
+}

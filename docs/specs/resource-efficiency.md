@@ -10,6 +10,23 @@ default assessment interval to 60 minutes while preserving collection cadence,
 formulas, lookback and separately scheduled prospective decisions. Keep an
 explicit 15-minute override supported and explain the accepted timing tradeoff.
 
+## Cost priority and initial exploration
+
+The owner prioritizes actual recurring infrastructure cost over raw computation
+speed. A slower heavy job can be acceptable when it enables a materially cheaper
+memory/CPU tier or lowers object storage/request charges without harming product
+selection. Faster work on the same fixed-price VPS is not itself an invoice
+saving. No particular euro amount or percentage is established without a priced,
+representative whole-system comparison.
+
+The initial selection criteria are still being researched. Keep hourly assessment
+as the starting point and preserve supported ad-hoc historical exploration; do
+not impose 16–20-hour waits as a general rule. That duration was an example of
+possible tolerance for some heavy jobs, not a latency requirement or blanket
+authorization to delay collection/normalization or remove measurements. Evaluate
+cost and research responsiveness together. Collection deadlines, grants and data
+preservation remain independent of assessment frequency.
+
 ## Shared observation decoding and memory
 
 Reuse the existing bounded columnar-window decoding optimization for normalized
