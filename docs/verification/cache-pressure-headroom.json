@@ -1,0 +1,113 @@
+{
+  "baseline_commit": "ac5ddcb9e8713e311b6772528e48b0ee8ade9b33",
+  "prior_core_commit": "f53b16a3e965638aac9d0b34882d1688db82bab2",
+  "host": {
+    "cpu_quota_cores": 4,
+    "memory_limit_bytes": 17179869184,
+    "exclusive_host": false
+  },
+  "policy": {
+    "extra_eviction_budget_fraction": 0.01,
+    "extra_eviction_cap_bytes": 33554432,
+    "recognized_window_files_protected": true,
+    "opaque_legacy_window_priority_known": false
+  },
+  "scope": "Local metadata, actual cache admission and memory-backed source GETs. Sparse/fixture payloads do not measure parsing, remote latency or whole-pipeline/VPS consumption. Kernel/accounting limits remain separate from measured consumption.",
+  "baseline": {
+    "fixture": "cache-admission-pressure-v1",
+    "measured_at": "2026-10-25T09:23:23.066421+00:00",
+    "implementation_sha256": {
+      "cache.py": "12cd27d0201421739a6b05b3bb5552c4da02fe0e05c149f231bd96f8cdadcb34"
+    },
+    "scope": "Actual local cache admission, including stripe lock, short-lived _Cache, and fsync. Equal logical bytes, inert payloads. Headroom mode does not evict; pressure mode starts full and measures eviction. Warm source objects use memory instead of network. CPU/RSS cover only this process; cumulative peak RSS is not per-file memory. No PostgreSQL, parsing, full pipeline or VPS capacity claim.",
+    "cases": [
+      {
+        "ambient_files": 30000,
+        "ambient_logical_bytes": 8323072,
+        "budget_bytes": 8388608,
+        "initial_payload_bytes": 8388608,
+        "pressure": true,
+        "admitted_payload_bytes": 1024,
+        "startup_admission_ms_excluded_from_ordinary": 282.58072300013737,
+        "ordinary_admission": {
+          "repetitions": 256,
+          "median_ms": 205.25077349999998,
+          "p95_ms": 267.730997,
+          "mean_ms": 211.87951425390625,
+          "maximum_ms": 361.528763,
+          "total_ms": 54241.155649,
+          "cpu_median_ms": 205.2359755,
+          "cpu_total_ms": 54167.869839,
+          "snapshot_count": 256,
+          "snapshot_total_ms": 34504.912709
+        },
+        "source_files_evicted_in_measured_admissions": 943,
+        "source_bytes_evicted_in_measured_admissions": 262154,
+        "initial_window_retained": true,
+        "warm_reads": [],
+        "all_ambient_files_retained": false,
+        "process_cumulative_peak_rss_kib": 184924
+      }
+    ],
+    "near_fit": {
+      "budget_bytes": 1048576,
+      "initial_source_files": 1024,
+      "hot_source_files": 992,
+      "cold_source_files": 32,
+      "new_window_bytes": 32768,
+      "initial_evicted_source_files": 32,
+      "source_GETs_for_hot_reuse": 0,
+      "download_bytes_for_hot_reuse": 0,
+      "window_retained": true
+    }
+  },
+  "candidate": {
+    "fixture": "cache-admission-pressure-v1",
+    "measured_at": "2026-10-25T09:24:24.237679+00:00",
+    "implementation_sha256": {
+      "cache.py": "38ff71d792e4ca96157ad58167a4758947919dc5984c8e0ea2b5dc2a561c7dd0",
+      "_cache_accounting.py": "f36c80ac5ba5734d889dff6fe757ac7827564b6f0c422b66d61e40400e1f46c9"
+    },
+    "scope": "Actual local cache admission, including stripe lock, short-lived _Cache, and fsync. Equal logical bytes, inert payloads. Headroom mode does not evict; pressure mode starts full and measures eviction. Warm source objects use memory instead of network. CPU/RSS cover only this process; cumulative peak RSS is not per-file memory. No PostgreSQL, parsing, full pipeline or VPS capacity claim.",
+    "cases": [
+      {
+        "ambient_files": 30000,
+        "ambient_logical_bytes": 8323072,
+        "budget_bytes": 8388608,
+        "initial_payload_bytes": 8388608,
+        "pressure": true,
+        "admitted_payload_bytes": 1024,
+        "startup_admission_ms_excluded_from_ordinary": 264.31848399988667,
+        "ordinary_admission": {
+          "repetitions": 256,
+          "median_ms": 0.5089945,
+          "p95_ms": 0.834471,
+          "mean_ms": 4.08454275,
+          "maximum_ms": 233.641414,
+          "total_ms": 1045.642944,
+          "cpu_median_ms": 0.510713,
+          "cpu_total_ms": 1044.21713,
+          "snapshot_count": 4,
+          "snapshot_total_ms": 565.636057
+        },
+        "source_files_evicted_in_measured_admissions": 1211,
+        "source_bytes_evicted_in_measured_admissions": 336658,
+        "initial_window_retained": true,
+        "warm_reads": [],
+        "all_ambient_files_retained": false,
+        "process_cumulative_peak_rss_kib": 182272
+      }
+    ],
+    "near_fit": {
+      "budget_bytes": 1048576,
+      "initial_source_files": 1024,
+      "hot_source_files": 992,
+      "cold_source_files": 32,
+      "new_window_bytes": 32768,
+      "initial_evicted_source_files": 42,
+      "source_GETs_for_hot_reuse": 10,
+      "download_bytes_for_hot_reuse": 10240,
+      "window_retained": true
+    }
+  }
+}
