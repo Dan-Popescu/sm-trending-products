@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from functools import partial
 from typing import Any
@@ -15,7 +15,7 @@ from .collection import SourceCollection
 from .collector import CollectionError
 from .contracts import digest, now, utc
 from .replay import ReplayService
-from .source_contracts import raw_capture_identity
+from .source_contracts import credential_keys, raw_capture_identity
 
 
 class RawCaptureService:
@@ -26,6 +26,8 @@ class RawCaptureService:
         self.spool = CaptureSpool(settings, catalog, history)
         self.collection = SourceCollection(settings, catalog, history, collector, worker_id)
         self.replay = ReplayService(catalog, history, collector)
+        self._archive_recovery_cursor = {False: "", True: ""}
+        self._prefer_recovery = False
 
     @staticmethod
     def identity(task: dict) -> str:
@@ -46,24 +48,12 @@ class RawCaptureService:
             "errors": [],
             "synthetic": synthetic,
         }
-        from .source_contracts import credential_keys
-
         self.cleanup_committed_spool(batch_size)
+        recovery = self._recovery_receipts(batch_size, synthetic)
         for _ in range(batch_size):
             if should_stop and should_stop():
                 break
-            task = self.catalog.claim(
-                self.worker_id,
-                self.settings.lease_seconds,
-                synthetic,
-                self.settings.max_attempts,
-                credential_keys=credential_keys(synthetic),
-                **(
-                    {"worker_generation": self.worker_generation}
-                    if self.worker_generation is not None
-                    else {}
-                ),
-            )
+            task, stored_receipt = self._claim_capture(synthetic, recovery)
             if task is None:
                 waiting = self.catalog.quota_waiting(
                     synthetic,
@@ -73,6 +63,8 @@ class RawCaptureService:
                 if waiting:
                     result.update(quota_waiting=waiting, waiting=True)
                 break
+            claim_counted = stored_receipt is None
+            receipt = None
             try:
                 if not synthetic:
                     self.collection._require_access(task["source"], task["account_id"])
@@ -81,7 +73,18 @@ class RawCaptureService:
                 prior = self.catalog.one(
                     "SELECT * FROM datasets WHERE dataset_id=%s", (capture_id,)
                 )
-                if prior and prior["state"] == "committed":
+                if not prior or prior["state"] != "committed":
+                    # Legacy evidence keeps its own recovery contract, including
+                    # when a raw receipt happens to be present on local disk.
+                    legacy_id = digest({"task": task["task_id"], "page_index": task["page_index"]})
+                    if self.catalog.one("SELECT 1 FROM datasets WHERE dataset_id=%s", (legacy_id,)):
+                        raise CollectionError("legacy_delivery_requires_recovery", 300)
+                if stored_receipt is not None:
+                    # A receipt claim never invokes a collector or falls back to
+                    # HTTP, even if its file is concurrently retired afterward.
+                    receipt = stored_receipt
+                    self._validate_receipt(receipt, request, task)
+                elif prior and prior["state"] == "committed":
                     if (
                         prior["manifest"].get("kind") not in {"raw_capture", "raw_capture_error"}
                         or prior["manifest"].get("acquisition_protocol") != "1"
@@ -90,11 +93,6 @@ class RawCaptureService:
                     receipt = self.history.raw(prior)
                     self._validate_receipt(receipt, request, task)
                 else:
-                    # A legacy delivery must be recovered by the legacy worker; never
-                    # replace its already observed response with a new source request.
-                    legacy_id = digest({"task": task["task_id"], "page_index": task["page_index"]})
-                    if self.catalog.one("SELECT 1 FROM datasets WHERE dataset_id=%s", (legacy_id,)):
-                        raise CollectionError("legacy_delivery_requires_recovery", 300)
                     receipt = self.collector.capture(
                         request,
                         task,
@@ -104,6 +102,15 @@ class RawCaptureService:
                         worker_generation=self.worker_generation,
                     )
                     self._validate_receipt(receipt, request, task)
+                if (
+                    stored_receipt is None
+                    and receipt["capture"]["lease_version"] != task["lease_version"]
+                ):
+                    # A bounded scan may not reach this file before a normal
+                    # claim adopts it through Rust. That claim made no source
+                    # request, so retain only the original failure accounting.
+                    self.catalog.discount_capture_adoption(task)
+                    claim_counted = False
                 error = receipt.get("continuation_error")
                 business_error = bool(
                     error and error.get("category") in {"source", "authorization", "rate_limit"}
@@ -160,7 +167,12 @@ class RawCaptureService:
                     result["cleanup_pending"] = result.get("cleanup_pending", 0) + 1
             except InvalidationPending:
                 try:
-                    self.catalog.reschedule(task, "invalidation_pending", 1, no_attempt=True)
+                    self.catalog.reschedule(
+                        task,
+                        "invalidation_pending",
+                        1,
+                        no_attempt=claim_counted and receipt is None,
+                    )
                 except LeaseLost:
                     pass
                 raise
@@ -183,6 +195,69 @@ class RawCaptureService:
                     category = "lease_lost"
                 result["errors"].append({"task_id": task["task_id"], "category": category})
         return result
+
+    def _claim_capture(
+        self, synthetic: bool, recovery: Iterator[dict]
+    ) -> tuple[dict | None, dict | None]:
+        prefer_recovery = self._prefer_recovery
+        self._prefer_recovery = not prefer_recovery
+        # Keep normal priority-ordered admission available while failed receipt
+        # uploads accumulate. The turn persists even for batch_size=1 loops.
+        for receipt_turn in (prefer_recovery, not prefer_recovery):
+            if receipt_turn:
+                for receipt in recovery:
+                    task = self.catalog.claim_capture_receipt(
+                        self.worker_id,
+                        self.settings.lease_seconds,
+                        receipt,
+                        worker_generation=self.worker_generation,
+                    )
+                    if task is not None:
+                        return task, receipt
+            else:
+                task = self.catalog.claim(
+                    self.worker_id,
+                    self.settings.lease_seconds,
+                    synthetic,
+                    self.settings.max_attempts,
+                    credential_keys=credential_keys(synthetic),
+                    **(
+                        {"worker_generation": self.worker_generation}
+                        if self.worker_generation is not None
+                        else {}
+                    ),
+                )
+                if task is not None:
+                    return task, None
+        return None, None
+
+    def _recovery_receipts(self, limit: int, synthetic: bool) -> Iterator[dict]:
+        yield from self.spool.recovery_receipts(limit, synthetic)
+        tasks = self.catalog.capture_recovery_candidates(
+            synthetic, limit, self._archive_recovery_cursor[synthetic]
+        )
+        self._archive_recovery_cursor[synthetic] = (
+            tasks[-1]["task_id"] if len(tasks) == limit else ""
+        )
+        if not tasks:
+            return
+        parents = self.catalog.all(
+            "SELECT * FROM datasets WHERE dataset_id=ANY(%s) AND state='committed' "
+            "AND manifest->>'kind'='raw_capture_error' "
+            "AND manifest->>'acquisition_protocol'='1' ORDER BY dataset_id",
+            ([self.identity(task) for task in tasks if task["capture_recovery_due"]],),
+        )
+        for parent in parents:
+            try:
+                # Old images could already have cleaned the local error before
+                # settling its task. Verify its existing remote bytes, without
+                # consulting source admission or issuing a replacement request.
+                receipt = self.history.raw(parent)
+            except Exception:
+                # A bounded later pass retries unavailable/invalid archives;
+                # remote storage failure must not consume source attempts.
+                continue
+            yield receipt
 
     def _reschedule_failure(
         self, task: dict, category: str, delay: float, *, error_dataset_id: str | None = None
@@ -261,6 +336,13 @@ class RawCaptureService:
             or recorded_request.get("source") != task["source"]
             or recorded_request.get("account_id") != task["account_id"]
             or recorded_request.get("synthetic") is not task["synthetic"]
+            or (
+                not task["synthetic"]
+                and any(
+                    recorded_request.get(key) is not None
+                    for key in ("endpoint_override", "observed_at")
+                )
+            )
             or not isinstance(capture.get("worker_id"), str)
             or not capture["worker_id"]
             or utc(capture["captured_at"]) > now()

@@ -9,6 +9,7 @@ import os
 import re
 import stat
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -91,6 +92,7 @@ class CaptureSpool:
         self.settings, self.catalog, self.history = settings, catalog, history
         self.directory = settings.spool_dir / "captures"
         self._entries: Any = None
+        self._recovery_entries: dict[bool, Any] = {False: None, True: None}
         self._scan_lock = threading.Lock()
 
     def close(self) -> None:
@@ -98,6 +100,62 @@ class CaptureSpool:
             if self._entries is not None:
                 self._entries.close()
                 self._entries = None
+            for synthetic, entries in self._recovery_entries.items():
+                if entries is not None:
+                    entries.close()
+                    self._recovery_entries[synthetic] = None
+
+    def recovery_receipts(self, limit: int, synthetic: bool) -> Iterator[dict]:
+        """Progress through bounded disk entries, yielding one verified body at a time.
+
+        This cursor is separate from cleanup: a recurring protected prefix must
+        not be visited only by cleanup while recovery repeatedly skips it.
+        """
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+            raise ValueError("Spool recovery limit must be between 1 and 1000")
+        if not self.directory.exists():
+            return
+        for _ in range(limit):
+            with self._scan_lock:
+                if self._recovery_entries[synthetic] is None:
+                    self._recovery_entries[synthetic] = os.scandir(self.directory)
+                entry = next(self._recovery_entries[synthetic], None)
+                if entry is None:
+                    self._recovery_entries[synthetic].close()
+                    self._recovery_entries[synthetic] = None
+                    return
+            path = Path(entry.path)
+            if path.suffix not in {".json", ".part"} or not re.fullmatch("[0-9a-f]{64}", path.stem):
+                continue
+            try:
+                with self._lock(path.stem):
+                    final = path.with_suffix(".json")
+                    stored = final if final.exists() else path
+                    receipt = read_receipt(stored)
+                    if (
+                        receipt.get("capture_version") != "1"
+                        or receipt["request"]["synthetic"] is not synthetic
+                        or any(
+                            type(receipt["capture"].get(key)) is not int
+                            or not 0 <= receipt["capture"][key] < 2**63
+                            for key in ("page_index", "lease_version")
+                        )
+                        or type(receipt["capture"].get("capture_attempt", 0)) is not int
+                        or not 0 <= receipt["capture"].get("capture_attempt", 0) < 2**63
+                    ):
+                        continue
+                    if stored.suffix == ".part":
+                        # The writer may have stopped before fsync or rename.
+                        # Preserve its exact bytes and complete that boundary.
+                        with stored.open("rb") as stream:
+                            os.fsync(stream.fileno())
+                        stored.rename(final)
+                    self._remove_files(path.stem, (".reserve",))
+            except (OSError, ValueError, KeyError, TypeError, IndexError):
+                # Active writers and corrupt/incomplete inputs stay protected;
+                # none can fall through to an unbudgeted source fetch.
+                continue
+            yield receipt
 
     @contextmanager
     def _lock(self, capture_id: str):
@@ -131,6 +189,22 @@ class CaptureSpool:
         path = self.directory / f"{capture_id}.json"
         if not path.exists():
             return
+        if (receipt.get("continuation_error") or {}).get("category") in {
+            "source",
+            "authorization",
+            "rate_limit",
+        }:
+            capture = receipt["capture"]
+            unsettled = self.catalog.one(
+                "SELECT 1 FROM collection_tasks WHERE task_id=%s AND page_index=%s "
+                "AND capture_attempt=%s AND state NOT IN ('done','cancelled')",
+                (capture["task_id"], capture["page_index"], capture.get("capture_attempt", 0)),
+            )
+            if unsettled:
+                # Error commit and advancing capture_attempt are separate crash
+                # boundaries. Keep the source-free recovery input until both
+                # settle, even when the source budget is now blocked.
+                return
         with self._lock(capture_id):
             try:
                 stored = read_receipt(path)

@@ -295,6 +295,77 @@ class Catalog:
                 (synthetic, max_attempts, Jsonb(credential_keys or {}), worker_id, lease_seconds),
             ).fetchone()
 
+    def claim_capture_receipt(
+        self,
+        worker_id: str,
+        lease_seconds: int,
+        receipt: dict,
+        *,
+        worker_generation: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Lease only the exact stored input; this admission cannot make HTTP requests."""
+        from .source_contracts import raw_capture_identity
+
+        capture, request = receipt["capture"], receipt["request"]
+        with self.transaction() as connection:
+            if not WorkerControl.claim_admitted(
+                connection, worker_id, request["synthetic"], worker_generation
+            ):
+                return None
+            self.guard_namespace(connection, request["synthetic"])
+            task = connection.execute(
+                "SELECT * FROM collection_tasks WHERE task_id=%s AND page_index=%s "
+                "AND capture_attempt=%s AND source=%s AND account_id=%s AND synthetic=%s "
+                "AND due_at<=clock_timestamp() AND (state='pending' "
+                "OR (state='leased' AND lease_until<clock_timestamp()) "
+                "OR (state='quarantined' AND last_error='attempt_limit')) "
+                "FOR UPDATE SKIP LOCKED",
+                (
+                    capture["task_id"],
+                    capture["page_index"],
+                    capture.get("capture_attempt", 0),
+                    request["source"],
+                    request["account_id"],
+                    request["synthetic"],
+                ),
+            ).fetchone()
+            if task is None or raw_capture_identity(task) != capture["capture_id"]:
+                return None
+            return connection.execute(
+                "UPDATE collection_tasks SET state='leased',lease_owner=%s,"
+                "lease_version=lease_version+1,"
+                "lease_until=clock_timestamp()+%s*interval '1 second' "
+                "WHERE task_id=%s RETURNING *",
+                (worker_id, lease_seconds, task["task_id"]),
+            ).fetchone()
+
+    def discount_capture_adoption(self, task: dict) -> None:
+        """Undo only the new claim increment when Rust adopted an earlier receipt."""
+        with self.transaction() as connection:
+            self.assert_lease(connection, task)
+            row = connection.execute(
+                "UPDATE collection_tasks SET attempts=GREATEST(0,attempts-1) "
+                "WHERE task_id=%s RETURNING attempts",
+                (task["task_id"],),
+            ).fetchone()
+            if row is None:
+                raise LeaseLost("Capture task no longer exists")
+            task["attempts"] = row["attempts"]
+
+    def capture_recovery_candidates(
+        self, synthetic: bool, limit: int, after: str
+    ) -> list[dict[str, Any]]:
+        """Read one indexed active page, including not-yet-due entries for cursor progress."""
+        return self.all(
+            "SELECT *,due_at<=clock_timestamp() AND "
+            "(state<>'leased' OR lease_until<clock_timestamp()) AS capture_recovery_due "
+            "FROM collection_tasks WHERE synthetic=%s AND task_id>%s "
+            "AND (state IN ('pending','leased') "
+            "OR (state='quarantined' AND last_error='attempt_limit')) "
+            "ORDER BY task_id LIMIT %s",
+            (synthetic, after, limit),
+        )
+
     def quota_waiting(
         self,
         synthetic: bool,
