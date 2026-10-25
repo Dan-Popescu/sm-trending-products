@@ -12,7 +12,12 @@ delivery. Source access, revocation and retention obligations remain binding.
   must reconstruct exactly, including after restart and backup/restore.
 - Compress new archive storage and share unchanged product information across
   runs. Keep a small changing rank representation in bounded blocks; reading
-  a page of at most 200 products must not hydrate the whole universe.
+  a page of at most 200 products must use selected bounded hash-leaf paths,
+  without reconstructing the full result. Each stable leaf is limited to 100
+  records and 256,000 decoded bytes; selected leaves may include other products.
+  For small universes a 200-product page can touch all stable leaves. This is a
+  storage/read-amplification tradeoff, not a guarantee of exactly 200 decoded
+  records or fewer bytes than a full gzip snapshot.
 - Hide physical representation behind a dedicated archive module. Extend
   existing provenance records, publication inventory and dependency edges;
   do not introduce a second registry or deletion authority.

@@ -685,10 +685,23 @@ class History:
         assessments_checked = 0
         if dataset_id is None:
             for row in self.catalog.all(
-                "SELECT run_id,object_key FROM assessment_runs WHERE NOT invalidated"
+                "SELECT a.run_id,a.object_key,d.object_sha256,d.object_bytes "
+                "FROM assessment_runs a LEFT JOIN derived_publications d USING(object_key) "
+                "WHERE NOT a.invalidated"
             ):
                 try:
-                    self._verify_remote_object({"key": row["object_key"], "sha256": row["run_id"]})
+                    checksum = row["object_sha256"]
+                    if checksum is None and row["object_key"].endswith(".json"):
+                        checksum = row["run_id"]
+                    if checksum is None:
+                        raise ValueError("Assessment physical checksum is missing")
+                    self._verify_remote_object(
+                        {
+                            "key": row["object_key"],
+                            "sha256": checksum,
+                            "bytes": row["object_bytes"],
+                        }
+                    )
                     checked += 1
                     assessments_checked += 1
                 except (ClientError, ValueError, OSError):
@@ -697,6 +710,32 @@ class History:
                             "run_id": row["run_id"],
                             "object_key": row["object_key"],
                             "category": "missing_or_corrupt_assessment",
+                        }
+                    )
+            # A compressed archive header references shared objects. Verifying
+            # only that small header would miss lost product/rank parts. Walk
+            # the authoritative graph once, without hydrating logical rows.
+            for obj in self.catalog.stream(
+                "WITH RECURSIVE parts(object_id) AS ("
+                "SELECT d.object_id FROM assessment_runs a "
+                "JOIN derived_publications d USING(object_key) "
+                "WHERE NOT a.invalidated AND a.object_key LIKE '%%.json.gz' "
+                "UNION SELECT e.child_id FROM derived_artifact_edges e "
+                "JOIN parts p ON p.object_id=e.parent_id) "
+                "SELECT d.object_key AS key,d.object_sha256 AS sha256,d.object_bytes AS bytes "
+                "FROM parts p JOIN derived_publications d USING(object_id) "
+                "WHERE d.object_key NOT LIKE 'assessments/%%' AND d.state='committed'"
+            ):
+                try:
+                    if not obj["sha256"]:
+                        raise ValueError("Analytical object physical checksum is missing")
+                    self._verify_remote_object(obj)
+                    checked += 1
+                except (ClientError, ValueError, OSError):
+                    failures.append(
+                        {
+                            "object_key": obj["key"],
+                            "category": "missing_or_corrupt_analytical_artifact",
                         }
                     )
         return {

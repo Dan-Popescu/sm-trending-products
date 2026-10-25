@@ -15,6 +15,7 @@ from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
+from .assessment_archive import AssessmentArchive
 from .assessment_service import AssessmentService
 from .capture_contracts import CaptureContracts
 from .catalog import Catalog
@@ -67,6 +68,7 @@ class Pipeline:
         self.catalog = Catalog(settings.database_url.get_secret_value())
         self.history = History(settings, self.catalog)
         self.provenance = Provenance(self.catalog, self.history)
+        self._assessment_archive = AssessmentArchive(self.catalog, self.history)
         self.collector = Collector(settings)
         self.worker_id = settings.worker_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:12]}"
         self._collection = SourceCollection(
@@ -441,34 +443,10 @@ class Pipeline:
             "datasets": {"location": "sharded_provenance", "scope": "source_deliveries"},
             "input_provenance": publication_scope.input_provenance,
         }
-        run_id = digest(body)
-        key = f"assessments/{'synthetic' if synthetic else 'live'}/{run_id}.json"
-        self.catalog.stage_derivation(key, ())
+        publication = self._assessment_archive.stage(body, publication_scope)
+        run_id = publication.run_id
         with self.catalog.transaction() as connection:
-            self.provenance.attach(connection, key, publication_scope.roots)
-            connection.execute(
-                "UPDATE derived_publications SET object_sha256=%s,object_bytes=%s "
-                "WHERE object_key=%s",
-                (run_id, len(canonical(body).encode()), key),
-            )
-            self.history.put(
-                key,
-                canonical(body).encode(),
-                content_type="application/json",
-                connection=connection,
-            )
-            connection.execute(
-                "INSERT INTO assessment_runs(run_id,as_of,synthetic,policy,object_key,"
-                "evidence_datasets) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
-                (
-                    run_id,
-                    as_of,
-                    synthetic,
-                    Jsonb(policy.model_dump(mode="json")),
-                    key,
-                    Jsonb([]),
-                ),
-            )
+            self._assessment_archive.commit(connection, publication)
             for row in rows:
                 connection.execute(
                     "INSERT INTO current_assessments(product_id,run_id,synthetic,score,payload) "
@@ -503,10 +481,15 @@ class Pipeline:
                         "VALUES(%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                         (alert_id, row["product_id"], run_id, synthetic, Jsonb(row)),
                     )
-            connection.execute(
-                "UPDATE derived_publications SET state='committed' WHERE object_key=%s", (key,)
-            )
         return {"run_id": run_id, **body}
+
+    def assessment_snapshot(self, run_id: str, synthetic: bool = False) -> dict | None:
+        return self._assessment_archive.snapshot(run_id, synthetic)
+
+    def assessment_run_page(
+        self, run_id: str, synthetic: bool = False, *, offset: int = 0, limit: int = 100
+    ) -> dict | None:
+        return self._assessment_archive.page(run_id, synthetic, offset=offset, limit=limit)
 
     def latest_assessments(self, synthetic: bool = False) -> list[dict]:
         return [

@@ -7,7 +7,7 @@ from copy import deepcopy
 from datetime import timedelta
 
 import pytest
-from analytical_results import reference_ids
+from analytical_results import assessment_key, reference_ids
 from streamlit.testing.v1 import AppTest
 from test_pipeline_integration import video_observation
 
@@ -90,7 +90,7 @@ def test_published_attention_and_identity_remain_auditable_after_resets_and_reas
     frozen = deepcopy(pipeline.alerts(True))
     assert {row["product_id"] for row in frozen} == {"broad", "solo", "older"}
     assert all(row["run_id"] == first["run_id"] for row in frozen)
-    original_key = f"assessments/synthetic/{first['run_id']}.json"
+    original_key = assessment_key(pipeline, first["run_id"])
 
     def stored_result(application):
         response = application.history.client.get_object(

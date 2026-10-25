@@ -19,7 +19,7 @@ from pydantic import SecretStr
 from test_object_backup import configure
 from test_pipeline_integration import ACCOUNT, controlled_source, video_observation
 
-from sm_trending_products.contracts import now
+from sm_trending_products.contracts import canonical, now
 from sm_trending_products.pipeline import Pipeline
 
 pytestmark = pytest.mark.integration
@@ -217,6 +217,8 @@ def test_online_custom_dump_restores_exact_catalog_cut_without_later_observation
     monkeypatch.setitem(snapshot["restore"].__globals__, "client", lambda: s3)
     pipeline.import_records([video_observation("before-cut", now(), 10)], synthetic=True)
     pipeline.create_product("before-cut", "Before cut", synthetic=True)
+    pipeline.review_link("before-cut", "fixture_import:video:before-cut")
+    assessment = pipeline.assess(now(), synthetic=True)
     pipeline.catalog.execute("CREATE TABLE online_backup_dump_gate(value integer)")
     before = pipeline.catalog.export_state()
     options = online_options(tmp_path)
@@ -272,6 +274,9 @@ def test_online_custom_dump_restores_exact_catalog_cut_without_later_observation
         with Pipeline(settings) as restored:
             assert restored.catalog.export_state() == before
             assert restored.verify()["ok"]
+            assert canonical(restored.assessment_snapshot(assessment["run_id"], True)) == canonical(
+                assessment
+            )
             observations, _ = restored.history.observations(now(), True)
             assert [row.entity_id for row in observations] == ["before-cut"]
         live, _ = pipeline.history.observations(now(), True)

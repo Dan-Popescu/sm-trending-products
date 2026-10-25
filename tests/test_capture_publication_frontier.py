@@ -126,7 +126,20 @@ def test_schema_expansion_backfills_existing_raw_parents_and_old_retry_metadata(
     )
     remove_expansion(pipeline)
     # A compatible bridge image still performs the original claim on schema 35.
-    assert acquisition._claim_publication(True) is None
+    # Hide later format gates only for that legacy-path probe. Their DDL is
+    # still installed, so restore their exact markers before initialize() or it
+    # would incorrectly reapply unrelated expansions such as SQL 039.
+    later = pipeline.catalog.all("SELECT * FROM schema_migrations WHERE version>37")
+    pipeline.catalog.execute("DELETE FROM schema_migrations WHERE version>37")
+    try:
+        assert acquisition._claim_publication(True) is None
+    finally:
+        with pipeline.catalog.transaction() as connection:
+            for row in later:
+                connection.execute(
+                    "INSERT INTO schema_migrations(version,applied_at) VALUES(%s,%s)",
+                    (row["version"], row["applied_at"]),
+                )
     pipeline.catalog.initialize()
     assert pending(pipeline) == [{"dataset_id": parents[2]["dataset_id"]}]
     assert acquisition._claim_publication(True) is None

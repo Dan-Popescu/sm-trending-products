@@ -8,12 +8,12 @@ remain in history; a reference page never hydrates a whole analytical universe.
 from __future__ import annotations
 
 import hashlib
-import json
 from collections import OrderedDict, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from .analytical_json import compress_json, read_json
 from .cache import pin_cached
 from .catalog import Catalog
 from .contracts import Observation, ProductLink, canonical, utc
@@ -115,8 +115,9 @@ class _NodePlan:
 
 
 class Provenance:
-    def __init__(self, catalog: Catalog, history: History):
+    def __init__(self, catalog: Catalog, history: History, *, compressed: bool = False):
         self.catalog, self.history = catalog, history
+        self.compressed = compressed
         self._published: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
     @staticmethod
@@ -188,13 +189,15 @@ class Provenance:
         encoded, descriptor = self._encode_node(body, synthetic)
         return self._publish_node(encoded, descriptor, synthetic, inputs=inputs, children=children)
 
-    @staticmethod
-    def _encode_node(body: dict[str, Any], synthetic: bool) -> tuple[bytes, dict[str, Any]]:
+    def _encode_node(self, body: dict[str, Any], synthetic: bool) -> tuple[bytes, dict[str, Any]]:
         encoded = canonical(body).encode()
         if len(encoded) > MAX_NODE_BYTES:
             raise ValueError("Provenance node exceeds its byte budget")
+        if self.compressed:
+            encoded = compress_json(encoded)
         checksum = hashlib.sha256(encoded).hexdigest()
-        key = f"provenance/{'synthetic' if synthetic else 'live'}/{checksum}.json"
+        suffix = "json.gz" if self.compressed else "json"
+        key = f"provenance/{'synthetic' if synthetic else 'live'}/{checksum}.{suffix}"
         descriptor = {
             "key": key,
             "sha256": checksum,
@@ -260,7 +263,11 @@ class Provenance:
                     )
         # Staging ends before upload. History.put retains its own short-lived
         # retention/tombstone fence; the final source guard rejects retirement races.
-        self.history.put(key, encoded, content_type="application/json")
+        self.history.put(
+            key,
+            encoded,
+            content_type="application/gzip" if key.endswith(".gz") else "application/json",
+        )
         with self.catalog.transaction() as connection:
             self.catalog.guard_namespace(connection, synthetic)
             self.catalog.guard_inputs(connection, dependencies)
@@ -395,7 +402,9 @@ class Provenance:
             for key in sorted(grouped)
         ]
 
-    def records(self, records: Mapping[str, Any], synthetic: bool) -> dict[str, Any] | list:
+    def records(
+        self, records: Mapping[str, Any], synthetic: bool, *, ordered: bool = True
+    ) -> dict[str, Any] | list:
         """Store bounded analytical records with stable content-addressed partitions."""
         if not records:
             return []
@@ -409,7 +418,8 @@ class Provenance:
                 "kind": "records",
                 "count": len(items),
                 "records": [
-                    {"id": key, "value": value, "position": positions[key]} for key, value in items
+                    {"id": key, "value": value, **({"position": positions[key]} if ordered else {})}
+                    for key, value in items
                 ],
                 "prefix": prefix,
             }
@@ -443,33 +453,63 @@ class Provenance:
 
     def record(self, value: Any, record_id: str) -> Any:
         """Look up one record through hash prefixes, without scanning sibling pages."""
+        return self.selected_records(value, [record_id]).get(record_id)
+
+    def _read_node(self, node: dict[str, Any]) -> dict[str, Any]:
+        with pin_cached(self.history, node) as path:
+            body = read_json(
+                path.read_bytes(),
+                compressed=node["key"].endswith(".gz"),
+                max_bytes=MAX_NODE_BYTES,
+            )
+        if not isinstance(body, dict) or body.get("schema_version") != "1":
+            raise ValueError("Invalid analytical node")
+        return body
+
+    def selected_records(
+        self, value: Any, record_ids: Sequence[str], *, connection=None
+    ) -> dict[str, Any]:
+        """Read at most 200 keyed values, sharing each selected trie node once."""
+        if len(record_ids) > 200:
+            raise ValueError("Selected analytical records are limited to 200")
+        if connection is None:
+            with self.catalog.transaction() as connection:
+                return self.selected_records(value, record_ids, connection=connection)
+        if not record_ids:
+            return {}
         if not isinstance(value, dict) or value.get("format") != "sharded-records-v1":
             raise ValueError("A record lookup requires sharded analytical records")
-        fingerprint = hashlib.sha256(record_id.encode()).hexdigest()
-        node = value["root"]
-        with self.catalog.transaction() as connection:
-            self.guard(connection, [node])
-            for _depth in range(MAX_DEPTH + 1):
-                with pin_cached(self.history, node) as path:
-                    body = json.loads(path.read_bytes())
-                if body.get("count") != node["count"] or body.get("prefix") != node["prefix"]:
-                    raise ValueError("Invalid analytical record index")
-                if body["kind"] == "records":
-                    for item in body["records"]:
-                        if item["id"] == record_id:
-                            return item["value"]
-                    return None
-                if body["kind"] != "branch" or len(body["children"]) > BRANCH_CHILDREN:
-                    raise ValueError("Invalid analytical record branch")
-                matching = [
-                    child for child in body["children"] if fingerprint.startswith(child["prefix"])
-                ]
-                if not matching:
-                    return None
-                if len(matching) != 1 or len(matching[0]["prefix"]) <= len(node["prefix"]):
+        fingerprints = {key: hashlib.sha256(key.encode()).hexdigest() for key in record_ids}
+        self.guard(connection, [value["root"]])
+        result: dict[str, Any] = {}
+
+        def visit(node, keys, depth):
+            if depth > MAX_DEPTH:
+                raise ValueError("Provenance depth limit exceeded")
+            body = self._read_node(node)
+            if body.get("count") != node["count"] or body.get("prefix") != node["prefix"]:
+                raise ValueError("Invalid analytical record index")
+            if body["kind"] == "records":
+                if len(body["records"]) != node["count"] or len(body["records"]) > 100:
+                    raise ValueError("Invalid analytical record leaf")
+                result.update(
+                    (item["id"], item["value"]) for item in body["records"] if item["id"] in keys
+                )
+                return
+            if body["kind"] != "branch" or len(body["children"]) > BRANCH_CHILDREN:
+                raise ValueError("Invalid analytical record branch")
+            routed: set[str] = set()
+            for child in body["children"]:
+                selected = {key for key in keys if fingerprints[key].startswith(child["prefix"])}
+                if not selected:
+                    continue
+                if routed.intersection(selected) or len(child["prefix"]) <= len(node["prefix"]):
                     raise ValueError("Invalid analytical record partition")
-                node = matching[0]
-        raise ValueError("Provenance depth limit exceeded")
+                routed.update(selected)
+                visit(child, selected, depth + 1)
+
+        visit(value["root"], set(record_ids), 0)
+        return result
 
     def attach(self, connection, parent_key: str, roots: Sequence[dict[str, Any]]) -> None:
         """Fence a staged publication through the roots it actually embeds."""
@@ -590,8 +630,7 @@ class Provenance:
                 return
             if depth > MAX_DEPTH:
                 raise ValueError("Provenance depth limit exceeded")
-            with pin_cached(self.history, node) as path:
-                body = json.loads(path.read_bytes())
+            body = self._read_node(node)
             if body.get("schema_version") != "1" or body.get("count") != node["count"]:
                 raise ValueError("Invalid provenance node")
             if body["kind"] == "references":
