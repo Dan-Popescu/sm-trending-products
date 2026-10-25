@@ -17,7 +17,7 @@ how rarely any particular class of historical data will be read.
 
 `ASSESSMENT_SCHEDULE_MINUTES=15` means up to 96 scheduled analytical runs per
 day. The default is in `PlanningSettings`, `.env.example` and Compose;
-`assessment_schedule` builds its Dagster cron from that setting. Values must be
+the Dagster assessment schedule builds its cron from that setting. Values must be
 positive divisors of 60. Collection planning has its own five-minute schedule;
 it does not require a ranking after every capture.
 
@@ -48,12 +48,14 @@ result: object creation age alone cannot determine eligibility. Any transition
 policy must check live references and retain the full reconstructible dependency
 closure.
 
-`verify` currently downloads every valid historical ranking and its required
-objects. A new full object backup and a full restoration also require synchronous
-reads. Incremental backups can reuse verified unchanged bytes from a local base,
-but cannot guarantee every future recovery avoids S3 reads. Before using a tier
-requiring asynchronous restoration, add explicit retrieval states, deadlines,
-failure handling and a tested recovery-time objective. Determine the provider's
+`verify` currently downloads committed source objects and valid historical
+ranking roots. A fresh full object backup downloads the required remote objects.
+Incremental backups can reuse verified unchanged bytes from a local base.
+Restoring a complete local backup reads those copies and uploads them to the
+destination; it does not require access to the original bucket. Before using a
+tier requiring asynchronous restoration, design and test retrieval states,
+deadlines and failures for verification, fresh backups and direct historical
+access. Determine the provider's
 actual storage, request, retrieval and minimum-duration charges for the selected
 tier; a lower per-GB price is not a complete cost estimate.
 
