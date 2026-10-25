@@ -1,0 +1,90 @@
+{
+  "results": [
+    {
+      "decoder": "legacy",
+      "rows": 50000,
+      "decode_cpu_seconds": 2.882846,
+      "decode_elapsed_seconds": 2.883526,
+      "peak_process_rss_kib": 419120,
+      "full_result_sha256": "966138acab1491e9586f83dd5f704e9db561d9ec5b0857e9cce608463761cc73",
+      "limits": "RSS includes encoded fixtures and retained output, not VPS services"
+    },
+    {
+      "decoder": "shared",
+      "rows": 50000,
+      "decode_cpu_seconds": 1.858994,
+      "decode_elapsed_seconds": 1.858998,
+      "peak_process_rss_kib": 403576,
+      "full_result_sha256": "966138acab1491e9586f83dd5f704e9db561d9ec5b0857e9cce608463761cc73",
+      "limits": "RSS includes encoded fixtures and retained output, not VPS services"
+    },
+    {
+      "decoder": "shared",
+      "rows": 50000,
+      "decode_cpu_seconds": 1.358262,
+      "decode_elapsed_seconds": 1.36021,
+      "peak_process_rss_kib": 403580,
+      "full_result_sha256": "966138acab1491e9586f83dd5f704e9db561d9ec5b0857e9cce608463761cc73",
+      "limits": "RSS includes encoded fixtures and retained output, not VPS services"
+    },
+    {
+      "decoder": "legacy",
+      "rows": 50000,
+      "decode_cpu_seconds": 1.95532,
+      "decode_elapsed_seconds": 1.955666,
+      "peak_process_rss_kib": 419100,
+      "full_result_sha256": "966138acab1491e9586f83dd5f704e9db561d9ec5b0857e9cce608463761cc73",
+      "limits": "RSS includes encoded fixtures and retained output, not VPS services"
+    },
+    {
+      "decoder": "legacy",
+      "rows": 50000,
+      "decode_cpu_seconds": 1.444438,
+      "decode_elapsed_seconds": 1.445683,
+      "peak_process_rss_kib": 419176,
+      "full_result_sha256": "966138acab1491e9586f83dd5f704e9db561d9ec5b0857e9cce608463761cc73",
+      "limits": "RSS includes encoded fixtures and retained output, not VPS services"
+    },
+    {
+      "decoder": "shared",
+      "rows": 50000,
+      "decode_cpu_seconds": 1.51452,
+      "decode_elapsed_seconds": 1.515267,
+      "peak_process_rss_kib": 403532,
+      "full_result_sha256": "966138acab1491e9586f83dd5f704e9db561d9ec5b0857e9cce608463761cc73",
+      "limits": "RSS includes encoded fixtures and retained output, not VPS services"
+    }
+  ],
+  "summary": {
+    "legacy": {
+      "cpu_median_seconds": 1.95532,
+      "peak_rss_median_kib": 419120
+    },
+    "shared": {
+      "cpu_median_seconds": 1.51452,
+      "peak_rss_median_kib": 403576
+    }
+  },
+  "source_commit": "fc38bdfc7423aa802ce1d336307621954aa6f5ee",
+  "measurement_scope": "Fresh-process source decoding; fixture creation and verification excluded from CPU timing; RSS includes encoded fixtures and retained outputs; no SQL/S3/VPS roles",
+  "exploratory_single_pair": {
+    "legacy": {
+      "decoder": "legacy",
+      "rows": 50000,
+      "decode_cpu_seconds": 1.808045,
+      "decode_elapsed_seconds": 1.809339,
+      "peak_process_rss_kib": 419360,
+      "full_result_sha256": "966138acab1491e9586f83dd5f704e9db561d9ec5b0857e9cce608463761cc73",
+      "limits": "RSS includes encoded fixtures and retained output, not VPS services"
+    },
+    "shared": {
+      "decoder": "shared",
+      "rows": 50000,
+      "decode_cpu_seconds": 2.087171,
+      "decode_elapsed_seconds": 2.087244,
+      "peak_process_rss_kib": 403444,
+      "full_result_sha256": "966138acab1491e9586f83dd5f704e9db561d9ec5b0857e9cce608463761cc73",
+      "limits": "RSS includes encoded fixtures and retained output, not VPS services"
+    }
+  }
+}

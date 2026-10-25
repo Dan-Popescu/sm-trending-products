@@ -259,6 +259,7 @@ class Maintenance:
                 recorded.get("physical_partition_buckets", partition_buckets) if recorded else None
             ),
             target_rows_per_file=self.pipeline.settings.compaction_target_rows_per_file,
+            compaction=True,
         )
         manifest = {
             "schema_version": "1",
