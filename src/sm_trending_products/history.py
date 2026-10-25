@@ -192,10 +192,11 @@ class History:
         partition_buckets: int | None = None,
         *,
         physical_buckets: int | None = None,
+        target_rows_per_file: int | None = None,
     ) -> tuple[list[tuple[dict, bytes]], int]:
         """Size physical files independently from the configured maximum hash fanout."""
         maximum = partition_buckets or self.settings.history_partition_buckets
-        target = self.settings.history_target_rows_per_file
+        target = target_rows_per_file or self.settings.history_target_rows_per_file
         physical_buckets = physical_buckets or min(
             maximum, max(1, (len(rows) + target - 1) // target)
         )

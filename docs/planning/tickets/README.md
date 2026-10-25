@@ -68,6 +68,15 @@ T14 must not promise a capacity number before measurement. This plan builds the 
 
 ## Published issues
 
+The approved [lossless-history specification](../../specs/lossless-history.md)
+tracks the 2026-10-25 storage follow-up:
+
+| Slice | GitHub issue | Engineering dependency |
+| --- | --- | --- |
+| Compressed shared analytical archives | [#107](https://github.com/Dan-Popescu/sm-trending-products/issues/107) | None |
+| Independent compacted Parquet target | [#108](https://github.com/Dan-Popescu/sm-trending-products/issues/108) | None |
+| Explicit verified unlimited source retention | [#109](https://github.com/Dan-Popescu/sm-trending-products/issues/109) | #107; SQL 038 before 039 |
+
 | Local ticket | GitHub issue |
 | --- | --- |
 | T01 | [#9](https://github.com/Dan-Popescu/sm-trending-products/issues/9) |

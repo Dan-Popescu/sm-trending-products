@@ -61,6 +61,7 @@ class Settings(PlanningSettings):
     history_partition_buckets: int = Field(default=64, ge=1, le=1024)
     history_index_objects_per_call: int = Field(default=32, ge=1, le=1000)
     history_target_rows_per_file: int = Field(default=1000, ge=1, le=100_000)
+    compaction_target_rows_per_file: int = Field(default=5000, ge=1, le=100_000)
     collector_timeout_seconds: int = Field(default=90, ge=5, le=600)
     polars_max_threads: int = Field(default=2, ge=1)
     duckdb_memory_limit: str = "512MB"
