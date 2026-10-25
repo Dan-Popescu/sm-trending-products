@@ -179,7 +179,7 @@ retention_job = define_asset_job(
 )
 
 compaction_job = define_asset_job(
-    "history_compaction", selection=AssetSelection.assets(history_compaction)
+    "history_compaction_batches", selection=AssetSelection.assets(history_compaction)
 )
 
 defs = Definitions(
@@ -195,6 +195,9 @@ defs = Definitions(
     jobs=[collection_job, assessment_job, forward_job, outcomes_job, retention_job, compaction_job],
     schedules=[
         ScheduleDefinition(
+            # Preserve persisted schedule identity while keeping the job graph's
+            # name distinct from the history_compaction asset operation.
+            name="history_compaction_schedule",
             job=compaction_job,
             cron_schedule=PlanningSettings.cron(PlanningSettings().maintenance_schedule_minutes),
             default_status=DefaultScheduleStatus.RUNNING,

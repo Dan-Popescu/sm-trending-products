@@ -16,6 +16,24 @@ from dagster_postgres.utils import get_conn_string
 from sm_trending_products import orchestration
 
 
+@pytest.mark.parametrize("independent", ["false", "true"])
+def test_complete_deployed_repository_loads_in_both_acquisition_modes(monkeypatch, independent):
+    try:
+        with monkeypatch.context() as environment:
+            environment.setenv("ACQUISITION_ENABLED", independent)
+            definitions = importlib.reload(orchestration).defs
+            repository = definitions.get_repository_def()
+            # The daemon/code server loads every job, including the implicit asset
+            # job. Resolving one selected job misses cross-job definition conflicts.
+            repository.load_all_definitions()
+            compaction = repository.get_schedule_def("history_compaction_schedule")
+            assert repository.get_job(compaction.job_name).asset_layer.executable_asset_keys == {
+                AssetKey("history_compaction")
+            }
+    finally:
+        importlib.reload(orchestration)
+
+
 def test_independent_mode_removes_the_automatic_collection_schedule(monkeypatch):
     try:
         with monkeypatch.context() as environment:
