@@ -151,6 +151,21 @@ remains the smaller of 100,000 and the configured analytical row limit. Every
 group independently publishes and fences its immutable result; a deadline or
 restart never requires repeating already committed groups.
 
+New compacted read copies target 5,000 rows per Parquet file, configured with
+`COMPACTION_TARGET_ROWS_PER_FILE` (1–100,000). Source publication keeps its separate
+`HISTORY_TARGET_ROWS_PER_FILE` default of 1,000. Both targets choose hash fanout
+under `HISTORY_PARTITION_BUCKETS`; entity grouping and the bucket limit mean they
+are sizing targets, not strict row limits. The existing atomic group cap remains
+unchanged. A staged manifest's recorded physical bucket count takes precedence
+over current settings, preserving its exact immutable bytes during retries and
+rolling updates.
+
+Fewer active files reduce full-history GETs and repeated Parquet metadata. A
+single-video lookup may download a larger file, so reducing this target can be
+appropriate for predominantly selective reads. Original objects remain retained;
+smaller new compacted copies do not immediately reduce total bucket size. See
+[the measured layout comparison](parquet-read-layout.md) for scope and tradeoffs.
+
 The invocation captures a database commit-time cutoff and excludes newer
 publications from its input groups (legacy missing commit times use creation
 time). Consequently it does not immediately read and rewrite aggregates it just

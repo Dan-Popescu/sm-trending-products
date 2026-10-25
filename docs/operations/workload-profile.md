@@ -21,6 +21,10 @@ every `COLLECTION_SCHEDULE_MINUTES=5`, independently of
 tasks/day, not a source grant, measured throughput or a sizing certificate.
 Intervals must divide an hour. Candidate scan limits, queue backpressure,
 available accounts and protected exploration still constrain actual scheduling.
+
+The [historical storage guide](history-storage.md) explains the inherited
+15-minute assessment default, the distinction between a new current assessment
+and a historical replay, and the constraints on future S3 cold storage.
 Rust continues to reserve every real HTTP attempt against authoritative quotas.
 Increasing planning admission does not bypass those controls.
 

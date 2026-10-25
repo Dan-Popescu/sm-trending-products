@@ -49,6 +49,52 @@ def test_small_pages_keep_durable_raw_but_avoid_hash_bucket_fanout(pipeline):
     assert pipeline.verify(dataset)["ok"]
 
 
+def test_compaction_uses_larger_read_files_without_rewriting_source_history(pipeline):
+    pipeline.history.settings = pipeline.settings.model_copy(
+        update={"history_partition_buckets": 64}
+    )
+    timestamp = now() - timedelta(hours=1)
+    parents = [
+        pipeline.import_records(
+            [record(f"compact-{group}-{row}", timestamp) for row in range(1100)],
+            synthetic=True,
+        )[0]
+        for group in range(2)
+    ]
+    original_manifests = {
+        row["dataset_id"]: row["manifest"]
+        for row in pipeline.catalog.all(
+            "SELECT dataset_id,manifest FROM datasets WHERE dataset_id=ANY(%s)", (parents,)
+        )
+    }
+    assert all(
+        manifest["physical_partition_buckets"] == 2 for manifest in original_manifests.values()
+    )
+    before, _ = pipeline.history.observations(now(), True)
+    result = pipeline.compact(synthetic=True)
+    assert result["rows"] == 2200
+    assert result["normalized_objects_before"] == 4
+    assert result["normalized_objects_after"] == 1
+    manifest = pipeline.catalog.one(
+        "SELECT manifest FROM datasets WHERE dataset_id=%s", (result["dataset_id"],)
+    )["manifest"]
+    assert manifest["physical_partition_buckets"] == 1
+    assert manifest["row_count"] == 2200
+    after, _ = pipeline.history.observations(now(), True)
+    assert after == before
+    assert {row.raw_dataset_id for row in after} == set(parents)
+    assert {
+        row["dataset_id"]: row["manifest"]
+        for row in pipeline.catalog.all(
+            "SELECT dataset_id,manifest FROM datasets WHERE dataset_id=ANY(%s)", (parents,)
+        )
+    } == original_manifests
+    assert pipeline.verify()["ok"]
+    assert pipeline.replay(result["dataset_id"])["records"] == 2200
+    replayed, _ = pipeline.history.observations(now(), True)
+    assert replayed == before
+
+
 def test_scoped_manifest_pages_prune_unrelated_objects_before_transfer(pipeline):
     timestamp = now() - timedelta(hours=1)
     for index in range(12):
@@ -449,14 +495,17 @@ def test_staged_legacy_publication_retries_after_layout_upgrade(pipeline, monkey
     assert len(records) == 20
 
 
-def test_staged_compaction_retries_after_sizing_change(pipeline, monkeypatch):
+@pytest.mark.parametrize("staged_target,resumed_target", [(1, 5000), (5000, 1)])
+def test_staged_compaction_retries_after_sizing_change(
+    pipeline, monkeypatch, staged_target, resumed_target
+):
     timestamp = now() - timedelta(hours=1)
     for index in range(2):
         pipeline.import_records(
             [record(f"compact-{index}-{row}", timestamp) for row in range(10)], synthetic=True
         )
-    pipeline.history.settings = pipeline.settings.model_copy(
-        update={"history_target_rows_per_file": 1}
+    pipeline.settings = pipeline.settings.model_copy(
+        update={"compaction_target_rows_per_file": staged_target}
     )
 
     def interrupted_index(*args, **kwargs):
@@ -467,8 +516,10 @@ def test_staged_compaction_retries_after_sizing_change(pipeline, monkeypatch):
         with pytest.raises(RuntimeError, match="controlled compaction interruption"):
             pipeline.compact(synthetic=True)
     staged = pipeline.catalog.one("SELECT dataset_id,manifest FROM datasets WHERE state='staged'")
-    assert len(staged["manifest"]["normalized"]) > 1
-    pipeline.history.settings = pipeline.settings
+    assert len(staged["manifest"]["normalized"]) == (4 if staged_target == 1 else 1)
+    pipeline.settings = pipeline.settings.model_copy(
+        update={"compaction_target_rows_per_file": resumed_target}
+    )
     result = pipeline.compact(synthetic=True)
     assert result["dataset_id"] == staged["dataset_id"]
     committed = pipeline.catalog.one(
