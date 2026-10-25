@@ -14,6 +14,38 @@ from dagster import AssetKey, AssetMaterialization, DagsterInstance, materialize
 from dagster_postgres.utils import get_conn_string
 
 from sm_trending_products import orchestration
+from sm_trending_products.settings import PlanningSettings
+
+
+@pytest.mark.parametrize(
+    ("configured", "minutes", "cron"), [(None, 60, "0 * * * *"), ("15", 15, "*/15 * * * *")]
+)
+def test_hourly_default_and_explicit_quarter_hour_keep_schedule_identity(
+    monkeypatch, configured, minutes, cron
+):
+    try:
+        with monkeypatch.context() as environment:
+            for variable in (
+                "ASSESSMENT_SCHEDULE_MINUTES",
+                "COLLECTION_SCHEDULE_MINUTES",
+                "MAINTENANCE_SCHEDULE_MINUTES",
+            ):
+                environment.delenv(variable, raising=False)
+            environment.setenv("ACQUISITION_ENABLED", "false")
+            if configured is not None:
+                environment.setenv("ASSESSMENT_SCHEDULE_MINUTES", configured)
+            assert PlanningSettings().assessment_schedule_minutes == minutes
+            definitions = importlib.reload(orchestration).defs
+            schedules = {schedule.job_name: schedule for schedule in definitions.schedules}
+            assessment = schedules["opportunity_rankings"]
+            assert assessment.name == "opportunity_rankings_schedule"
+            assert assessment.cron_schedule == cron
+            assert schedules["collection_batches"].cron_schedule == "*/5 * * * *"
+            assert schedules["forward_decisions"].cron_schedule == "0 */6 * * *"
+            assert schedules["forward_outcomes"].cron_schedule == "30 */6 * * *"
+            assert schedules["retention_policy"].cron_schedule == "*/15 * * * *"
+    finally:
+        importlib.reload(orchestration)
 
 
 @pytest.mark.parametrize("independent", ["false", "true"])

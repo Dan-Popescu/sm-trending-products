@@ -21,7 +21,7 @@ def main() -> int:
     root.add_argument("--history-days", nargs="+", type=int, default=[30, 90])
     root.add_argument("--videos-per-product", type=int, default=20)
     root.add_argument("--refreshes-per-day", type=Decimal, default=Decimal(4))
-    root.add_argument("--assessments-per-day", type=Decimal, default=Decimal(96))
+    root.add_argument("--assessments-per-day", type=Decimal, default=Decimal(24))
     root.add_argument("--free-tier-available", action="store_true", help="Account quota is unused")
     root.add_argument(
         "--sensitivity", nargs="+", type=Decimal, default=[Decimal("0.5"), Decimal(1), Decimal(2)]

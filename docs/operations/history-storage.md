@@ -15,7 +15,7 @@ how rarely any particular class of historical data will be read.
 
 ## Assessment schedule
 
-`ASSESSMENT_SCHEDULE_MINUTES=15` means up to 96 scheduled analytical runs per
+`ASSESSMENT_SCHEDULE_MINUTES=60` means up to 24 scheduled analytical runs per
 day. The default is in `PlanningSettings`, `.env.example` and Compose;
 the Dagster assessment schedule builds its cron from that setting. Values must be
 positive divisors of 60. Collection planning has its own five-minute schedule;
@@ -25,10 +25,17 @@ The initial implementation used a fixed `*/15` collection/analysis schedule
 (commit `e2039c45`). Commit `abd73c007b6d7a8b91e8a56cac7b3bd5f7187b29`
 separated collection and analysis and made the intervals configurable. This was
 an engineering default, not a measured latency optimum or product requirement.
-The storage changes leave it unchanged so their effects can be assessed alone.
+The original lossless-storage delivery left it unchanged. The later
+[hourly-default decision](assessment-cadence.md), approved for multi-day commerce
+decisions in [#117](https://github.com/Dan-Popescu/sm-trending-products/issues/117),
+reduces nominal assessment triggers from 96 to 24 per day. It preserves collection,
+scoring rules, lookbacks and the independent six-hour evaluation schedules.
 
-Fifteen minutes can be appropriate for fast alerts with fresh measurements. For
-products refreshed only four times a day, it may repeat substantial work. A
+An explicit `ASSESSMENT_SCHEDULE_MINUTES=15` remains available for faster alerts
+with fresh measurements. An existing explicit deployment override remains in
+effect; adopting the hourly default requires changing or removing that override
+and reloading the analytics code-server deployment. For products refreshed only
+four times a day, a 15-minute schedule may repeat substantial work. A
 future selective schedule should account for source changes **and** clock-based
 age/freshness/window transitions, changes to product membership or rules, plus a
 periodic safety run. Skipping solely because no source generation changed would

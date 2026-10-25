@@ -29,7 +29,8 @@ def test_capture_spool_requires_room_for_a_bounded_response(monkeypatch):
         )
 
 
-def test_compose_resolves_independent_pins_identities_and_persistent_spool():
+@pytest.mark.parametrize("assessment_minutes", [None, "15"])
+def test_compose_resolves_independent_pins_identities_and_persistent_spool(assessment_minutes):
     if not shutil.which("docker"):
         pytest.skip("Docker Compose is required for interpolation validation")
     roles = {
@@ -53,6 +54,9 @@ def test_compose_resolves_independent_pins_identities_and_persistent_spool():
         "CAPTURE_GREEN_WORKER_ID": "green-release-18",
         "POSTGRES_HOST_PORT": "15432",
     }
+    environment.pop("ASSESSMENT_SCHEDULE_MINUTES", None)
+    if assessment_minutes is not None:
+        environment["ASSESSMENT_SCHEDULE_MINUTES"] = assessment_minutes
     result = subprocess.run(
         ["docker", "compose", "--profile", "rollout", "config", "--format", "json"],
         env=environment,
@@ -62,6 +66,10 @@ def test_compose_resolves_independent_pins_identities_and_persistent_spool():
         timeout=15,
     )
     services = json.loads(result.stdout)["services"]
+    for role in ("dagster-daemon", "dagster-webserver"):
+        assert services[role]["environment"]["ASSESSMENT_SCHEDULE_MINUTES"] == (
+            assessment_minutes or "60"
+        )
     for role, variable in (
         ("worker", "CAPTURE_BLUE_IMAGE"),
         ("worker-green", "CAPTURE_GREEN_IMAGE"),

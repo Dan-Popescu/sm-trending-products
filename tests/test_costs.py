@@ -1,6 +1,8 @@
 """Operator pricing contracts exercise independent monetary and quantity arithmetic."""
 
 import json
+import runpy
+import sys
 from decimal import Decimal
 from pathlib import Path
 
@@ -28,7 +30,11 @@ def scenario(store=0, machine=1, **updates):
     )
     data = dict(
         workload=Workload(
-            products=10000, videos_per_product=20, refreshes_per_day=4, history_days=90
+            products=10000,
+            videos_per_product=20,
+            refreshes_per_day=4,
+            history_days=90,
+            assessment_runs_per_day=96,
         ),
         coefficients=coefficients,
         machine=Machine.model_validate(catalog["machines"][machine]),
@@ -37,6 +43,44 @@ def scenario(store=0, machine=1, **updates):
     )
     data.update(updates)
     return Scenario.model_validate(data)
+
+
+def test_new_cost_workloads_default_to_hourly_assessments_without_rewriting_old_scenarios():
+    workload = Workload(products=10000, videos_per_product=20, refreshes_per_day=4, history_days=90)
+    assert workload.assessment_runs_per_day == 24
+    assert scenario().workload.assessment_runs_per_day == 96
+
+
+@pytest.mark.parametrize(("override", "expected"), [(None, "24"), ("96", "96")])
+def test_cost_scenario_generator_uses_hourly_default_and_keeps_explicit_overrides(
+    tmp_path, monkeypatch, override, expected
+):
+    output = tmp_path / "costs.json"
+    arguments = [
+        "cost-scenarios.py",
+        "--prices",
+        str(ROOT / "docs/operations/costs/prices-2026-10-24.json"),
+        "--coefficients",
+        str(ROOT / "docs/operations/costs/illustrative-coefficients.json"),
+        "--products",
+        "1",
+        "--history-days",
+        "1",
+        "--sensitivity",
+        "1",
+        "--output",
+        str(output),
+    ]
+    if override is not None:
+        arguments.extend(["--assessments-per-day", override])
+    monkeypatch.setattr(sys, "argv", arguments)
+    generator = runpy.run_path(str(ROOT / "scripts/cost-scenarios.py"))
+    assert generator["main"]() == 0
+    workloads = [
+        item["configuration"]["workload"] for item in json.loads(output.read_text())["scenarios"]
+    ]
+    assert len(workloads) == 12
+    assert {workload["assessment_runs_per_day"] for workload in workloads} == {expected}
 
 
 def test_daily_observations_requests_history_and_each_physical_copy_are_counted():

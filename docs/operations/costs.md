@@ -11,6 +11,7 @@ does not buy resources, contact a source API, or certify any machine's capacity.
 PYTHONPATH=src python scripts/cost-scenarios.py \
   --prices docs/operations/costs/prices-2026-10-24.json \
   --coefficients docs/operations/costs/illustrative-coefficients.json \
+  --assessments-per-day 96 \
   --output output/cost-scenarios.json
 ```
 
@@ -21,6 +22,13 @@ assessment publications/day. The committed [compact result matrix](../verificati
 contains base quantities and all sensitivity results; the full generated report
 also contains every directly runnable configuration. Add `--compact` to reproduce
 the committed review matrix without repeating each complete configuration.
+
+These are preserved historical scenarios, not the current schedule default.
+New workloads and `cost-scenarios.py` now default to 24 assessment publications/day
+after the [hourly assessment decision](assessment-cadence.md). Omit the explicit
+96-run override for a new hourly scenario. Historical coefficients predate shared
+compressed archives; changing the cadence alone does not recalibrate their byte
+or CPU assumptions and does not turn these artifacts into a current measured bill.
 
 Run one configuration without database or cloud credentials:
 
