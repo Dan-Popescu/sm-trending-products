@@ -22,6 +22,8 @@ from uuid import uuid4
 
 from psycopg.errors import DeadlockDetected, LockNotAvailable, QueryCanceled
 
+from ._cache_accounting import _Charge, accounting
+
 if TYPE_CHECKING:
     from .history import History
 
@@ -36,6 +38,7 @@ _SESSION_MAX_BYTES = 256 * 1024 * 1024
 _SESSION_MAX_PINS = 64
 _Identity = tuple[int, int, int, int, int]
 _LOCAL_PREFIX = "window-"
+_PRESSURE_HEADROOM_MAX_BYTES = 32 * 1024 * 1024
 
 
 def _identity(path: Path) -> _Identity:
@@ -79,6 +82,7 @@ class _Cache:
         self.downloads = self._directory(".downloads")
         self.locks = self._directory(".object-locks")
         self.verified_identity: _Identity | None = None
+        self._charge: _Charge | None = None
 
     def _directory(self, name: str) -> Path:
         path = self.root / name
@@ -88,10 +92,22 @@ class _Cache:
         return path
 
     @contextmanager
-    def global_lock(self) -> Iterator[None]:
+    def inspection_lock(self) -> Iterator[None]:
+        """Hold stable names; callers must not change names or payload sizes."""
         with _open(self.root / ".cache.lock") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             yield
+
+    @contextmanager
+    def global_lock(self) -> Iterator[None]:
+        with self.inspection_lock():
+            shared = accounting(self.history, (self.root, self.pins, self.downloads))
+            with shared.transaction() as charge:
+                self._charge = charge
+                try:
+                    yield
+                finally:
+                    self._charge = None
 
     @contextmanager
     def object_lock(self, key: str) -> Iterator[None]:
@@ -178,23 +194,46 @@ class _Cache:
         return sizes, pinned, candidates
 
     def _make_room(self, amount: int, *, keep: Path | None = None) -> None:
+        assert self._charge is not None, "Cache admission requires the global lock"
+        if self._charge.bytes is not None and self._charge.bytes + amount <= self.limit:
+            # Charge the whole reservation before creating any names. Keeping
+            # released/replaced bytes charged is conservative until pressure;
+            # normal admissions need no cache-wide metadata walk.
+            self._charge.bytes += amount
+            return
         reserved = self._sweep()
         sizes, pinned, candidates = self._snapshot()
         used = sum(sizes.values())
-        if used + reserved + amount <= self.limit:
-            return
-        candidates.sort(
-            key=lambda item: (item[0].name.startswith(_LOCAL_PREFIX), item[1].st_mtime_ns)
-        )
+        pressure = used + reserved + amount > self.limit
+        # Reclaim at most one percent of extra source bytes when an admission
+        # actually requires eviction. This amortizes repeated full inventories,
+        # without proactively evicting windows or an oversized optional object.
+        extra = min(self.limit // 100, _PRESSURE_HEADROOM_MAX_BYTES) if pressure and amount else 0
+        extra_remaining = extra
+        if pressure:
+            candidates.sort(
+                key=lambda item: (item[0].name.startswith(_LOCAL_PREFIX), item[1].st_mtime_ns)
+            )
         names: dict[tuple[int, int], int] = {}
         for _path, info in candidates:
             inode = (info.st_dev, info.st_ino)
             names[inode] = names.get(inode, 0) + 1
         for path, info in candidates:
-            if used + reserved + amount <= self.limit:
-                return
+            fits = used + reserved + amount <= self.limit
+            if fits and (
+                used + reserved + amount + extra <= self.limit
+                or path.name.startswith(_LOCAL_PREFIX)
+            ):
+                break
             inode = (info.st_dev, info.st_ino)
             if path != keep and inode not in pinned:
+                if fits:
+                    # Optional trimming must free a whole unaliased inode and
+                    # stay within its strict extra-byte bound. Required eviction
+                    # retains its existing behavior for large/aliased objects.
+                    if names[inode] != 1 or not 0 < info.st_size <= extra_remaining:
+                        continue
+                    extra_remaining -= info.st_size
                 path.unlink(missing_ok=True)
                 names[inode] -= 1
                 if names[inode] == 0:
@@ -204,6 +243,7 @@ class _Cache:
                 "Shared cache budget is in use by active readers or downloads; "
                 "retry or narrow inputs"
             )
+        self._charge.bytes = used + reserved + amount
 
     def _pin(self, source: Path) -> tuple[Path, BinaryIO]:
         if not _regular(source):
@@ -239,7 +279,7 @@ class _Cache:
             before = _identity(target)
             if file_digest(target) == expected:
                 after = _identity(target)
-                with self.global_lock():
+                with self.inspection_lock():
                     if _regular(local) and local.stat().st_ino == target.stat().st_ino:
                         if refresh:
                             local.touch()
@@ -333,6 +373,8 @@ class _Cache:
                 fcntl.flock(reservation.fileno(), fcntl.LOCK_EX)
                 reservation.write(str(len(body)).encode())
                 reservation.flush()
+                with _open(temporary):
+                    pass
             with _open(temporary) as output:
                 output.write(body)
                 output.flush()
@@ -375,6 +417,8 @@ class _Cache:
                     fcntl.flock(reservation.fileno(), fcntl.LOCK_EX)
                     reservation.write(str(amount).encode())
                     reservation.flush()
+                    with _open(temporary):
+                        pass
                 self.history.metrics["get_requests"] += 1
                 response = self.history.client.get_object(Bucket=self.history.bucket, Key=key)
                 hasher, size = hashlib.sha256(), 0
@@ -434,7 +478,7 @@ class _ReadSession:
         try:
             # Refresh ordinary eviction recency only after reuse has ended.
             # Touching on every hit would itself invalidate the saved identity.
-            with self.cache.global_lock():
+            with self.cache.inspection_lock():
                 if _regular(entry.local) and _identity(entry.local) == entry.identity:
                     entry.local.touch()
         finally:
@@ -460,7 +504,7 @@ class _ReadSession:
         # Never resurrect an object retired/replaced through its ordinary name.
         # A retained pin keeps bytes safe for an existing reader, but is not
         # authority to admit another read after retention removes that name.
-        with self.cache.global_lock():
+        with self.cache.inspection_lock():
             if entry.local.is_symlink():
                 raise ValueError("Cache file escaped its configured root")
             return (

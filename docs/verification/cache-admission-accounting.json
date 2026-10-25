@@ -1,0 +1,354 @@
+{
+  "baseline_commit": "ac5ddcb9e8713e311b6772528e48b0ee8ade9b33",
+  "test_host": {
+    "cpu_quota_cores": 4,
+    "memory_limit_bytes": 17179869184,
+    "exclusive_host": false
+  },
+  "scope": "Local cache metadata/admission and cached-file reads only; no end-to-end pipeline or VPS consumption claim. Fixed logical payload bytes do not imply fixed filesystem allocation. Peak RSS is cumulative in each driver process, not a per-file coefficient.",
+  "baseline": {
+    "fixture": "cache-admission-headroom-v1",
+    "measured_at": "2026-10-25T09:07:21.050781+00:00",
+    "implementation_sha256": {
+      "cache.py": "12cd27d0201421739a6b05b3bb5552c4da02fe0e05c149f231bd96f8cdadcb34"
+    },
+    "scope": "Actual local cache admission, including stripe lock, short-lived _Cache, and fsync. Equal logical bytes, no eviction, inert payloads. Warm source objects use memory instead of network. CPU/RSS cover only this process; cumulative peak RSS is not per-file memory. No PostgreSQL, parsing, full pipeline or VPS capacity claim.",
+    "cases": [
+      {
+        "ambient_files": 1000,
+        "ambient_logical_bytes": 8388608,
+        "budget_bytes": 134217728,
+        "admitted_payload_bytes": 1024,
+        "startup_admission_ms_excluded_from_ordinary": 6.839375000026848,
+        "ordinary_admission": {
+          "repetitions": 31,
+          "median_ms": 2.954256,
+          "p95_ms": 3.215187,
+          "cpu_median_ms": 2.945332,
+          "cpu_total_ms": 109.189654,
+          "snapshot_count": 31,
+          "snapshot_total_ms": 94.784173
+        },
+        "warm_reads": [
+          {
+            "payload_bytes": 1024,
+            "ordinary": {
+              "repetitions": 300,
+              "median_ms": 0.15089000000000002,
+              "p95_ms": 0.18752,
+              "cpu_median_ms": 0.1514895,
+              "cpu_total_ms": 49.887298
+            },
+            "read_session": {
+              "repetitions": 300,
+              "median_ms": 0.02592,
+              "p95_ms": 0.030279,
+              "cpu_median_ms": 0.0263085,
+              "cpu_total_ms": 8.334421
+            }
+          },
+          {
+            "payload_bytes": 131072,
+            "ordinary": {
+              "repetitions": 300,
+              "median_ms": 0.234058,
+              "p95_ms": 0.278474,
+              "cpu_median_ms": 0.23465249999999999,
+              "cpu_total_ms": 73.540775
+            },
+            "read_session": {
+              "repetitions": 300,
+              "median_ms": 0.026654999999999998,
+              "p95_ms": 0.032613,
+              "cpu_median_ms": 0.0270735,
+              "cpu_total_ms": 8.535063
+            }
+          }
+        ],
+        "all_ambient_files_retained": true,
+        "process_cumulative_peak_rss_kib": 120036
+      },
+      {
+        "ambient_files": 5000,
+        "ambient_logical_bytes": 8388608,
+        "budget_bytes": 134217728,
+        "admitted_payload_bytes": 1024,
+        "startup_admission_ms_excluded_from_ordinary": 48.20966700003737,
+        "ordinary_admission": {
+          "repetitions": 31,
+          "median_ms": 13.818254,
+          "p95_ms": 31.11889,
+          "cpu_median_ms": 13.821272,
+          "cpu_total_ms": 546.69768,
+          "snapshot_count": 31,
+          "snapshot_total_ms": 511.507483
+        },
+        "warm_reads": [
+          {
+            "payload_bytes": 1024,
+            "ordinary": {
+              "repetitions": 300,
+              "median_ms": 0.14966849999999998,
+              "p95_ms": 0.182452,
+              "cpu_median_ms": 0.1502275,
+              "cpu_total_ms": 47.056948
+            },
+            "read_session": {
+              "repetitions": 300,
+              "median_ms": 0.025969,
+              "p95_ms": 0.03147,
+              "cpu_median_ms": 0.026395500000000002,
+              "cpu_total_ms": 8.234604
+            }
+          },
+          {
+            "payload_bytes": 131072,
+            "ordinary": {
+              "repetitions": 300,
+              "median_ms": 0.2332195,
+              "p95_ms": 0.272122,
+              "cpu_median_ms": 0.233745,
+              "cpu_total_ms": 72.857902
+            },
+            "read_session": {
+              "repetitions": 300,
+              "median_ms": 0.026286,
+              "p95_ms": 0.031994,
+              "cpu_median_ms": 0.0267335,
+              "cpu_total_ms": 8.304587
+            }
+          }
+        ],
+        "all_ambient_files_retained": true,
+        "process_cumulative_peak_rss_kib": 126464
+      },
+      {
+        "ambient_files": 30000,
+        "ambient_logical_bytes": 8388608,
+        "budget_bytes": 134217728,
+        "admitted_payload_bytes": 1024,
+        "startup_admission_ms_excluded_from_ordinary": 294.20652099997824,
+        "ordinary_admission": {
+          "repetitions": 31,
+          "median_ms": 133.166158,
+          "p95_ms": 168.115953,
+          "cpu_median_ms": 133.171468,
+          "cpu_total_ms": 4112.746144,
+          "snapshot_count": 31,
+          "snapshot_total_ms": 3947.438858
+        },
+        "warm_reads": [
+          {
+            "payload_bytes": 1024,
+            "ordinary": {
+              "repetitions": 300,
+              "median_ms": 0.1512455,
+              "p95_ms": 0.192883,
+              "cpu_median_ms": 0.15194449999999998,
+              "cpu_total_ms": 48.210437999999996
+            },
+            "read_session": {
+              "repetitions": 300,
+              "median_ms": 0.026774,
+              "p95_ms": 0.03358,
+              "cpu_median_ms": 0.0272395,
+              "cpu_total_ms": 8.656812
+            }
+          },
+          {
+            "payload_bytes": 131072,
+            "ordinary": {
+              "repetitions": 300,
+              "median_ms": 0.2331975,
+              "p95_ms": 0.286274,
+              "cpu_median_ms": 0.23378100000000002,
+              "cpu_total_ms": 80.067185
+            },
+            "read_session": {
+              "repetitions": 300,
+              "median_ms": 0.026003,
+              "p95_ms": 0.031694,
+              "cpu_median_ms": 0.026403,
+              "cpu_total_ms": 8.380623
+            }
+          }
+        ],
+        "all_ambient_files_retained": true,
+        "process_cumulative_peak_rss_kib": 179932
+      }
+    ]
+  },
+  "candidate": {
+    "fixture": "cache-admission-headroom-v1",
+    "measured_at": "2026-10-25T09:07:18.392403+00:00",
+    "implementation_sha256": {
+      "cache.py": "9e26d114bf467fa2af6c7862f6d255ec041f1e93492ea8a46c214a13b0f6a459",
+      "_cache_accounting.py": "f36c80ac5ba5734d889dff6fe757ac7827564b6f0c422b66d61e40400e1f46c9"
+    },
+    "scope": "Actual local cache admission, including stripe lock, short-lived _Cache, and fsync. Equal logical bytes, no eviction, inert payloads. Warm source objects use memory instead of network. CPU/RSS cover only this process; cumulative peak RSS is not per-file memory. No PostgreSQL, parsing, full pipeline or VPS capacity claim.",
+    "cases": [
+      {
+        "ambient_files": 1000,
+        "ambient_logical_bytes": 8388608,
+        "budget_bytes": 134217728,
+        "admitted_payload_bytes": 1024,
+        "startup_admission_ms_excluded_from_ordinary": 6.824026999993293,
+        "ordinary_admission": {
+          "repetitions": 31,
+          "median_ms": 0.464407,
+          "p95_ms": 0.686038,
+          "cpu_median_ms": 0.465538,
+          "cpu_total_ms": 17.412121,
+          "snapshot_count": 0,
+          "snapshot_total_ms": 0
+        },
+        "warm_reads": [
+          {
+            "payload_bytes": 1024,
+            "ordinary": {
+              "repetitions": 300,
+              "median_ms": 0.27378,
+              "p95_ms": 0.33401,
+              "cpu_median_ms": 0.2745975,
+              "cpu_total_ms": 87.047616
+            },
+            "read_session": {
+              "repetitions": 300,
+              "median_ms": 0.025461499999999998,
+              "p95_ms": 0.033843,
+              "cpu_median_ms": 0.025928,
+              "cpu_total_ms": 8.488823
+            }
+          },
+          {
+            "payload_bytes": 131072,
+            "ordinary": {
+              "repetitions": 300,
+              "median_ms": 0.371768,
+              "p95_ms": 0.411837,
+              "cpu_median_ms": 0.3726225,
+              "cpu_total_ms": 112.442244
+            },
+            "read_session": {
+              "repetitions": 300,
+              "median_ms": 0.025431000000000002,
+              "p95_ms": 0.029511,
+              "cpu_median_ms": 0.02587,
+              "cpu_total_ms": 8.093024
+            }
+          }
+        ],
+        "all_ambient_files_retained": true,
+        "process_cumulative_peak_rss_kib": 119064
+      },
+      {
+        "ambient_files": 5000,
+        "ambient_logical_bytes": 8388608,
+        "budget_bytes": 134217728,
+        "admitted_payload_bytes": 1024,
+        "startup_admission_ms_excluded_from_ordinary": 49.111293000123624,
+        "ordinary_admission": {
+          "repetitions": 31,
+          "median_ms": 0.491381,
+          "p95_ms": 0.680991,
+          "cpu_median_ms": 0.492438,
+          "cpu_total_ms": 16.217154999999998,
+          "snapshot_count": 0,
+          "snapshot_total_ms": 0
+        },
+        "warm_reads": [
+          {
+            "payload_bytes": 1024,
+            "ordinary": {
+              "repetitions": 300,
+              "median_ms": 0.31381000000000003,
+              "p95_ms": 0.395626,
+              "cpu_median_ms": 0.3145975,
+              "cpu_total_ms": 101.968437
+            },
+            "read_session": {
+              "repetitions": 300,
+              "median_ms": 0.0268245,
+              "p95_ms": 0.031973,
+              "cpu_median_ms": 0.027299999999999998,
+              "cpu_total_ms": 8.561181
+            }
+          },
+          {
+            "payload_bytes": 131072,
+            "ordinary": {
+              "repetitions": 300,
+              "median_ms": 0.4131435,
+              "p95_ms": 0.522605,
+              "cpu_median_ms": 0.414159,
+              "cpu_total_ms": 127.271031
+            },
+            "read_session": {
+              "repetitions": 300,
+              "median_ms": 0.0275885,
+              "p95_ms": 0.04955,
+              "cpu_median_ms": 0.028062499999999997,
+              "cpu_total_ms": 9.838282
+            }
+          }
+        ],
+        "all_ambient_files_retained": true,
+        "process_cumulative_peak_rss_kib": 126460
+      },
+      {
+        "ambient_files": 30000,
+        "ambient_logical_bytes": 8388608,
+        "budget_bytes": 134217728,
+        "admitted_payload_bytes": 1024,
+        "startup_admission_ms_excluded_from_ordinary": 298.04217900004915,
+        "ordinary_admission": {
+          "repetitions": 31,
+          "median_ms": 0.867798,
+          "p95_ms": 0.987825,
+          "cpu_median_ms": 0.870089,
+          "cpu_total_ms": 27.917079,
+          "snapshot_count": 0,
+          "snapshot_total_ms": 0
+        },
+        "warm_reads": [
+          {
+            "payload_bytes": 1024,
+            "ordinary": {
+              "repetitions": 300,
+              "median_ms": 0.503327,
+              "p95_ms": 0.669954,
+              "cpu_median_ms": 0.504714,
+              "cpu_total_ms": 142.406381
+            },
+            "read_session": {
+              "repetitions": 300,
+              "median_ms": 0.0264385,
+              "p95_ms": 0.035322,
+              "cpu_median_ms": 0.026908,
+              "cpu_total_ms": 8.568302
+            }
+          },
+          {
+            "payload_bytes": 131072,
+            "ordinary": {
+              "repetitions": 300,
+              "median_ms": 0.392801,
+              "p95_ms": 0.460674,
+              "cpu_median_ms": 0.393596,
+              "cpu_total_ms": 119.773082
+            },
+            "read_session": {
+              "repetitions": 300,
+              "median_ms": 0.0265125,
+              "p95_ms": 0.032844,
+              "cpu_median_ms": 0.0269865,
+              "cpu_total_ms": 8.40629
+            }
+          }
+        ],
+        "all_ambient_files_retained": true,
+        "process_cumulative_peak_rss_kib": 181544
+      }
+    ]
+  }
+}
