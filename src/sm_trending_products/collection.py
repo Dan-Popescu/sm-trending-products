@@ -281,11 +281,31 @@ class SourceCollection:
         payload: dict,
         *,
         evidence: str,
-        retention_days: int,
+        retention_days: int | None = None,
+        source_retention_unlimited: bool = False,
+        source_retention_evidence: str | None = None,
     ) -> dict:
         operation = canonical_operation(source, operation)
-        if not evidence.strip() or retention_days < 1:
-            raise ValueError("Source approval evidence and positive retention are required")
+        if not evidence.strip():
+            raise ValueError("Source approval evidence is required")
+        if (retention_days is None) != source_retention_unlimited or (
+            retention_days is not None and retention_days < 1
+        ):
+            raise ValueError(
+                "Choose positive retention days or explicit unlimited source retention"
+            )
+        if source_retention_evidence is not None and not source_retention_evidence.strip():
+            raise ValueError("Source-wide retention evidence must not be empty")
+        if source_retention_unlimited:
+            if not source_retention_evidence:
+                raise ValueError(
+                    "Unlimited retention requires separate source-wide retention evidence"
+                )
+            schema = self.catalog.one(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=39) AS supported"
+            )
+            if not schema or not schema["supported"]:
+                raise ValueError("Unlimited source retention requires SQL schema 039")
         request = {
             "source": source,
             "account_id": account_id,
@@ -336,6 +356,49 @@ class SourceCollection:
             )
             details = {"category": error.category, "approval_evidence": evidence}
         with self.catalog.transaction() as connection:
+            # A source-wide cap is independent of account access. Serialize its
+            # mutation with expiry/publication and recheck the trusted row after
+            # the HTTP probe, without holding a database lock during that probe.
+            self.catalog.guard_retention(connection, exclusive=True)
+            policy = connection.execute(
+                "SELECT * FROM source_policies WHERE source=%s FOR UPDATE", (source,)
+            ).fetchone()
+            if state == "available":
+                if (
+                    policy
+                    and policy["verified"]
+                    and policy["retention_days"] is not None
+                    and (retention_days is None or retention_days > policy["retention_days"])
+                    and not source_retention_evidence
+                ):
+                    raise ValueError(
+                        "Relaxing a trusted source cap requires "
+                        "separate source-wide retention evidence"
+                    )
+                if (
+                    not policy
+                    or not policy["verified"]
+                    or policy["retention_days"] != retention_days
+                ):
+                    policy_details = dict(details)
+                    if source_retention_evidence:
+                        policy_details.update(
+                            source_retention_evidence=source_retention_evidence,
+                            source_retention_scope="source_wide",
+                        )
+                    connection.execute(
+                        "INSERT INTO source_policies(source,retention_days,verified,details) "
+                        "VALUES(%s,%s,true,%s) ON CONFLICT(source) DO UPDATE SET "
+                        "retention_days=EXCLUDED.retention_days,verified=true,"
+                        "details=EXCLUDED.details,updated_at=clock_timestamp()",
+                        (source, retention_days, Jsonb(redact(policy_details))),
+                    )
+            elif not policy and retention_days is not None:
+                connection.execute(
+                    "INSERT INTO source_policies(source,retention_days,verified,details) "
+                    "VALUES(%s,%s,false,%s)",
+                    (source, retention_days, Jsonb(redact(details))),
+                )
             connection.execute(
                 "INSERT INTO source_capabilities(source,account_id,capability,state,details) "
                 "VALUES(%s,%s,'collect',%s,%s)",
@@ -349,14 +412,6 @@ class SourceCollection:
                     "VALUES(%s,%s,'discovery',%s,%s)",
                     (source, account_id, state, Jsonb(redact(details))),
                 )
-            connection.execute(
-                "INSERT INTO source_policies(source,retention_days,verified,details) "
-                "VALUES(%s,%s,%s,%s) ON CONFLICT(source) DO UPDATE SET "
-                "retention_days=EXCLUDED.retention_days,"
-                "verified=source_policies.verified OR EXCLUDED.verified,"
-                "details=EXCLUDED.details,updated_at=clock_timestamp()",
-                (source, retention_days, state == "available", Jsonb(redact(details))),
-            )
         return {
             "source": source,
             "account_id": account_id,

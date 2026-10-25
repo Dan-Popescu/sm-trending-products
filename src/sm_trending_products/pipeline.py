@@ -861,7 +861,9 @@ class Pipeline:
         payload: dict,
         *,
         evidence: str,
-        retention_days: int,
+        retention_days: int | None = None,
+        source_retention_unlimited: bool = False,
+        source_retention_evidence: str | None = None,
     ) -> dict:
         return self._collection.verify_live(
             source=source,
@@ -870,6 +872,8 @@ class Pipeline:
             payload=payload,
             evidence=evidence,
             retention_days=retention_days,
+            source_retention_unlimited=source_retention_unlimited,
+            source_retention_evidence=source_retention_evidence,
         )
 
     def explore(

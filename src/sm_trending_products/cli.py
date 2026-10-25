@@ -183,7 +183,17 @@ def parser() -> argparse.ArgumentParser:
     live.add_argument(
         "--evidence", required=True, help="Approval/scope evidence reference; never a token"
     )
-    live.add_argument("--retention-days", type=int, required=True)
+    retention_policy = live.add_mutually_exclusive_group(required=True)
+    retention_policy.add_argument("--retention-days", type=int)
+    retention_policy.add_argument(
+        "--source-retention-unlimited",
+        action="store_true",
+        help="Explicitly verified absence of a source expiry cap; requires SQL 039",
+    )
+    live.add_argument(
+        "--source-retention-evidence",
+        help="Separate source-wide evidence; required for unlimited retention or a relaxed cap",
+    )
     replay = command("replay", "Rebuild normalized evidence from immutable raw history")
     replay.add_argument("dataset_id")
     replay.add_argument(
@@ -432,6 +442,8 @@ def dispatch(pipeline, args):
                 read_json(args.payload_file),
                 evidence=args.evidence,
                 retention_days=args.retention_days,
+                source_retention_unlimited=args.source_retention_unlimited,
+                source_retention_evidence=args.source_retention_evidence,
             )
         case "replay":
             return pipeline.replay(args.dataset_id, args.transform_version)

@@ -178,14 +178,14 @@ are reconciled; an older SQL dump must not silently reset deployment authority.
 
 ## Additive capture schema expansions
 
-The current bridge image supports schemas 35 through 38. Migration 036 adds only
+The current bridge image supports schemas 35 through 39. Migration 036 adds only
 the indexed active-task recovery frontier; the durable receipt and task remain
 authoritative. The same recovery query works before the index exists, but bounded
 indexed execution requires expansion. It is not a second queue or evidence store.
 
 For an existing schema-35 host, first qualify and finish the normal signed
 handover to a bridge image declaring support for 35–36, while the database stays
-at 35. The current 35–38 image can bridge these expansions; the earlier 35–36
+at 35. The current 35–39 image can bridge these expansions; the earlier 35–36
 recovery image can bridge migration 036 only. Move every retained
 acquisition/processing role to a compatible image before applying the additive
 migrations through the trusted maintenance procedure.
@@ -224,3 +224,13 @@ discover the gate and write the new representation without a restart. Earlier
 plain archives stay readable and unchanged. Rollback after expansion requires a
 qualified image supporting 38; a previous 35–37 image cannot read the new shared
 format. The controller neither runs migrations nor bypasses signed ranges.
+
+Migration 039 follows 038 and permits an explicitly verified absence of a source
+expiry cap. First complete signed handover of every retained role to an image
+supporting 39 while the database remains on a supported earlier version. Only
+then apply 039 through trusted maintenance and attest an unlimited source
+policy. The bridge rejects unlimited policy writes below 39; all existing finite
+policies retain their values. After expansion, rollback requires a qualified
+image supporting 39 even if no unlimited policy has yet been configured. Older
+code assumes an integer cap and cannot safely read NULL policies. Read the
+[source retention procedure](source-retention.md) before changing any policy.

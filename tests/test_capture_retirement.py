@@ -100,7 +100,10 @@ def test_retirement_rejects_unverified_or_not_yet_elapsed_retention_policy(pipel
     assert path.exists() and pipeline.catalog.all("SELECT * FROM capture_spool_retirements") == []
 
 
-def test_durable_retirement_survives_unlink_failure_and_later_policy_change(pipeline, monkeypatch):
+@pytest.mark.parametrize("days,verified", [(30, False), (None, True)])
+def test_durable_retirement_survives_unlink_failure_and_later_policy_change(
+    pipeline, monkeypatch, days, verified
+):
     acquisition = service(pipeline)
     with one_shot_pages([page()]) as (endpoint, _):
         enqueue(pipeline, endpoint)
@@ -131,11 +134,51 @@ def test_durable_retirement_survives_unlink_failure_and_later_policy_change(pipe
         == "cancelled"
     )
     pipeline.catalog.execute(
-        "UPDATE source_policies SET retention_days=30,verified=false,updated_at=clock_timestamp()"
+        "UPDATE source_policies SET retention_days=%s,verified=%s,updated_at=clock_timestamp()",
+        (days, verified),
     )
     monkeypatch.setattr(acquisition.spool, "_remove_files", original)
     assert acquisition.maintain_spool(1000, apply=True)["retired"] == 1 and not path.exists()
     assert pipeline.catalog.one("SELECT * FROM capture_spool_retirements") == marker
+
+
+def test_unlimited_receipt_rejects_age_certificate_but_explicit_withdrawal_still_applies(pipeline):
+    acquisition = service(pipeline)
+    with one_shot_pages([page()]) as (endpoint, _):
+        enqueue(pipeline, endpoint)
+        task, receipt, path = local_capture(pipeline)
+    old = (now() - timedelta(days=1000)).isoformat()
+    path.write_text(
+        path.read_text()
+        .replace(receipt["capture"]["captured_at"], old)
+        .replace(receipt["capture"]["started_at"], old)
+    )
+    pipeline.catalog.execute(
+        "INSERT INTO source_policies(source,retention_days,verified) VALUES(%s,NULL,true)",
+        (task["source"],),
+    )
+    policy = pipeline.catalog.one(
+        "SELECT * FROM source_policies WHERE source=%s", (task["source"],)
+    )
+    authority = {
+        "retention_days": None,
+        "policy_updated_at": policy["updated_at"].isoformat(),
+        "reservation_grace_seconds": 0,
+        "deadline": None,
+    }
+    with pytest.raises(psycopg.errors.RaiseException, match="verified retention authority"):
+        insert_marker(
+            pipeline, task, receipt, "retention_expiry", authority, "capture_retention_expired"
+        )
+    assert acquisition.maintain_spool(1000, apply=True)["protected"] == 1 and path.exists()
+    acquisition.request_spool_removal("tiktok_display", ACCOUNT, True, "source_opt_out")
+    assert acquisition.maintain_spool(1000, apply=True)["retired"] == 1 and not path.exists()
+    assert (
+        pipeline.catalog.one("SELECT authority_kind FROM capture_spool_retirements")[
+            "authority_kind"
+        ]
+        == "source_revocation"
+    )
 
 
 def test_retiring_old_error_attempt_does_not_cancel_newer_active_attempt(pipeline, monkeypatch):

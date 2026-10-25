@@ -303,6 +303,7 @@ class CaptureSpool:
         grace = self.settings.collector_timeout_seconds if "reservation_version" in receipt else 0
         if (
             policy
+            and policy["retention_days"] is not None
             and acquired_at + timedelta(days=policy["retention_days"], seconds=grace) <= now()
         ):
             return {
