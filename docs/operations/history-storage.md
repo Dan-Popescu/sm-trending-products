@@ -66,6 +66,16 @@ to retain source information. Follow the
 [reader handover procedure](private-release-controller.md#additive-capture-schema-expansions)
 before applying SQL 038 on an existing installation.
 
+SQL 040 adds workload-aware packed stable blocks after another compatible-reader
+handover. The archive compares both encoded plans before upload and selects the
+packed form only when neither new bytes nor PUT count increases. Byte/node
+planning limits fall back to ordinary sharing, with no source or result loss.
+The [qualification report](../verification/adaptive-assessment-archive.md) includes
+the actual cost/read tradeoff: a single historical product can transfer more
+bytes, while 200-product pages need fewer requests and bytes. Current dashboard
+assessments continue reading SQL. The comparison establishes no universal euro
+saving or faster read for every access pattern.
+
 Preserve useful history; this delivery does not introduce voluntary age deletion
 or an S3 lifecycle rule. Source-specific expiry requirements and withdrawals
 remain authoritative. A 30-day analytical lookback limits one calculation's

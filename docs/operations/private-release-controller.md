@@ -178,14 +178,14 @@ are reconciled; an older SQL dump must not silently reset deployment authority.
 
 ## Additive capture schema expansions
 
-The current bridge image supports schemas 35 through 39. Migration 036 adds only
+The current bridge image supports schemas 35 through 40. Migration 036 adds only
 the indexed active-task recovery frontier; the durable receipt and task remain
 authoritative. The same recovery query works before the index exists, but bounded
 indexed execution requires expansion. It is not a second queue or evidence store.
 
 For an existing schema-35 host, first qualify and finish the normal signed
 handover to a bridge image declaring support for 35–36, while the database stays
-at 35. The current 35–39 image can bridge these expansions; the earlier 35–36
+at 35. The current 35–40 image can bridge these expansions; the earlier 35–36
 recovery image can bridge migration 036 only. Move every retained
 acquisition/processing role to a compatible image before applying the additive
 migrations through the trusted maintenance procedure.
@@ -234,3 +234,22 @@ policies retain their values. After expansion, rollback requires a qualified
 image supporting 39 even if no unlimited policy has yet been configured. Older
 code assumes an integer cap and cannot safely read NULL policies. Read the
 [source retention procedure](source-retention.md) before changing any policy.
+
+Migration 040 is a packed-archive reader-format boundary after 039, without a
+second publication registry or source protocol change. Complete the signed
+handover of every retained role to an image supporting 40 while the database
+remains on a supported earlier version, then apply 040 through trusted
+maintenance. Bridge images write plain assessments on 35–37 and ordinary shared
+assessments on 38–39. On 40, the archive may select packed shared blocks only
+when both new stored bytes and PUT count are no greater than the ordinary plan.
+All previous formats remain readable. Source collection and original objects
+are unchanged. After expansion, rollback requires a qualified image declaring
+support for 40; a prior 35–39 signature cannot read the packed representation.
+
+Each of the two disposable pre-upload plans is limited to 4,000,000 charged
+bytes and 1,000 nodes, counting bodies, descriptors and dependencies, including
+reused nodes. The temporary location may be RAM-backed `/tmp`; this is not disk
+offload. On a limit, both plans close and discard metadata before the existing
+bounded ordinary writer uploads. This bounds retained planning data, not the
+complete assessment result or total process RAM. See the
+[qualified measurements and read tradeoff](../verification/adaptive-assessment-archive.md).

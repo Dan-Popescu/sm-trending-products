@@ -174,6 +174,9 @@ def test_remote_verification_detects_a_lost_shared_archive_part(pipeline):
 
 
 def test_clock_only_runs_share_bases_and_sparse_updates_rewrite_selected_parts(pipeline):
+    # Keep the original hash-partition sharing regression as a bridge-format
+    # test. Adaptive layouts have separate cost-plan and insertion coverage.
+    pipeline.catalog.execute("DELETE FROM schema_migrations WHERE version=40")
     body = logical_body(1000)
     first = publish(pipeline, body)
     first_header = stored_header(pipeline, first)
