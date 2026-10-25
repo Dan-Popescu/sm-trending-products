@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from test_cache import BUDGET, Source, history_at, reference, retained_bytes
@@ -19,6 +20,15 @@ from sm_trending_products.cache import CacheCapacityError, _Cache, pin_cached
 def shared_accounting(history):
     cache = _Cache(history)
     return _cache_accounting.accounting(history, (cache.root, cache.pins, cache.downloads))
+
+
+def child_environment():
+    # Pytest's test-module path is process-local; a real Python child needs it
+    # explicitly even when the installed package already resolves without it.
+    paths = [str(Path(__file__).resolve().parent)]
+    if inherited := os.environ.get("PYTHONPATH"):
+        paths.append(inherited)
+    return {**os.environ, "PYTHONPATH": os.pathsep.join(paths)}
 
 
 def count_snapshots(monkeypatch):
@@ -183,7 +193,12 @@ else:
 def test_other_process_commit_or_crash_cannot_leave_an_undercharge(tmp_path, monkeypatch, mode):
     history = history_at(tmp_path, Source({"a": b"a", "b": b"b" * (BUDGET // 2)}))
     history.cached(reference("a", b"a"))
-    subprocess.run([sys.executable, "-c", PEER, str(tmp_path), mode], check=True, timeout=10)
+    subprocess.run(
+        [sys.executable, "-c", PEER, str(tmp_path), mode],
+        check=True,
+        timeout=10,
+        env=child_environment(),
+    )
     calls = count_snapshots(monkeypatch)
     history.cached(reference("b", b"b" * (BUDGET // 2)))
     assert calls
@@ -194,7 +209,12 @@ def test_new_process_charge_can_be_reused_without_a_parent_inventory(tmp_path, m
     body = b"b" * 1024
     history = history_at(tmp_path, Source({"a": b"a", "b": body}))
     history.cached(reference("a", b"a"))
-    subprocess.run([sys.executable, "-c", PEER, str(tmp_path), "commit"], check=True, timeout=10)
+    subprocess.run(
+        [sys.executable, "-c", PEER, str(tmp_path), "commit"],
+        check=True,
+        timeout=10,
+        env=child_environment(),
+    )
     calls = count_snapshots(monkeypatch)
     history.cached(reference("b", body))
     assert calls == []
@@ -253,7 +273,12 @@ assert h.cached(reference('a', b'a')).read_bytes() == b'a'
 
 def test_forked_history_gets_an_independent_watcher_and_initial_inventory(tmp_path):
     # Isolate fork from the test session's PostgreSQL/Moto background threads.
-    subprocess.run([sys.executable, "-c", FORK, str(tmp_path)], check=True, timeout=10)
+    subprocess.run(
+        [sys.executable, "-c", FORK, str(tmp_path)],
+        check=True,
+        timeout=10,
+        env=child_environment(),
+    )
 
 
 def test_pressure_reclaims_bounded_source_headroom_and_amortizes_inventories(tmp_path, monkeypatch):
