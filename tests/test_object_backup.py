@@ -12,7 +12,7 @@ import psycopg
 import pytest
 from botocore.exceptions import ClientError
 
-from sm_trending_products.contracts import now
+from sm_trending_products.contracts import canonical, now
 
 pytestmark = pytest.mark.integration
 snapshot = runpy.run_path(str(Path(__file__).parents[1] / "scripts/object_snapshot.py"))
@@ -298,7 +298,7 @@ def test_guarded_copy_covers_assessments_frozen_decisions_and_staged_recovery(
 
     s3, calls = configure(pipeline, monkeypatch)
     seed_product(pipeline, "before-backup")
-    pipeline.assess(synthetic=True)
+    assessment = pipeline.assess(synthetic=True)
     frozen = pipeline.freeze(now(), synthetic=True)
     recovery = runpy.run_path(str(Path(__file__).parents[1] / "scripts/recovery_fixture.py"))
     staged = recovery["seed"](pipeline)
@@ -319,6 +319,9 @@ def test_guarded_copy_covers_assessments_frozen_decisions_and_staged_recovery(
         assert restored.verify()["ok"]
         assert restored.catalog.export_state() == before
         assert restored.evaluation(frozen["evaluation_id"], True)["payload"] == frozen["result"]
+        assert canonical(restored.assessment_snapshot(assessment["run_id"], True)) == canonical(
+            assessment
+        )
     resumed = recovery["resume"](restored_settings)
     assert resumed["dataset_id"] == staged["dataset_id"]
     assert resumed["source_requests"] == resumed["restart_duplicate_observations"] == 0

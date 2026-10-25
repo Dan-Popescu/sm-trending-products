@@ -106,6 +106,22 @@ class Catalog:
         with self.transaction() as connection:
             return list(connection.execute(query, params).fetchall())
 
+    def stream(self, query: str, params: Sequence[Any] = ()) -> Iterator[dict[str, Any]]:
+        """Read a large inventory in bounded batches without a long source snapshot.
+
+        A held cursor spools the result in PostgreSQL at commit (using database
+        temporary storage if necessary). Remote object checks then retain only
+        256 rows in Python and no source-table MVCC snapshot.
+        """
+        with self.pool.connection() as connection:
+            with connection.cursor(name="catalog_inventory", withhold=True) as cursor:
+                cursor.itersize = 256
+                with connection.transaction():
+                    connection.execute("SET LOCAL statement_timeout='30s'")
+                    connection.execute("SET LOCAL lock_timeout='10s'")
+                    cursor.execute(query, params)
+                yield from cursor
+
     def one(self, query: str, params: Sequence[Any] = ()) -> dict[str, Any] | None:
         with self.transaction() as connection:
             return connection.execute(query, params).fetchone()

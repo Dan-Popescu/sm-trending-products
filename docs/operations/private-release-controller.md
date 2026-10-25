@@ -178,14 +178,14 @@ are reconciled; an older SQL dump must not silently reset deployment authority.
 
 ## Additive capture schema expansions
 
-The current bridge image supports schemas 35 through 37. Migration 036 adds only
+The current bridge image supports schemas 35 through 38. Migration 036 adds only
 the indexed active-task recovery frontier; the durable receipt and task remain
 authoritative. The same recovery query works before the index exists, but bounded
 indexed execution requires expansion. It is not a second queue or evidence store.
 
 For an existing schema-35 host, first qualify and finish the normal signed
 handover to a bridge image declaring support for 35–36, while the database stays
-at 35. The current 35–37 image can bridge both expansions; the earlier 35–36
+at 35. The current 35–38 image can bridge these expansions; the earlier 35–36
 recovery image can bridge migration 036 only. Move every retained
 acquisition/processing role to a compatible image before applying the additive
 migrations through the trusted maintenance procedure.
@@ -213,3 +213,14 @@ configured transaction/statement/lock timeouts and source deadline headroom.
 The controlled 500,000-parent experiment is not a production migration window.
 After expansion, only rollback images declaring support for 37 are admissible;
 neither an older 35-only nor 35–36 signature becomes compatible automatically.
+
+Migration 038 is a reader-format boundary for shared compressed analytical
+archives. It does not rewrite old objects or add a second publication registry.
+First complete the normal signed handover of every retained acquisition and
+processing role to an image declaring support through 38, while SQL remains at
+35, 36 or 37. Bridge binaries continue plain assessment writes before 38. Apply
+038 through trusted maintenance only after handover; subsequent assessments
+discover the gate and write the new representation without a restart. Earlier
+plain archives stay readable and unchanged. Rollback after expansion requires a
+qualified image supporting 38; a previous 35–37 image cannot read the new shared
+format. The controller neither runs migrations nor bypasses signed ranges.

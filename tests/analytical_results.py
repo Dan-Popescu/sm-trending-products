@@ -7,6 +7,12 @@ page so the former inline behavioral assertions retain their independent meaning
 from copy import deepcopy
 
 
+def assessment_key(pipeline, run_id):
+    return pipeline.catalog.one(
+        "SELECT object_key FROM assessment_runs WHERE run_id=%s", (run_id,)
+    )["object_key"]
+
+
 def reference_ids(pipeline, value):
     if isinstance(value, list):
         return value

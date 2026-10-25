@@ -11,6 +11,7 @@ from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from analytical_results import assessment_key
 
 from sm_trending_products.catalog import LeaseLost
 from sm_trending_products.contracts import AssessmentPolicy, Observation, now, utc
@@ -97,7 +98,7 @@ def test_verification_detects_corrupted_assessment_objects_without_using_cache(p
     pipeline.review_link("verify-product", "fixture_import:video:verify")
     assessment = pipeline.assess(now() + timedelta(seconds=1), synthetic=True)
     assert pipeline.verify()["assessments_checked"] == 1
-    key = f"assessments/synthetic/{assessment['run_id']}.json"
+    key = assessment_key(pipeline, assessment["run_id"])
     pipeline.history.client.put_object(Bucket=pipeline.history.bucket, Key=key, Body=b"corrupt")
     result = pipeline.verify()
     assert result["ok"] is False

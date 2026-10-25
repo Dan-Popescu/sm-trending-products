@@ -1,0 +1,116 @@
+{
+  "products": 100,
+  "runs": [
+    {
+      "logical_bytes": 330740,
+      "simple_gzip_bytes": 17130,
+      "plain_encode_cpu_seconds": 0.0028999929999997676,
+      "simple_gzip_cpu_seconds": 0.00443654699999918,
+      "shared_new_physical_bytes": 38405,
+      "shared_new_objects": 19,
+      "shared_put_requests": 19,
+      "shared_upload_bytes": 38405,
+      "shared_stage_cpu_seconds": 0.15677691900000035,
+      "shared_stage_elapsed_seconds": 0.24005956600012723,
+      "shared_commit_cpu_seconds": 0.0009146809999993621,
+      "shared_commit_elapsed_seconds": 0.004025359001389006,
+      "kind": "initial"
+    },
+    {
+      "logical_bytes": 330740,
+      "simple_gzip_bytes": 17130,
+      "plain_encode_cpu_seconds": 0.002981286999999888,
+      "simple_gzip_cpu_seconds": 0.004791120000000149,
+      "shared_new_physical_bytes": 1097,
+      "shared_new_objects": 2,
+      "shared_put_requests": 2,
+      "shared_upload_bytes": 1097,
+      "shared_stage_cpu_seconds": 0.04228435000000008,
+      "shared_stage_elapsed_seconds": 0.054876059000889654,
+      "shared_commit_cpu_seconds": 0.0007296349999998952,
+      "shared_commit_elapsed_seconds": 0.0024843150004016934,
+      "kind": "clock_only"
+    },
+    {
+      "logical_bytes": 330740,
+      "simple_gzip_bytes": 17130,
+      "plain_encode_cpu_seconds": 0.0024590350000002204,
+      "simple_gzip_cpu_seconds": 0.0038898580000008565,
+      "shared_new_physical_bytes": 1097,
+      "shared_new_objects": 2,
+      "shared_put_requests": 2,
+      "shared_upload_bytes": 1097,
+      "shared_stage_cpu_seconds": 0.03297191099999974,
+      "shared_stage_elapsed_seconds": 0.04174772899932577,
+      "shared_commit_cpu_seconds": 0.00072775699999994,
+      "shared_commit_elapsed_seconds": 0.002244663999590557,
+      "kind": "clock_only"
+    },
+    {
+      "logical_bytes": 331661,
+      "simple_gzip_bytes": 17620,
+      "plain_encode_cpu_seconds": 0.003678442000000004,
+      "simple_gzip_cpu_seconds": 0.005199461000000127,
+      "shared_new_physical_bytes": 11989,
+      "shared_new_objects": 7,
+      "shared_put_requests": 7,
+      "shared_upload_bytes": 11989,
+      "shared_stage_cpu_seconds": 0.07444133300000022,
+      "shared_stage_elapsed_seconds": 0.10794782099947042,
+      "shared_commit_cpu_seconds": 0.001016353999999886,
+      "shared_commit_elapsed_seconds": 0.004666544999054167,
+      "kind": "sparse_5_percent"
+    },
+    {
+      "logical_bytes": 331661,
+      "simple_gzip_bytes": 17619,
+      "plain_encode_cpu_seconds": 0.0024470670000003025,
+      "simple_gzip_cpu_seconds": 0.0039746279999999246,
+      "shared_new_physical_bytes": 1190,
+      "shared_new_objects": 2,
+      "shared_put_requests": 2,
+      "shared_upload_bytes": 1190,
+      "shared_stage_cpu_seconds": 0.038009387999999866,
+      "shared_stage_elapsed_seconds": 0.047296403001382714,
+      "shared_commit_cpu_seconds": 0.0008271999999998059,
+      "shared_commit_elapsed_seconds": 0.0024321590008185012,
+      "kind": "clock_only"
+    }
+  ],
+  "scope": "archive only; native PostgreSQL + HTTP Moto, real schema-2 assessment rows",
+  "excluded": [
+    "source collection and source object storage",
+    "feature preparation and input provenance publication",
+    "current assessment SQL writes and alerts",
+    "provider network latency and service charges"
+  ],
+  "totals": {
+    "logical_bytes": 1655542,
+    "simple_gzip_bytes": 86629,
+    "shared_new_physical_bytes": 53778,
+    "shared_new_objects": 32,
+    "shared_put_requests": 32,
+    "shared_upload_bytes": 53778,
+    "shared_stage_cpu_seconds": 0.34448390100000026,
+    "shared_commit_cpu_seconds": 0.004215626999998889
+  },
+  "cold_reads": [
+    {
+      "requested_products": 1,
+      "returned_products": 1,
+      "get_requests": 4,
+      "download_bytes": 5010,
+      "cpu_seconds": 0.030678810999999584,
+      "elapsed_seconds": 0.035331846000190126
+    },
+    {
+      "requested_products": 200,
+      "returned_products": 100,
+      "get_requests": 19,
+      "download_bytes": 38890,
+      "cpu_seconds": 0.10671374700000058,
+      "elapsed_seconds": 0.11237463899851718
+    }
+  ],
+  "exact_snapshot_verified": true
+}

@@ -37,6 +37,28 @@ and alert requirements before choosing the next interval.
 
 ## Preservation and cold storage
 
+New assessments on SQL 038 use gzip-compressed shared archives. The logical
+schema-2 result, run ID, rank order, clocks and scores remain exact. Stable
+product parts share immutable objects; changing rank/age/normalized values use
+separate blocks. The archive module reconstructs complete snapshots explicitly
+and returns selected rank pages of at most 200 products. Reads follow selected
+hash-leaf paths; each stable leaf holds at most 100 records and 256,000 decoded
+bytes. Leaves can contain unrequested products, and a page can touch all stable
+leaves of a small universe. This bounds individual reads and avoids full result
+reconstruction; it does not promise exactly 200 decoded records. See the
+[measured storage and request tradeoffs](../verification/assessment-archive.md).
+Old plain JSON snapshots remain readable. Existing objects are not rewritten.
+`assessment_runs.object_key` is the authoritative pointer; a logical run ID is
+not the checksum of compressed bytes. Backup and verification use the physical
+SHA256 and byte size registered in the existing publication catalog.
+
+All source dependencies remain attached to the same authoritative graph. A
+withdrawal invalidates affected archives and shared parts through the existing
+retirement process. Compression and sharing do not grant an independent right
+to retain source information. Follow the
+[reader handover procedure](private-release-controller.md#additive-capture-schema-expansions)
+before applying SQL 038 on an existing installation.
+
 Preserve useful history; this delivery does not introduce voluntary age deletion
 or an S3 lifecycle rule. Source-specific expiry requirements and withdrawals
 remain authoritative. A 30-day analytical lookback limits one calculation's
@@ -50,6 +72,10 @@ closure.
 
 `verify` currently downloads committed source objects and valid historical
 ranking roots. A fresh full object backup downloads the required remote objects.
+For new shared archives, verification also checks reachable committed parts.
+Those descriptors stream in batches of 256 from a held PostgreSQL cursor, so
+Python does not retain the full shared inventory. PostgreSQL may use temporary
+disk to materialize that inventory; its source snapshot ends before remote GETs.
 Incremental backups can reuse verified unchanged bytes from a local base.
 Restoring a complete local backup reads those copies and uploads them to the
 destination; it does not require access to the original bucket. Before using a

@@ -232,7 +232,10 @@ def _expected_objects(connection, db: sqlite3.Connection) -> None:
                         expect(obj["key"], obj["sha256"], obj.get("bytes"), state == "committed")
             cursor.execute("SELECT object_key,run_id FROM assessment_runs WHERE NOT invalidated")
             for key, checksum in cursor:
-                expect(key, checksum, None, True)
+                # Legacy plain schema-2 bytes hash to their logical run id.
+                # Compressed/shared archives use authoritative physical hashes
+                # below; a run id must never be compared to gzip bytes.
+                expect(key, checksum if key.endswith(".json") else None, None, True)
             # to_jsonb supports pre-019 recovery images whose old rows/schema do
             # not yet carry checksums. Existence remains mandatory for all
             # committed nodes, including transitive assessment provenance.

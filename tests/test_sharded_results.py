@@ -8,7 +8,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from analytical_results import backtest_reports, backtest_snapshots, reference_ids
+from analytical_results import assessment_key, backtest_reports, backtest_snapshots, reference_ids
 from test_evaluation_delivery import outcome_config, seed_product
 
 import sm_trending_products.provenance as provenance_module
@@ -103,8 +103,8 @@ def test_unchanged_provenance_reuses_nodes_and_an_append_rewrites_one_day_path(p
     first = pipeline.assess(cutoff, True)
     before = pipeline.history.metrics["put_requests"]
     second = pipeline.assess(cutoff + timedelta(minutes=1), True)
-    # Only the new, compact assessment publication is uploaded.
-    assert pipeline.history.metrics["put_requests"] - before == 1
+    # Only the changing rank block and compact archive header are uploaded.
+    assert pipeline.history.metrics["put_requests"] - before == 2
     assert first["rows"][0]["evidence_refs"] == second["rows"][0]["evidence_refs"]
     new_cutoff = cutoff + timedelta(hours=1)
     pipeline.import_records(
@@ -124,11 +124,13 @@ def test_unchanged_provenance_reuses_nodes_and_an_append_rewrites_one_day_path(p
         synthetic=True,
     )
     old_nodes = pipeline.catalog.one(
-        "SELECT count(*) AS count FROM derived_publications WHERE object_key LIKE 'provenance/%%'"
+        "SELECT count(*) AS count FROM derived_publications "
+        "WHERE object_key LIKE 'provenance/%%.json'"
     )["count"]
     updated = pipeline.assess(new_cutoff, True)
     new_nodes = pipeline.catalog.one(
-        "SELECT count(*) AS count FROM derived_publications WHERE object_key LIKE 'provenance/%%'"
+        "SELECT count(*) AS count FROM derived_publications "
+        "WHERE object_key LIKE 'provenance/%%.json'"
     )["count"]
     assert updated["rows"][0]["evidence_refs"]["count"] == 2420
     assert 1 <= new_nodes - old_nodes <= 4
@@ -428,15 +430,17 @@ def test_unchanged_multi_product_publications_attach_only_the_existing_combined_
     before = pipeline.catalog.one("SELECT count(*) AS count FROM derived_artifact_edges")["count"]
     second = pipeline.assess(cutoff + timedelta(seconds=1), True)
     after = pipeline.catalog.one("SELECT count(*) AS count FROM derived_artifact_edges")["count"]
-    assert after - before == 1
+    assert after - before == 3
     combined_key = second["input_provenance"]["root"]["key"]
-    parent = f"assessments/synthetic/{second['run_id']}.json"
-    assert pipeline.catalog.all(
+    parent = assessment_key(pipeline, second["run_id"])
+    children = pipeline.catalog.all(
         "SELECT c.object_key AS child_key FROM derived_artifact_edges e "
         "JOIN derived_publications p ON p.object_id=e.parent_id "
         "JOIN derived_publications c ON c.object_id=e.child_id WHERE p.object_key=%s",
         (parent,),
-    ) == [{"child_key": combined_key}]
+    )
+    assert len(children) == 3
+    assert {"child_key": combined_key} in children
     assert second["input_provenance"] == first["input_provenance"]
     # Every displayed root remains reachable even though direct duplicate edges vanished.
     reachable = pipeline.catalog.all(

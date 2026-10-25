@@ -4,7 +4,7 @@ from datetime import timedelta
 from time import perf_counter
 
 import pytest
-from analytical_results import snapshot_semantics
+from analytical_results import assessment_key, snapshot_semantics
 from test_feature_projection import video
 from test_feature_windows import count_source_pins, rolling_case
 
@@ -40,7 +40,7 @@ def test_pipeline_future_hits_skip_history_and_full_assessor_and_survive_restart
         pipeline.catalog.one(
             "SELECT count(*) AS count FROM derived_artifact_edges e "
             "JOIN derived_publications p ON p.object_id=e.parent_id WHERE p.object_key=%s",
-            (f"assessments/synthetic/{second['run_id']}.json",),
+            (assessment_key(pipeline, second["run_id"]),),
         )["count"]
         > 0
     )
