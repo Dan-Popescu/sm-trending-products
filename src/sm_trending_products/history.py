@@ -25,7 +25,9 @@ from psycopg.types.json import Jsonb
 from .analysis_batches import RowBudgetExceeded
 from .cache import cached_path, evict_cache, file_digest, pin_cached, read_session
 from .catalog import Catalog
+from .compaction_encoding import encode_compaction
 from .contracts import Observation, canonical, digest, observation_period, utc
+from .observation_codec import decode_columnar_observation
 from .settings import Settings
 
 
@@ -193,6 +195,7 @@ class History:
         *,
         physical_buckets: int | None = None,
         target_rows_per_file: int | None = None,
+        compaction: bool = False,
     ) -> tuple[list[tuple[dict, bytes]], int]:
         """Size physical files independently from the configured maximum hash fanout."""
         maximum = partition_buckets or self.settings.history_partition_buckets
@@ -220,7 +223,7 @@ class History:
                 period is not None or not period_fields.intersection(row.attributes)
                 for row, period in zip(part, periods, strict=True)
             )
-            body = self.encode(part)
+            body = encode_compaction(part, self.encode) if compaction else self.encode(part)
             checksum = hashlib.sha256(body).hexdigest()
             key = f"normalized/{prefix}/bucket={bucket:04d}/{checksum}.parquet"
             objects.append(
@@ -628,10 +631,7 @@ class History:
 
     @staticmethod
     def _decode(row: dict) -> Observation:
-        row.pop("entity_key")
-        for name in ("metrics", "attributes", "missing_fields"):
-            row[name] = json.loads(row.pop(f"{name}_json"))
-        return Observation.model_validate(row)
+        return decode_columnar_observation(row)
 
     @staticmethod
     def _payload(observation: Observation) -> dict:
