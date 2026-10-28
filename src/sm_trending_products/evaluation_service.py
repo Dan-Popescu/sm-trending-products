@@ -198,7 +198,9 @@ class EvaluationService:
         actionable = [
             day
             for day in config.horizon_days
-            if any(delay < day for delay in config.launch_delay_days)
+            if any(
+                config.delay_duration(delay) < timedelta(days=day) for delay in config.launch_delays
+            )
         ]
         if not actionable or payload["status"] == "insufficient_history":
             return decision_time
@@ -308,7 +310,7 @@ class EvaluationService:
                     "scenarios": [
                         {
                             "horizon_days": scenario["horizon_days"],
-                            "launch_delay_days": scenario["launch_delay_days"],
+                            configuration.delay_field: scenario[configuration.delay_field],
                             "methods": {
                                 method: {
                                     "outcomes": [
@@ -461,7 +463,9 @@ class EvaluationService:
         configuration = EvaluationConfig.model_validate(snapshot["config"])
         decision_time, cutoff = utc(snapshot["decision_time"]), utc(as_of)
         gap = timedelta(hours=configuration.max_boundary_gap_hours)
-        first_action = decision_time + timedelta(days=min(configuration.launch_delay_days))
+        first_action = decision_time + configuration.delay_duration(
+            min(configuration.launch_delays)
+        )
         final_horizon = decision_time + timedelta(days=max(configuration.horizon_days))
         since, until = first_action - gap, min(cutoff, final_horizon + gap)
         datasets = set(dependencies)

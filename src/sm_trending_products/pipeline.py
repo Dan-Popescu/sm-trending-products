@@ -115,6 +115,11 @@ class Pipeline:
 
         return CommerceDelivery(self.catalog)
 
+    def trend_insights(self):
+        from .trend_insights import TrendInsights
+
+        return TrendInsights(self.catalog, self.history)
+
     def initialize(self, create_bucket: bool = False) -> dict:
         self.catalog.initialize()
         self.history.initialize(create_bucket)

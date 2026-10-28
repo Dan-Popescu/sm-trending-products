@@ -37,6 +37,8 @@ class DashboardPipeline(Protocol):
 
     def commerce_delivery(self) -> Any: ...
 
+    def trend_insights(self) -> Any: ...
+
     def products(
         self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
     ) -> list[Row]: ...
@@ -767,6 +769,10 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
         )
         if view == "Opportunities":
             _opportunities(pipeline, products, as_of, synthetic)
+            if st.checkbox("Inspect multi-day product growth", value=False):
+                from sm_trending_products.trend_dashboard import render_trends
+
+                render_trends(pipeline.trend_insights(), products, as_of, synthetic)
         else:
             _catalog(pipeline, products, as_of, synthetic)
     elif view == "Launch preparation":
