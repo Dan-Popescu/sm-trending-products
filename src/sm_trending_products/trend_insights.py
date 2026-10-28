@@ -15,6 +15,7 @@ from typing import Any
 from .analytics import _counter_windows, _CounterWindow
 from .catalog import Catalog
 from .contracts import Capability, Observation, digest, utc
+from .creator_identity import CreatorIdentity, creator_identity
 from .evaluation import eligible_evidence
 from .history import History
 from .identity_rules import LINK_STATE_CTES
@@ -37,9 +38,9 @@ def _window(
     covered_seconds = positive_seconds = 0.0
     entity_coverage: list[float] = []
     entity_gains: dict[str, int] = {}
-    creator_gains: dict[str, int] = defaultdict(int)
+    creator_gains: dict[CreatorIdentity, int] = defaultdict(int)
     creative_gains: dict[str, int] = defaultdict(int)
-    creators: set[str] = set()
+    creators: set[CreatorIdentity] = set()
     fingerprints: set[str] = set()
     references: set[str] = set()
     fingerprinted = unknown_creators = 0
@@ -95,10 +96,10 @@ def _window(
             entity_peaks[key] = max(rates) / (gain / (captured / 3600))
         if entity_intervals >= 3 and captured / (hours * 3600) >= 0.5:
             adequately_sampled.add(key)
-        creator = latest.attributes.get("creator_id") or latest.account_id
-        if creator:
-            creators.add(str(creator))
-            creator_gains[str(creator)] += gain
+        creator = creator_identity(latest)
+        if creator is not None:
+            creators.add(creator)
+            creator_gains[creator] += gain
         else:
             unknown_creators += 1
         fingerprint = latest.attributes.get("creative_fingerprint")

@@ -35,7 +35,7 @@ from .contracts import AssessmentPolicy, Observation, Product, canonical, digest
 from .history import History
 from .observation_codec import decode_columnar_observation as _decode_window
 
-PROJECTION_VERSION = "exact-product-features-v3"
+PROJECTION_VERSION = "exact-product-features-v4"
 MAX_PROJECTION_BYTES = 1_000_000
 MAX_WINDOW_BYTES = 64 * 1024 * 1024
 WINDOW_ARROW_BATCH_ROWS = 1000
