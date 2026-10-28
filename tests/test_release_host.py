@@ -168,3 +168,139 @@ raise SystemExit(1)
         ReleaseTrust("expected-workflow", ("ghcr.io/another/repo",), str(verifier)).verify(
             payload, {"method": "cosign_bundle", "bundle": {}}
         )
+
+
+def test_processing_role_start_is_digest_pinned_idempotent_and_rejects_protected_roles(
+    tmp_path, monkeypatch
+):
+    image = manifest().image
+    trace, state = tmp_path / "role-trace.jsonl", tmp_path / "role-state.json"
+    state.write_text(json.dumps({"exists": False}))
+    binary = tmp_path / "docker-role"
+    binary.write_text(
+        "#!"
+        + sys.executable
+        + "\n"
+        + """
+import json,os,sys
+from pathlib import Path
+args=sys.argv[1:]
+assert args.pop(0)=='--host=unix:///var/run/docker.sock'
+with Path(os.environ['TRACE']).open('a') as handle:
+    handle.write(json.dumps(args)+'\\n')
+state=Path(os.environ['STATE'])
+value=json.loads(state.read_text())
+if args[0]=='compose' and 'ps' in args:
+    assert args[-1]=='dashboard'
+    if value['exists']: print('c'*64)
+elif args[0]=='compose' and 'up' in args:
+    assert args[-1]=='dashboard'
+    assert '--no-deps' in args and '--no-build' in args and '--pull' in args
+    value.update(exists=True,image=os.environ['DASHBOARD_IMAGE'])
+    state.write_text(json.dumps(value))
+elif args[0]=='inspect':
+    print(json.dumps(value['image']));print('true');print('null')
+else: raise SystemExit(9)
+"""
+    )
+    binary.chmod(0o700)
+    monkeypatch.setenv("TRACE", str(trace))
+    monkeypatch.setenv("STATE", str(state))
+    host = ComposeReleaseHost(
+        project="fixture",
+        compose_file=tmp_path / "compose.yaml",
+        env_file=tmp_path / "runtime.env",
+        lock_directory=tmp_path,
+        docker=str(binary),
+        slot_images={slot: image for slot in ("blue", "green")},
+        slot_workers={"blue": "old", "green": "candidate"},
+        role_images={"DASHBOARD_IMAGE": image},
+    )
+    assert host.start_role("dashboard", image).identifier == "c" * 64
+    assert host.start_role("dashboard", image).identifier == "c" * 64
+    running = host.running_role("dashboard", image)
+    assert running is not None and running.identifier == "c" * 64
+    before = trace.read_bytes()
+    with pytest.raises(ReleaseBlocked, match="processing_service_not_allowed"):
+        host.start_role("postgres", image)
+    with pytest.raises(ReleaseBlocked, match="processing_role_configuration_mismatch"):
+        host.start_role("dashboard", image.replace("b" * 64, "a" * 64))
+    assert trace.read_bytes() == before
+    commands = [json.loads(line) for line in before.decode().splitlines()]
+    assert sum("up" in command for command in commands) == 1
+    assert len(commands) == 10  # Same two reads per running-role check, no added inspection.
+
+
+def test_planner_probe_rejects_raw_container_ids_before_any_command(tmp_path, monkeypatch):
+    commands = []
+
+    def command(self, arguments, **kwargs):
+        commands.append(arguments)
+        return '{"status":"not_due"}'
+
+    monkeypatch.setattr(ComposeReleaseHost, "_command", command)
+    image = manifest().image
+    host = ComposeReleaseHost(
+        project="fixture",
+        compose_file=tmp_path / "compose.yaml",
+        env_file=tmp_path / "runtime.env",
+        lock_directory=tmp_path,
+        slot_images={slot: image for slot in ("blue", "green")},
+        slot_workers={"blue": "old", "green": "candidate"},
+    )
+    with pytest.raises(ReleaseBlocked, match="processing_service_not_allowed"):
+        host.planner_probe("c" * 64)
+    assert commands == []
+
+
+def test_planner_role_handles_preserve_journal_identity_and_reject_wrong_scopes(
+    tmp_path, monkeypatch
+):
+    commands = []
+
+    def command(self, arguments, **kwargs):
+        commands.append(arguments)
+        if arguments[0] == "compose":
+            return "c" * 64 if arguments[-1] == "capture-planner" else "d" * 64
+        if arguments[0] == "inspect":
+            return '"planner-host"\n"2026-10-28T00:00:00Z"'
+        if arguments[0] == "exec":
+            return '{"status":"not_due"}'
+        if arguments[0] == "stop":
+            return ""
+        raise AssertionError(arguments)
+
+    monkeypatch.setattr(ComposeReleaseHost, "_command", command)
+    image = manifest().image
+    host = ComposeReleaseHost(
+        project="fixture",
+        compose_file=tmp_path / "compose.yaml",
+        env_file=tmp_path / "runtime.env",
+        lock_directory=tmp_path,
+        slot_images={slot: image for slot in ("blue", "green")},
+        slot_workers={"blue": "old", "green": "candidate"},
+    )
+    planner = host.role_container("capture-planner")
+    replayable = host.role_container("dashboard")
+    assert planner is not None and replayable is not None
+    assert host.planner_identity(planner) == {
+        "container": "c" * 64,
+        "hostname": "planner-host",
+        "started_at": "2026-10-28T00:00:00Z",
+    }
+    assert host.planner_probe(planner) == {"status": "not_due"}
+    host.stop_planner(planner)
+    assert len(commands) == 5  # Two selections, one identity read, probe and stop.
+    assert commands[-1] == ["stop", "--time=-1", "c" * 64]
+    before = commands.copy()
+    invalid = [
+        "c" * 64,
+        replayable,
+        replace(planner, project="other"),
+        replace(planner, service="postgres"),
+    ]
+    for operation in (host.planner_identity, host.planner_probe, host.stop_planner):
+        for container in invalid:
+            with pytest.raises(ReleaseBlocked, match="processing_service_not_allowed"):
+                operation(container)
+    assert commands == before

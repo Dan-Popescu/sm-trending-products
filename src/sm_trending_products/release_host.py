@@ -1,43 +1,119 @@
-"""Host-only, allowlisted Compose operations for two preconfigured collector slots."""
+"""Host-only role operations, qualified identities and analytical CPU controls."""
 
 from __future__ import annotations
 
 import fcntl
 import json
+import math
 import os
 import re
 import subprocess
 import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .contracts import digest, utc
 from .release_control import IMAGE_DIGEST_PATTERN, ReleaseBlocked, ReleaseManifest
+from .resource_cpu_state import (
+    CPU_VARIABLES,
+    INDEPENDENT_SERVICES,
+    CpuContainer,
+    independent_environment,
+    load_cpu_policy,
+)
 
 if TYPE_CHECKING:
     from .release_capacity import HostCapacity
 
 SLOT_SERVICES = {"blue": "worker", "green": "worker-green"}
+PROCESSING_SERVICES = ("normalizer", "dagster-daemon", "dagster-webserver", "dashboard")
+PLANNERS = {"blue": "capture-planner", "green": "capture-planner-green"}
+ROLE_VARIABLES = {
+    "normalizer": "NORMALIZER_IMAGE",
+    "dagster-daemon": "ANALYTICS_IMAGE",
+    "dagster-webserver": "ANALYTICS_IMAGE",
+    "dashboard": "DASHBOARD_IMAGE",
+}
 ROLE_IMAGE_VARIABLES = frozenset(
-    {
-        "NORMALIZER_IMAGE",
-        "ANALYTICS_IMAGE",
-        "DASHBOARD_IMAGE",
-        "ACQUISITION_PLANNER_BLUE_IMAGE",
-        "ACQUISITION_PLANNER_GREEN_IMAGE",
-    }
+    (*ROLE_VARIABLES.values(), *(f"ACQUISITION_PLANNER_{slot.upper()}_IMAGE" for slot in PLANNERS))
 )
+PROTECTED_SERVICES = {
+    "worker",
+    "worker-green",
+    "capture-planner",
+    "capture-planner-green",
+    "normalizer",
+    "postgres",
+    "objectstore",
+}
+# Resource fields are projected explicitly: logging credentials and environment never enter output.
+RESOURCE_FIELDS = (
+    "Memory",
+    "MemorySwap",
+    "MemoryReservation",
+    "MemorySwappiness",
+    "OomKillDisable",
+    "NanoCpus",
+    "CpuQuota",
+    "CpuPeriod",
+    "CpuShares",
+    "CpuRealtimePeriod",
+    "CpuRealtimeRuntime",
+    "CpusetCpus",
+    "CpusetMems",
+    "PidsLimit",
+    "BlkioWeight",
+)
+# Inspect one boolean only, never Config.Env. Duplicate/case-variant keys are ambiguous
+# because Python settings are case-insensitive; refuse them even if one value is true.
+INDEPENDENT_FORMAT = (
+    "{{ $independent := false }}{{ $seen := false }}{{ range .Config.Env }}"
+    '{{ if eq (lower (index (split . "=") 0)) "acquisition_enabled" }}'
+    "{{ if $seen }}{{ $independent = false }}"
+    '{{ else }}{{ $independent = eq . "ACQUISITION_ENABLED=true" }}{{ end }}'
+    "{{ $seen = true }}{{ end }}{{ end }}{{json $independent}}"
+)
+INSPECT_FORMAT = (
+    "\t".join(
+        "{{json " + field + "}}"
+        for field in (
+            ".Id",
+            '(index .Config.Labels "com.docker.compose.project")',
+            '(index .Config.Labels "com.docker.compose.service")',
+            '(index .Config.Labels "com.docker.compose.oneoff")',
+            ".Config.Image",
+            ".State.Running",
+            ".State.Pid",
+            ".State.StartedAt",
+            ".RestartCount",
+        )
+    )
+    + "\t{"
+    + ",".join('"' + key + '":{{json .HostConfig.' + key + "}}" for key in RESOURCE_FIELDS)
+    + "}\t"
+    + INDEPENDENT_FORMAT
+)
+
+
+@dataclass(frozen=True)
+class RoleContainer:
+    """An immutable container selection bound to its Compose project and role."""
+
+    project: str
+    service: str
+    identifier: str
 
 
 @dataclass(frozen=True)
 class ComposeReleaseHost:
     """Configuration belongs to the host, never to an untrusted release manifest.
 
-    Only capture slots are mutable. PostgreSQL, network, volumes, planner and
-    analytical services remain untouched. No shell, compose-down, volume removal
-    or arbitrary migration command is exposed through this interface.
+    Capture replacement, replayable-role refresh and analytical CPU changes use
+    fixed operations. PostgreSQL, networks and volumes remain untouched. No shell,
+    compose-down, arbitrary command or migration is exposed by this interface.
     """
 
     project: str
@@ -231,6 +307,292 @@ class ComposeReleaseHost:
             return image, running, worker
         except (ValueError, TypeError):
             raise ReleaseBlocked("capture_slot_identity_unavailable") from None
+
+    def role_container(self, service: str) -> RoleContainer | None:
+        self._role_service(service)
+        containers = self._command([*self._compose(), "ps", "--all", "--quiet", service]).split()
+        if len(containers) > 1 or any(
+            not re.fullmatch(r"[a-f0-9]{12,64}", value) for value in containers
+        ):
+            raise ReleaseBlocked("processing_container_ambiguous")
+        return RoleContainer(self.project, service, containers[0]) if containers else None
+
+    def running_role(self, service: str, image: str) -> RoleContainer | None:
+        container = self.role_container(service)
+        if container and self._identity(container.identifier)[:2] == (image, True):
+            return container
+        return None
+
+    def admit_role(self, service: str) -> None:
+        self._role_service(service)
+        capacity = self.capacity
+        policy = load_cpu_policy(self.lock_directory, self.project)
+        require_independent = bool(
+            policy and policy.mode == "economy" and service in INDEPENDENT_SERVICES
+        )
+        if capacity is None and not require_independent:
+            return
+        # Compose is private host configuration. Discard its raw output, which
+        # can include environment secrets; retain only explicit numeric limits.
+        try:
+            config = json.loads(
+                self._command([*self._compose(), "config", "--format", "json", service])
+            )["services"][service]
+            # The trusted configuration can change between resumable refresh
+            # attempts. Never create a legacy source collector with economy pins.
+            if require_independent and not independent_environment(config.get("environment")):
+                raise ReleaseBlocked("cpu_legacy_collection_active")
+            if capacity is None:
+                return
+            memory, cpus = int(config["mem_limit"]), float(config["cpus"])
+            if memory <= 0 or not math.isfinite(cpus) or cpus <= 0:
+                raise ValueError("Unbounded role")
+        except (KeyError, ValueError, TypeError):
+            raise ReleaseBlocked("processing_role_limits_unavailable") from None
+        budget = replace(
+            capacity.budget,
+            candidate_memory_bytes=max(capacity.budget.candidate_memory_bytes, memory),
+            candidate_cpus=max(capacity.budget.candidate_cpus, cpus),
+        )
+        replace(capacity, budget=budget).admit()
+
+    def planner_identity(self, container: RoleContainer) -> dict:
+        identifier = self._planner_container(container)
+        values = self._command(
+            [
+                "inspect",
+                "--format",
+                "{{json .Config.Hostname}}\n{{json .State.StartedAt}}",
+                identifier,
+            ]
+        ).splitlines()
+        try:
+            hostname, started = (json.loads(value) for value in values)
+            if not isinstance(hostname, str) or not re.fullmatch(
+                r"[A-Za-z0-9_.-]{1,253}", hostname
+            ):
+                raise ValueError("Invalid planner identity")
+            utc(started)
+        except (ValueError, TypeError):
+            raise ReleaseBlocked("processing_planner_identity_unavailable") from None
+        return {"container": identifier, "hostname": hostname, "started_at": started}
+
+    def _planner_container(self, container: RoleContainer) -> str:
+        if (
+            not isinstance(container, RoleContainer)
+            or container.project != self.project
+            or container.service not in PLANNERS.values()
+            or not isinstance(container.identifier, str)
+            or not re.fullmatch(r"[a-f0-9]{12,64}", container.identifier)
+        ):
+            raise ReleaseBlocked("processing_service_not_allowed")
+        return container.identifier
+
+    @staticmethod
+    def _role_service(service: str) -> None:
+        if service not in (*PROCESSING_SERVICES, *PLANNERS.values()):
+            raise ReleaseBlocked("processing_service_not_allowed")
+
+    def start_role(self, service: str, image: str) -> RoleContainer:
+        """Start one pinned replayable role, preserving an already running identity."""
+        self._role_service(service)
+        variable = ROLE_VARIABLES.get(service)
+        if variable is None:
+            slot = "BLUE" if service == PLANNERS["blue"] else "GREEN"
+            variable = f"ACQUISITION_PLANNER_{slot}_IMAGE"
+        if (self.role_images or {}).get(variable) != image:
+            raise ReleaseBlocked("processing_role_configuration_mismatch")
+        if not self.running_role(service, image):
+            self.admit_role(service)
+            self._command(
+                [
+                    *self._compose(),
+                    "up",
+                    "--detach",
+                    "--no-deps",
+                    "--no-build",
+                    "--pull",
+                    "never",
+                    service,
+                ]
+            )
+        container = self.running_role(service, image)
+        if not container:
+            raise ReleaseBlocked("processing_container_unavailable")
+        return container
+
+    def ensure_image(self, image: str) -> None:
+        """Reuse a verified local digest, or admit, pull and verify the same image."""
+        if not re.fullmatch(IMAGE_DIGEST_PATTERN, image):
+            raise ReleaseBlocked("processing_role_configuration_mismatch")
+        command = ["image", "inspect", "--format", "{{json .RepoDigests}}", image]
+        try:
+            images = json.loads(self._command(command))
+        except ReleaseBlocked as error:
+            if str(error) != "deployment_host_command_failed":
+                raise
+            images = None
+        if not isinstance(images, list) or image not in images:
+            if self.capacity is not None:
+                self.capacity.admit()
+            self._command(["pull", image], timeout=300)
+            images = json.loads(self._command(command))
+            if not isinstance(images, list) or image not in images:
+                raise ReleaseBlocked("image_digest_mismatch")
+
+    def planner_image(self, service: str) -> str:
+        if service not in PLANNERS.values():
+            raise ReleaseBlocked("processing_service_not_allowed")
+        container = self.role_container(service)
+        if not container:
+            raise ReleaseBlocked("processing_planner_bootstrap_required")
+        image, running, _ = self._identity(container.identifier)
+        if not running:
+            raise ReleaseBlocked("processing_planner_unavailable")
+        return image
+
+    def planner_probe(self, container: RoleContainer) -> dict:
+        """Run the fixed coordinator probe without exposing a command surface."""
+        identifier = self._planner_container(container)
+        return json.loads(
+            self._command(
+                ["exec", identifier, "python", "-m", "sm_trending_products.capture_coordinator"]
+            )
+        )
+
+    def stop_planner(self, container: RoleContainer) -> None:
+        self._command(["stop", "--time=-1", self._planner_container(container)])
+
+    def _running_role_identifiers(self) -> list[str]:
+        identifiers = self._command(
+            [
+                "ps",
+                "--quiet",
+                "--no-trunc",
+                "--filter",
+                f"label=com.docker.compose.project={self.project}",
+            ]
+        ).split()
+        if len(identifiers) > 32 or any(
+            not re.fullmatch(r"[a-f0-9]{64}", value) for value in identifiers
+        ):
+            raise ReleaseBlocked("cpu_inventory_unavailable")
+        return identifiers
+
+    def cpu_inventory(self) -> tuple[CpuContainer, ...]:
+        identifiers = self._running_role_identifiers()
+        if not identifiers:
+            if self._running_role_identifiers():
+                raise ReleaseBlocked("cpu_inventory_invalid")
+            raise ReleaseBlocked("cpu_inventory_incomplete")
+        try:
+            body = self._command(["inspect", "--format", INSPECT_FORMAT, *identifiers])
+            if len(body) > 128 * 1024:
+                raise ValueError("CPU inventory too large")
+            rows = body.splitlines()
+            result = []
+            for line in rows:
+                (
+                    identifier,
+                    project,
+                    service,
+                    oneoff,
+                    image,
+                    running,
+                    pid,
+                    started,
+                    restarts,
+                    resources,
+                    independent,
+                ) = [json.loads(value) for value in line.split("\t")]
+                if (
+                    identifier not in identifiers
+                    or project != self.project
+                    or service not in PROTECTED_SERVICES | CPU_VARIABLES.keys()
+                    or oneoff not in {"False", "false", None}
+                    or running is not True
+                    or not resources["Memory"] > 0
+                    or not resources["NanoCpus"] > 0
+                    or resources.get("CpuQuota", 0) != 0
+                    or resources.get("CpuPeriod", 0) != 0
+                    or resources.get("CpusetCpus", "")
+                ):
+                    raise ValueError("Unqualified CPU inventory")
+                config = dict(resources)
+                nanocpus = config.pop("NanoCpus")
+                result.append(
+                    CpuContainer(
+                        identifier=identifier,
+                        service=service,
+                        pid=pid,
+                        started_at=started,
+                        restarts=restarts,
+                        image=image,
+                        resource_sha256=digest(config),
+                        nanocpus=nanocpus,
+                        independent_acquisition=independent,
+                    )
+                )
+            services = [row.service for row in result]
+            if {row.identifier for row in result} != set(identifiers) or len(set(services)) != len(
+                services
+            ):
+                raise ValueError("Ambiguous CPU inventory")
+            after = self._running_role_identifiers()
+            if sorted(after) != sorted(identifiers):
+                raise ValueError("CPU inventory changed")
+            if (
+                not set(CPU_VARIABLES) <= set(services)
+                or "postgres" not in services
+                or not {"worker", "worker-green"} & set(services)
+            ):
+                raise ReleaseBlocked("cpu_inventory_incomplete")
+            return tuple(sorted(result, key=lambda row: row.service))
+        except (ValueError, KeyError, TypeError):
+            raise ReleaseBlocked("cpu_inventory_invalid") from None
+
+    def qualify_cpu_pins(self, quotas: dict[str, int], *, require_independent: bool) -> None:
+        # The adapter permits prospective pins only for this read-only config command.
+        try:
+            configured = json.loads(
+                self._command(
+                    [
+                        *self._compose(),
+                        "config",
+                        "--format",
+                        "json",
+                    ],
+                    cpu_overrides=quotas,
+                )
+            )["services"]
+            values = {key: round(float(configured[key]["cpus"]) * 10**9) for key in quotas}
+            if values != quotas:
+                raise ValueError("Compose ignores CPU pins")
+            if require_independent and not all(
+                independent_environment(configured[service].get("environment"))
+                for service in INDEPENDENT_SERVICES
+            ):
+                raise ValueError("Independent acquisition is required for CPU reduction")
+        except (KeyError, ValueError, TypeError, OverflowError):
+            raise ReleaseBlocked("cpu_compose_pins_unsupported") from None
+
+    def configured_cpu_quotas(self) -> dict[str, int]:
+        configured = json.loads(self._command([*self._compose(), "config", "--format", "json"]))[
+            "services"
+        ]
+        return {key: round(float(configured[key]["cpus"]) * 10**9) for key in CPU_VARIABLES}
+
+    def update_cpu_quota(self, container: CpuContainer, nanocpus: int) -> None:
+        if (
+            container.service not in CPU_VARIABLES
+            or isinstance(nanocpus, bool)
+            or not isinstance(nanocpus, int)
+            or not 1 <= nanocpus <= 1024 * 10**9
+        ):
+            raise ValueError("Invalid analytical CPU update")
+        self._command(
+            ["update", "--cpus", format(nanocpus / 10**9, ".9f"), container.identifier], timeout=10
+        )
 
     def prepare(self, target: str, manifest: ReleaseManifest, slot: str) -> None:
         self._target(target)

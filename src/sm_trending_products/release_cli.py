@@ -275,6 +275,7 @@ class HostRuntime:
             self.workers,
             CatalogCaptureVerifier(self.catalog, freshness_seconds=self.config.freshness_seconds),
             trust=self.trust,
+            execution=self.authorization.execution(run),
         )
 
     def bootstrap(
@@ -356,7 +357,6 @@ class HostRuntime:
         if action in {"abort", "rollback"}:
             return self.rollback(release_id)
         controller = self.controller(row)
-        controller.execution = self.authorization.execution(row)
         result = controller.apply(release_id)
         if result["status"] == "completed" and result["phase"] == "retired":
             # Deployment requests authorize the whole application. Persist the
@@ -389,7 +389,6 @@ class HostRuntime:
         if override and override["origin"] == release_id and override["release_id"] != release_id:
             return self.apply(override["release_id"])
         controller = self.controller(row)
-        controller.execution = execution
         active = self.active()
         commit_gap = (
             row["phase"] in {"ready", "draining", "verified"}

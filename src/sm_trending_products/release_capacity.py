@@ -261,6 +261,29 @@ class HostCapacity:
             "requirements": asdict(budget),
         }
 
+    def admit_cpu_increase(self, increase_nanocpus: int) -> None:
+        """Admit only additional live CPU, including all existing host allocations."""
+        if (
+            isinstance(increase_nanocpus, bool)
+            or not isinstance(increase_nanocpus, int)
+            or increase_nanocpus < 0
+        ):
+            raise ValueError("CPU increase must be a nonnegative integer")
+        if increase_nanocpus == 0:
+            return
+        try:
+            allocated = self._allocations()["allocated_cpus"]
+            required = allocated + increase_nanocpus / 10**9 + self.budget.cpu_reserve
+            limit = _host_limits()["cpus"]
+            if (
+                not all(math.isfinite(value) for value in (required, limit))
+                or limit <= 0
+                or required > limit
+            ):
+                raise ReleaseBlocked("cpu_headroom_insufficient")
+        except (OSError, ValueError, KeyError, TypeError):
+            raise ReleaseBlocked("cpu_capacity_unavailable") from None
+
     def admit(self) -> dict:
         assessment = self.assess()
         if not assessment["allowed"]:

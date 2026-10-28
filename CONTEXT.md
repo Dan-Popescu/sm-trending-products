@@ -14,6 +14,10 @@ Identify emerging physical-product opportunities from accessible evidence, then 
 
 **Observation**: A source response or imported record captured at a specific time, including provenance and missing-field reasons. Reobserving a counter creates another observation, not a replacement.
 
+**Measurement**: An exact, bounded or estimated value from an observation, with an explicit unit and meaning. A measured count does not by itself establish interval sales.
+
+**Counter period**: The reporting period summarized by a cumulative measurement. A rolling-period total is not comparable to a lifetime counter, and its change does not directly measure consumption between observations.
+
 **Evidence**: An observation, or a reproducible derivation from observations, supporting a stated claim. Estimates are evidence with explicit assumptions, not observed facts.
 
 **Availability time**: The earliest recorded time at which evidence was available to this system. A source's publication date or reporting period does not establish availability time. _Avoid_: treating old publication dates as historical availability.

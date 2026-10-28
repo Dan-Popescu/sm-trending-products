@@ -44,6 +44,12 @@ def test_available_capacity_reports_only_structured_measurements(host):
     assert str(host.docker_data_dir) not in str(result)
 
 
+def test_cpu_increase_admission_includes_existing_allocations_and_reserve(host):
+    host.admit_cpu_increase(5_000_000_000)
+    with pytest.raises(ReleaseBlocked, match="cpu_headroom_insufficient"):
+        host.admit_cpu_increase(5_000_000_001)
+
+
 @pytest.mark.parametrize(
     "measurement,reason",
     [

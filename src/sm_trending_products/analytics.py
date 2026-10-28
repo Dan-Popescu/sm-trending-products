@@ -8,7 +8,6 @@ All work remains bounded by the caller's observation and product partitions.
 from __future__ import annotations
 
 import math
-import re
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
@@ -22,6 +21,7 @@ import polars as pl
 
 from .contracts import AssessmentPolicy, Measurement, Observation, Product, ProductLink, digest, utc
 from .identity_rules import resolve_links
+from .measurement_semantics import counter_period
 
 METRIC_ALIASES = {
     "view_count": ("view_count", "views"),
@@ -198,7 +198,7 @@ def _counter_windows(
                 observed_at,
                 available_at,
                 str(observation.attributes.get("counter_scope", "unspecified")),
-                _counter_period(observation, metric),
+                counter_period(observation, metric),
             )
             references.append(observation.observation_id)
             milliseconds = None
@@ -255,33 +255,6 @@ def _metric_windows(
         key: list(value.rows)
         for key, value in _counter_windows(observations, metric, retain_rows=True).items()
     }
-
-
-def _counter_period(observation: Observation, metric: str) -> str | None:
-    if metric != "units_sold":
-        return str(observation.attributes.get("view_count_period", "lifetime"))
-    # Sales counters are not intrinsically lifetime counters. Explicit period
-    # declarations override generic counter scope, including an old lifetime hint.
-    declarations = [
-        observation.attributes[name]
-        for name in ("units_sold_period", "sold_period")
-        if name in observation.attributes
-    ]
-    if not declarations:
-        return "lifetime" if observation.attributes.get("counter_scope") == "lifetime" else None
-    if any(not isinstance(value, str) for value in declarations):
-        return None
-    periods = {value.strip().lower() for value in declarations}
-    if len(periods) != 1:
-        return None
-    period = periods.pop()
-    if period in {"", "unknown", "unspecified", "none", "null", "?"}:
-        return None
-    if period.startswith(("rolling", "last_", "last ", "past_", "past ")) or re.fullmatch(
-        r"\d+\s*(d|days?|h|hours?|w|weeks?|months?)", period
-    ):
-        return None
-    return period
 
 
 def _attention(

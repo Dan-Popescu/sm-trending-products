@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from psycopg.types.json import Jsonb
-from test_release_authorization import authorized
+from test_release_authorization import authorized, executing
 from test_release_control import ProcessDeath, release
 
 from sm_trending_products.release_cli import HostRuntime
@@ -19,7 +19,7 @@ def test_new_signed_request_supersedes_rollback_after_high_water_checkpoint_cras
 ):
     authority, controller, row, evidence, _ = authorized(pipeline, tmp_path)
     evidence.ready = True
-    controller.execution = authority.execution(row)
+    controller = executing(controller, authority.execution(row))
     assert controller.apply(row["release_id"])["status"] == "completed"
     row = pipeline.catalog.one(
         "SELECT * FROM deployment_runs WHERE release_id=%s", (row["release_id"],)
@@ -30,7 +30,7 @@ def test_new_signed_request_supersedes_rollback_after_high_water_checkpoint_cras
         "SELECT * FROM deployment_runs WHERE release_id=%s", (reverse["release_id"],)
     )
     authority.rollback(reverse_row, row)
-    controller.execution = authority.execution(reverse_row)
+    controller = executing(controller, authority.execution(reverse_row))
     assert controller.apply(reverse["release_id"])["status"] == "completed"
     authority.complete_rollback(reverse["release_id"])
     assert authority.rollback_state()["completed"] is True
@@ -87,7 +87,7 @@ def test_new_signed_request_supersedes_rollback_after_high_water_checkpoint_cras
     runtime.config = SimpleNamespace(target="fixture", state_directory=authority.directory)
     runtime.authorization = authority
     runtime.trust = authority.trust
-    runtime.controller = lambda current: controller
+    runtime.controller = lambda current: executing(controller, authority.execution(current))
     runtime.pending_processing = lambda: False
     runtime.refresh_processing_release = lambda *args, **kwargs: {"status": "completed"}
 
@@ -106,14 +106,14 @@ def test_private_rollback_action_recovers_missing_routing_marker_before_processi
 ):
     authority, controller, row, evidence, _ = authorized(pipeline, tmp_path)
     evidence.ready = True
-    controller.execution = authority.execution(row)
+    controller = executing(controller, authority.execution(row))
     assert controller.apply(row["release_id"])["status"] == "completed"
     runtime = object.__new__(HostRuntime)
     runtime.catalog = pipeline.catalog
     runtime.config = SimpleNamespace(target="fixture", state_directory=authority.directory)
     runtime.authorization = authority
     runtime.trust = authority.trust
-    runtime.controller = lambda current: controller
+    runtime.controller = lambda current: executing(controller, authority.execution(current))
     runtime.pending_processing = lambda: pytest.fail(
         "A durable rollback must precede blocked processing"
     )

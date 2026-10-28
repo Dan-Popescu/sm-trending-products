@@ -71,7 +71,7 @@ def test_pipeline_counter_refresh_reads_only_new_object_and_matches_full_oracle(
 
 def test_freeze_reuses_counts_and_roots_without_reading_or_assessing_history(pipeline, monkeypatch):
     cutoff, product, links, _scope, _cache, initial, _audit = rolling_case(pipeline)
-    configuration = EvaluationConfig(horizon_days=(3,), launch_delay_days=(0,))
+    configuration = EvaluationConfig.for_creation({"horizon_days": [3], "launch_delay_days": [0]})
     pipeline.freeze(cutoff, True, configuration.model_dump(mode="json"))
     later = cutoff + timedelta(hours=1)
     oracle = freeze_decision(
