@@ -37,5 +37,11 @@ CREATE TABLE enrichment_requests (
 );
 CREATE INDEX enrichment_product_requests ON enrichment_requests
     (synthetic,product_id,created_at DESC,request_id);
-"""
+""",
+    2: """
+ALTER TABLE enrichment_transcripts ADD COLUMN metadata jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE enrichment_transcripts ADD COLUMN context_sha256 text NOT NULL DEFAULT '';
+CREATE INDEX enrichment_transcript_entity_page ON enrichment_transcripts
+    (synthetic,entity_key,transcript_id);
+""",
 }

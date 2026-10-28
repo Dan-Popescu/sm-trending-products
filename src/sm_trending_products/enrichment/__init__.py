@@ -7,6 +7,7 @@ from .contracts import (
     ProviderSpec,
     TextSegment,
     TranscriptAdapter,
+    TranscriptContext,
     TranscriptInput,
 )
 from .service import TranscriptInsights
@@ -18,6 +19,7 @@ __all__ = [
     "ProviderSpec",
     "TextSegment",
     "TranscriptAdapter",
+    "TranscriptContext",
     "TranscriptInput",
     "TranscriptInsights",
 ]
