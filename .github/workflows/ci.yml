@@ -89,7 +89,8 @@ jobs:
         run: uv run --locked mypy src
       - name: Verify native PostgreSQL behavior
         # Includes bounded 12k-dataset and 50k-artifact retirement regressions.
-        timeout-minutes: 15
+        # The independently exercised commerce and recovery cases expand this suite.
+        timeout-minutes: 20
         env:
           TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: uv run --locked pytest -vv -ra --durations=15 --junitxml=output/test-results.xml
