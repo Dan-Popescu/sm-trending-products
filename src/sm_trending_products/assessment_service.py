@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from .analysis_batches import RowBudgetExceeded
 from .analytics import AssessmentIdentity, assess, normalize_assessments
-from .contracts import AssessmentPolicy, Observation, Product, ProductLink, digest
+from .assessment_eligibility import AssessmentEligibility
+from .contracts import AssessmentPolicy, Product, ProductLink, digest
 from .feature_projection import FeatureProjection, ProjectionScope, WindowRead
 from .history import History
 from .provenance import Provenance
@@ -29,9 +30,9 @@ class PreparedAssessments:
 class AssessmentService:
     """Reuse exact compact rows, or rebuild dirty products from bounded inputs.
 
-    Identity and eligibility are resolved by callers using their existing source
-    contracts. The stable eligibility token must include every non-policy gate;
-    the cutoff itself is not a cache identity. Every returned input root remains
+    Callers supply resolved ownership and captured eligibility facts. Eligibility
+    owns both filtering and its stable projection identity; the reader supplies
+    the same authoritative clock and lookback to both. Every input root remains
     attached to the ordinary publication, including a full feature-cache hit.
     """
 
@@ -64,9 +65,14 @@ class AssessmentService:
         synthetic: bool,
         policy: AssessmentPolicy,
         *,
-        eligibility: Callable[[Sequence[Observation]], list[Observation]] | None = None,
-        eligibility_version: str = "all-history-inputs-v1",
+        eligibility: AssessmentEligibility | None = None,
     ) -> PreparedAssessments:
+        eligibility_identity = (
+            eligibility.cache_identity(cutoff)
+            if eligibility is not None
+            else "all-history-inputs-v1"
+        )
+        since = cutoff - timedelta(days=policy.lookback_days)
         with self.history.read_session():
             rows: list[dict[str, Any]] = []
             input_scopes: list[Any] = []
@@ -88,7 +94,7 @@ class AssessmentService:
                                     link.model_dump(mode="json")
                                     for link in identity.by_product.get(product.product_id, ())
                                 ],
-                                "eligibility": eligibility_version,
+                                "eligibility": eligibility_identity,
                             }
                         ),
                     )
@@ -118,7 +124,9 @@ class AssessmentService:
                     self.history.analysis_metrics[mode_counter] += 1
                     product_id = scope.product.product_id
                     observations = (
-                        eligibility(window.observations)
+                        eligibility.select(
+                            window.observations, cutoff=cutoff, synthetic=synthetic, since=since
+                        )
                         if eligibility is not None
                         else window.observations
                     )

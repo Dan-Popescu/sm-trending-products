@@ -11,6 +11,7 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 
 from .analytics import AssessmentIdentity
+from .assessment_eligibility import AssessmentEligibility
 from .assessment_service import AssessmentService
 from .catalog import Catalog, InvalidationPending
 from .collector import redact
@@ -27,7 +28,6 @@ from .contracts import (
 )
 from .evaluation import (
     EvaluationConfig,
-    eligible_evidence,
     freeze_decision,
     mature_decision,
     outcome_entity_keys,
@@ -134,18 +134,6 @@ class EvaluationService:
         identity = AssessmentIdentity.resolve(
             products, links, cutoff, synthetic, policy.min_link_confidence
         )
-        since = cutoff - timedelta(days=policy.lookback_days)
-        # _source_scope also uses the source names of future capability entries;
-        # bind that complete metadata contract plus currently visible grants.
-        capabilities = metadata["capabilities"]
-        eligibility_version = digest(
-            {
-                "format": "evaluation-eligibility-v1",
-                "market": config.market,
-                "capabilities": capabilities,
-                "visible_capabilities": [row for row in capabilities if row.available_at <= cutoff],
-            }
-        )
         prepared = AssessmentService(self.history, self.provenance).prepare(
             products,
             links,
@@ -153,15 +141,7 @@ class EvaluationService:
             cutoff,
             synthetic,
             policy,
-            eligibility=lambda observations: eligible_evidence(
-                observations,
-                cutoff,
-                synthetic,
-                config.market,
-                capabilities,
-                since=since,
-            ),
-            eligibility_version=eligibility_version,
+            eligibility=AssessmentEligibility(config.market, metadata["capabilities"]),
         )
         normalized = prepared.rows
         counts, input_scopes = prepared.observation_counts, prepared.input_scopes
