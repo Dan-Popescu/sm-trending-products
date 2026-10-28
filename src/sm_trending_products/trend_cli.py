@@ -21,6 +21,11 @@ def main(argv: list[str] | None = None) -> int:
     root.add_argument("--windows-hours", nargs="+", type=int, default=[24, 72, 168])
     root.add_argument("--max-boundary-gap-hours", type=float, default=24)
     root.add_argument("--max-rows", type=int, default=50000)
+    root.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help="Compare disjoint periods and inspect dependence on dominant creators",
+    )
     args = root.parse_args(argv)
     try:
         from .pipeline import Pipeline
@@ -33,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
                 windows_hours=args.windows_hours,
                 max_boundary_gap_hours=args.max_boundary_gap_hours,
                 max_rows=args.max_rows,
+                diagnostics=args.diagnostics,
             )
         from .collector import redact
 

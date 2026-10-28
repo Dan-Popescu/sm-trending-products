@@ -18,6 +18,7 @@ from .contracts import Capability, Observation, digest, utc
 from .evaluation import eligible_evidence
 from .history import History
 from .identity_rules import LINK_STATE_CTES
+from .opportunity_trends import describe_diagnostics
 
 MAX_METADATA_ROWS = 10000
 EVIDENCE_PREVIEW_LIMIT = 200
@@ -232,6 +233,7 @@ class TrendInsights:
         max_boundary_gap_hours: float = 24,
         min_link_confidence: float = 0.9,
         max_rows: int = 50000,
+        diagnostics: bool = False,
     ) -> dict[str, Any]:
         cutoff = utc(as_of)
         if (
@@ -248,6 +250,7 @@ class TrendInsights:
             or isinstance(max_rows, bool)
             or not isinstance(max_rows, int)
             or not 1 <= max_rows <= 100000
+            or not isinstance(diagnostics, bool)
         ):
             raise ValueError("Invalid bounded trend-insight configuration")
         product = self.catalog.evidence_one(
@@ -291,9 +294,21 @@ class TrendInsights:
         )
         if len(links) > MAX_METADATA_ROWS:
             raise ValueError("Product identity exceeds the trend metadata budget")
-        keys = {row["entity_key"] for row in links if row["entity_key"].split(":", 2)[1] == "video"}
+        video_keys = {
+            row["entity_key"] for row in links if row["entity_key"].split(":", 2)[1] == "video"
+        }
+        keys = (
+            {
+                row["entity_key"]
+                for row in links
+                if row["entity_key"].split(":", 2)[1] in {"video", "ad", "commercial_content"}
+            }
+            if diagnostics
+            else video_keys
+        )
         gap = timedelta(hours=max_boundary_gap_hours)
-        since = cutoff - timedelta(hours=max(windows_hours)) - gap
+        legacy_since = cutoff - timedelta(hours=max(windows_hours)) - gap
+        since = cutoff - timedelta(hours=max(windows_hours) * (2 if diagnostics else 1)) - gap
         with self.history.read_session():
             observations = (
                 self.history.read(
@@ -364,10 +379,15 @@ class TrendInsights:
             since=since,
         )
         videos = [row for row in eligible if row.entity_type == "video"]
-        timelines = _counter_windows(videos, "view_count", retain_rows=True)
+        timelines = _counter_windows(
+            [row for row in videos if utc(row.observed_at) >= legacy_since],
+            "view_count",
+            retain_rows=True,
+        )
         by_id = {row.observation_id: row for row in videos}
         reports = [
-            _window(timelines, by_id, keys, cutoff, hours, gap) for hours in sorted(windows_hours)
+            _window(timelines, by_id, video_keys, cutoff, hours, gap)
+            for hours in sorted(windows_hours)
         ]
         result = {
             "version": "descriptive-trends-v1",
@@ -389,5 +409,10 @@ class TrendInsights:
             "windows": reports,
             "interpretation": "Observed attention patterns; no sales or profitability prediction",
         }
+        if diagnostics:
+            result["version"] = "descriptive-trends-v2"
+            result["diagnostics"] = describe_diagnostics(
+                eligible, video_keys, cutoff, sorted(windows_hours), gap
+            )
         result["report_id"] = digest(result)
         return result
