@@ -77,6 +77,9 @@ review order is transparent; it is not a learned value-of-information estimate.
 All states retain null predictive probability, `launch_authorized=false`, and
 explicit missing real purchases/product-market-fit evidence. Defining a future
 commercial test is a recommendation to obtain evidence, not its execution.
+Each complete scenario that misses its declared target remains contrary evidence,
+even when other scenarios are incomplete. The latter still contribute missing
+information; they neither hide a calculated downside nor become assumed losses.
 
 ## Work and storage bounds
 

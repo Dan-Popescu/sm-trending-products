@@ -227,6 +227,44 @@ def test_exact_dossier_and_revision_pin_scenarios_and_keep_cash_unknown(pipeline
     )
 
 
+@pytest.mark.parametrize(
+    ("known_ad_cost", "include_unknown", "expected_miss"),
+    [("100", True, True), ("5", True, False), (None, True, False), ("100", False, True)],
+)
+def test_known_scenario_misses_remain_contrary_when_other_points_are_unknown(
+    pipeline, known_ad_cost, include_unknown, expected_miss
+):
+    seed_product(pipeline, "p1")
+    launches = LaunchService(pipeline.catalog)
+    launches.initialize()
+    launches.save(draft(), 0, "create-mixed-scenarios")
+    scenarios = []
+    if known_ad_cost is not None:
+        scenarios.append({"name": "known", "ad_cost": known_ad_cost})
+    if include_unknown:
+        scenarios.append({"name": "unknown-ad-cost"})
+    report = brief(
+        pipeline,
+        dossier_id="launch-p1-fr",
+        expected_revision=1,
+        scenario_profile={"scenarios": scenarios},
+    )
+    economics = report["sections"]["economics"]["report"]
+    assert ("declared_scenarios_miss_profit_target" in codes(report, "contrary")) is expected_miss
+    assert ("scenario_costs_incomplete" in codes(report, "missing")) is include_unknown
+    assert report["status"] == "investigate"
+    assert "declared_scenarios_meet_target_not_actual_profit" not in codes(report, "support")
+    if include_unknown:
+        assert economics["summary"]["all_meet_target"] is None
+    if expected_miss:
+        assert any(point["economics"]["meets_target"] is False for point in economics["scenarios"])
+        assert "declared_scenarios_miss_profit_target" in next(
+            item["reasons"]
+            for item in report["next_useful_facts"]
+            if item["dimension"] == "economics"
+        )
+
+
 def test_dossier_cannot_cross_product_or_target_market(pipeline):
     seed_product(pipeline, "p1")
     seed_product(pipeline, "other")
