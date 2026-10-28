@@ -1,5 +1,8 @@
 # Operations runbook
 
+Use [analytical execution diagnostics](analytical-run-diagnostics.md) to inspect
+assessment/freeze work, cache behavior and failures independently of result hashes.
+
 The production target is a VPS running Docker Compose with PostgreSQL and external
 S3 storage. A shared application image runs separate planning, raw-capture,
 normalization, analytical and operator-interface containers; PostgreSQL has its

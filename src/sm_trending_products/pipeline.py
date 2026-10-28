@@ -13,6 +13,7 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
+from .analytical_diagnostics import AnalyticalDiagnostics, phase
 from .assessment_archive import AssessmentArchive
 from .assessment_publisher import AssessmentPublisher
 from .assessment_service import AssessmentService
@@ -448,42 +449,55 @@ class Pipeline:
         synthetic: bool = False,
         policy: AssessmentPolicy | None = None,
     ) -> dict:
-        with self.catalog.evidence_transaction(synthetic):
-            pass
-        from .analytics import AssessmentIdentity
+        with AnalyticalDiagnostics(self.history).attempt(
+            "assessment", as_of, synthetic
+        ) as diagnostic:
+            with self.catalog.evidence_transaction(synthetic):
+                pass
+            from .analytics import AssessmentIdentity
 
-        as_of, policy = utc(as_of or now()), policy or AssessmentPolicy()
-        links = [ProductLink.model_validate(item) for item in self.links(as_of, synthetic)]
-        products = [
-            Product.model_validate(item)
-            for item in self._all_products(synthetic, as_of)
-            if utc(item["created_at"]) <= as_of
-        ]
-        identity = AssessmentIdentity.resolve(
-            products, links, as_of, synthetic, policy.min_link_confidence
-        )
-        prepared = AssessmentService(self.history, self.provenance).prepare(
-            products, links, identity, as_of, synthetic, policy
-        )
-        rows, input_scopes = prepared.rows, prepared.input_scopes
-        publication_scope = self.provenance.publication_scope(input_scopes, rows, synthetic)
+            as_of, policy = utc(as_of or now()), policy or AssessmentPolicy()
+            diagnostic.cutoff = as_of
+            with phase(self.history, "input_selection"):
+                links = [ProductLink.model_validate(item) for item in self.links(as_of, synthetic)]
+                products = [
+                    Product.model_validate(item)
+                    for item in self._all_products(synthetic, as_of)
+                    if utc(item["created_at"]) <= as_of
+                ]
+                identity = AssessmentIdentity.resolve(
+                    products, links, as_of, synthetic, policy.min_link_confidence
+                )
+            prepared = AssessmentService(self.history, self.provenance).prepare(
+                products, links, identity, as_of, synthetic, policy
+            )
+            rows, input_scopes = prepared.rows, prepared.input_scopes
+            with phase(self.history, "publication"):
+                publication_scope = self.provenance.publication_scope(input_scopes, rows, synthetic)
 
-        body = {
-            "schema_version": "2",
-            "as_of": as_of,
-            "synthetic": synthetic,
-            "policy": policy.model_dump(mode="json"),
-            "rows": rows,
-            "datasets": {"location": "sharded_provenance", "scope": "source_deliveries"},
-            "input_provenance": publication_scope.input_provenance,
-        }
-        publication = self._assessment_archive.stage(body, publication_scope)
-        run_id = publication.run_id
-        AssessmentPublisher(self.catalog, self._assessment_archive).publish(publication)
-        return {"run_id": run_id, **body}
+                body = {
+                    "schema_version": "2",
+                    "as_of": as_of,
+                    "synthetic": synthetic,
+                    "policy": policy.model_dump(mode="json"),
+                    "rows": rows,
+                    "datasets": {"location": "sharded_provenance", "scope": "source_deliveries"},
+                    "input_provenance": publication_scope.input_provenance,
+                }
+                publication = self._assessment_archive.stage(body, publication_scope)
+                run_id = publication.run_id
+                AssessmentPublisher(self.catalog, self._assessment_archive).publish(publication)
+            diagnostic.result_id = run_id
+            return {"run_id": run_id, **body}
 
     def assessment_snapshot(self, run_id: str, synthetic: bool = False) -> dict | None:
         return self._assessment_archive.snapshot(run_id, synthetic)
+
+    def analytical_runs(self, synthetic: bool = False, *, limit: int = 50) -> list[dict]:
+        return AnalyticalDiagnostics(self.history).list(synthetic, limit)
+
+    def analytical_run(self, attempt_id: str, synthetic: bool = False) -> dict | None:
+        return AnalyticalDiagnostics(self.history).get(attempt_id, synthetic)
 
     def assessment_run_page(
         self, run_id: str, synthetic: bool = False, *, offset: int = 0, limit: int = 100

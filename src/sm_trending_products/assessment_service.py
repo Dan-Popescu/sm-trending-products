@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from .analytical_diagnostics import phase, record
 from .analytics import AssessmentIdentity, normalize_assessments
 from .assessment_eligibility import AssessmentEligibility
 from .contracts import AssessmentPolicy, Product, ProductLink, digest
@@ -51,6 +52,7 @@ class AssessmentService:
         *,
         eligibility: AssessmentEligibility | None = None,
     ) -> PreparedAssessments:
+        record(self.history, "work", "products", len(products))
         identity.validate(cutoff, synthetic, policy.min_link_confidence)
         eligibility_identity = (
             eligibility.cache_identity(cutoff)
@@ -93,8 +95,10 @@ class AssessmentService:
                 hits += prepared.hits
                 rebuilds += prepared.rebuilds
                 delta_reads += prepared.delta_reads
+            with phase(self.history, "normalization"):
+                normalized = normalize_assessments(rows, policy)
             return PreparedAssessments(
-                normalize_assessments(rows, policy),
+                normalized,
                 input_scopes,
                 counts,
                 hits,

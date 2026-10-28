@@ -12,6 +12,29 @@ from .contracts import AssessmentPolicy, canonical, now, utc
 from .source_contracts import canonical_operation
 
 
+def _analysis_limit(value: str) -> int:
+    try:
+        limit = int(value)
+        if 1 <= limit <= 100:
+            return limit
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError(
+        "Limit must be an integer between 1 and 100. Example: sm-trends analysis-runs --limit 20"
+    )
+
+
+def _attempt_identifier(value: str) -> str:
+    from .analytical_diagnostics import attempt_identifier
+
+    try:
+        return attempt_identifier(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            str(error) + ". Find identifiers with: sm-trends analysis-runs"
+        ) from None
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
         prog="sm-trends",
@@ -43,6 +66,16 @@ def parser() -> argparse.ArgumentParser:
         "--create-bucket", action="store_true", help="Create a missing bucket explicitly"
     )
     command("status", "Inspect health, freshness, queues, capabilities, and storage traffic")
+    runs = command("analysis-runs", "List bounded analytical execution diagnostics", synthetic=True)
+    runs.add_argument("--limit", type=_analysis_limit, default=50)
+    runs.epilog = (
+        "Examples: sm-trends analysis-runs --limit 20; sm-trends analysis-runs --synthetic"
+    )
+    run = command(
+        "analysis-run", "Inspect one execution attempt without reading evidence", synthetic=True
+    )
+    run.add_argument("attempt_id", type=_attempt_identifier)
+    run.epilog = "Example: sm-trends analysis-run 0123456789abcdef0123456789abcdef --synthetic"
     capacity = command("capacity", "Compare an explicit video workload with planning budgets")
     capacity.add_argument("--products", type=int, required=True)
     capacity.add_argument("--videos-per-product", type=int, required=True)
@@ -346,6 +379,10 @@ def dispatch(pipeline, args):
     synthetic = getattr(args, "synthetic", False)
     cutoff = utc(args.as_of) if getattr(args, "as_of", None) else now()
     match args.command:
+        case "analysis-runs":
+            return pipeline.analytical_runs(synthetic, limit=args.limit)
+        case "analysis-run":
+            return pipeline.analytical_run(args.attempt_id, synthetic)
         case "init":
             return pipeline.initialize(create_bucket=args.create_bucket)
         case "status":

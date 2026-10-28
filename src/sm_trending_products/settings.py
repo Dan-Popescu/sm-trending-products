@@ -60,6 +60,7 @@ class Settings(PlanningSettings):
     analysis_max_rows_per_batch: int = Field(default=1_000_000, ge=100)
     analysis_max_objects_per_batch: int = Field(default=10_000, ge=1)
     analysis_max_metadata_bytes_per_batch: int = Field(default=16_777_216, ge=1024)
+    analytical_diagnostics_max_runs: int = Field(default=1000, ge=1, le=10_000)
     history_partition_buckets: int = Field(default=64, ge=1, le=1024)
     history_index_objects_per_call: int = Field(default=32, ge=1, le=1000)
     history_target_rows_per_file: int = Field(default=1000, ge=1, le=100_000)

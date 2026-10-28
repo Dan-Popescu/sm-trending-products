@@ -156,6 +156,13 @@
       "number": 144,
       "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/144",
       "kind": "ticket"
+    },
+    {
+      "path": "docs/specs/analytical-run-diagnostics.md",
+      "title": "Attribute bounded work diagnostics to each analytical execution",
+      "number": 156,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/156",
+      "kind": "ticket"
     }
   ]
 }
