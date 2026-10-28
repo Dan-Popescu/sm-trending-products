@@ -435,7 +435,7 @@ def _interpret(sections: dict) -> dict:
         readiness = economics["source_facts"]["readiness"]
         if summary["incomplete_points"]:
             note(missing, "economics", "scenario_costs_incomplete", economics)
-        if summary["all_meet_target"] is False:
+        if any(point["economics"]["meets_target"] is False for point in economics["scenarios"]):
             note(contrary, "economics", "declared_scenarios_miss_profit_target", economics)
         if readiness["status"] != "ready":
             note(missing, "economics", "dossier_not_ready", economics, reasons=readiness["reasons"])
