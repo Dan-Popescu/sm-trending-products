@@ -26,9 +26,18 @@ def render_launches(service: LaunchService, synthetic: bool) -> None:
         st.error("Launch preparation is unavailable. Run sm-trends commerce init explicitly.")
         return
     options = ["New dossier", *[row["dossier_id"] for row in dossiers]]
-    selected = st.selectbox("Launch dossier", options)
+    selection_key = f"launch-selection:{synthetic}"
+    previous_selection = st.session_state.get(selection_key)
+    if previous_selection and previous_selection not in options:
+        options.append(previous_selection)
+    selected = st.selectbox("Launch dossier", options, key=selection_key)
     dossier = next((row for row in dossiers if row["dossier_id"] == selected), None)
-    draft = dossier["draft"] if dossier else {}
+    if dossier is None and selected != "New dossier":
+        try:
+            dossier = service.dossier(selected, synthetic=synthetic)
+        except Exception:
+            st.error("The selected dossier is unavailable. Choose another dossier.")
+            return
     if dossier:
         st.write(f"Revision {dossier['revision']} · {dossier['country']} · {dossier['currency']}")
         st.write(f"Readiness: {dossier['readiness']['status']}")
@@ -46,9 +55,31 @@ def render_launches(service: LaunchService, synthetic: bool) -> None:
                 file_name="product-draft.html",
                 mime="text/html",
             )
-    # Widget keys include the current revision so a saved revision reloads its own facts.
-    revision = dossier["revision"] if dossier else 0
-    with st.form(f"launch-edit:{synthetic}:{selected}:{revision}"):
+    # Pin one displayed draft per workspace until submission or explicit reload.
+    # A concurrent save must reach CAS with the displayed revision, not rebuild
+    # the form under a newer ID and silently discard its submitted widget state.
+    editor_key = f"_launch-editor:{synthetic}"
+    generation_key = f"_launch-editor-generation:{synthetic}"
+    editing = st.session_state.get(editor_key)
+    if editing is None or editing["selected"] != selected:
+        editing = {
+            "selected": selected,
+            "revision": dossier["revision"] if dossier else 0,
+            "draft": dossier["draft"] if dossier else {},
+        }
+        st.session_state[editor_key] = editing
+    revision, draft = editing["revision"], editing["draft"]
+    if dossier and dossier["revision"] != revision:
+        st.warning(
+            f"A newer revision exists. Your form still edits revision {revision}; "
+            "saving will report a conflict."
+        )
+        if st.button("Load latest revision"):
+            st.session_state.pop(editor_key, None)
+            st.session_state[generation_key] = st.session_state.get(generation_key, 0) + 1
+            st.rerun()
+    generation = st.session_state.get(generation_key, 0)
+    with st.form(f"launch-edit:{synthetic}:{selected}:{revision}:{generation}"):
         identifier = st.text_input(
             "Dossier ID", value=draft.get("dossier_id", ""), disabled=bool(dossier)
         )
@@ -161,5 +192,7 @@ def render_launches(service: LaunchService, synthetic: bool) -> None:
                 "The revision was not saved. Check the fields or reload if another edit was saved."
             )
         else:
+            st.session_state.pop(editor_key, None)
+            st.session_state[generation_key] = generation + 1
             st.session_state["_review_notice"] = "Launch revision saved."
             st.rerun()

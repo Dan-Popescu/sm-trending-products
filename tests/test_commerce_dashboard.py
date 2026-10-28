@@ -2,6 +2,9 @@
 
 from streamlit.testing.v1 import AppTest
 
+from sm_trending_products.commerce import LaunchDraft
+from sm_trending_products.commerce_cli import template
+
 APP = """
 from sm_trending_products.catalog import Catalog
 from sm_trending_products.commerce import LaunchService
@@ -56,3 +59,41 @@ def test_operator_creates_and_revises_a_launch_dossier(pipeline):
     assert saved["draft"]["delivery_min_days"] == 0
     assert saved["draft"]["delivery_max_days"] == 0
     assert saved["readiness"]["status"] == "incomplete"
+
+
+def test_concurrent_edit_keeps_the_displayed_revision_and_reports_conflict(pipeline):
+    service = pipeline.launch_service()
+    service.initialize()
+    pipeline.create_product("lamp", "Lamp", synthetic=True)
+    original = LaunchDraft.model_validate(
+        {
+            **template(),
+            "dossier_id": "lamp-fr",
+            "product_id": "lamp",
+            "country": "FR",
+            "currency": "EUR",
+            "synthetic": True,
+            "title": "Original lamp",
+        }
+    )
+    service.save(original, 0, "initial")
+    app = AppTest.from_string(APP).run(timeout=20)
+    next(box for box in app.selectbox if box.label == "Launch dossier").set_value("lamp-fr").run()
+    next(field for field in app.text_input if field.label == "Product title").set_value(
+        "My edited lamp"
+    )
+    service.save(original.model_copy(update={"title": "Another session's edit"}), 1, "concurrent")
+    next(button for button in app.button if button.label == "Save new revision").click().run()
+    assert not app.exception
+    assert app.error
+    assert "reload" in app.error[0].value.lower()
+    assert service.dossier("lamp-fr", synthetic=True)["revision"] == 2
+    assert (
+        next(field for field in app.text_input if field.label == "Product title").value
+        == "My edited lamp"
+    )
+    next(button for button in app.button if button.label == "Load latest revision").click().run()
+    assert (
+        next(field for field in app.text_input if field.label == "Product title").value
+        == "Another session's edit"
+    )
