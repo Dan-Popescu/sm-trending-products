@@ -739,3 +739,117 @@ def test_legacy_standard_recovery_keeps_higher_partial_quotas_when_headroom_is_u
     assert cpu_transition_pending(controller.host.lock_directory, "fixture")
     capacity._allocations = lambda: {"allocated_cpus": 3.0}
     assert controller.reconcile()["mode"] == "standard"
+
+
+@pytest.mark.parametrize(
+    "missing_services",
+    [
+        {"dashboard"},
+        {"dashboard", "dagster-webserver"},
+        set(CPU_VARIABLES),
+        None,
+    ],
+    ids=["one-role", "two-roles", "all-analytical-roles", "empty-runtime"],
+)
+def test_stable_economy_with_stopped_roles_allows_the_runtime_processing_repair(
+    controller, missing_services
+):
+    from sm_trending_products.release_cli import HostRuntime
+
+    controller.switch("economy")
+    dashboard = next(row[0] for row in controller.fixture.rows.values() if row[2] == "dashboard")
+    for identifier, row in list(controller.fixture.rows.items()):
+        if missing_services is None or row[2] in missing_services:
+            controller.fixture.rows.pop(identifier)
+    path = controller.host.lock_directory / "cpu-mode.json"
+    policy = path.read_bytes()
+    pins = cpu_environment(controller.host.lock_directory, controller.host.project)
+    calls = controller.fixture.calls
+    assert controller.reconcile() is None
+    assert controller.fixture.calls == calls
+    assert path.read_bytes() == policy
+    assert cpu_environment(controller.host.lock_directory, controller.host.project) == pins
+
+    repaired = []
+
+    def repair(release, **kwargs):
+        assert dashboard not in controller.fixture.rows  # Guard did not start or mutate it.
+        repaired.append((release, kwargs))
+        return {"status": "completed"}
+
+    runtime = object.__new__(HostRuntime)
+    runtime.config = SimpleNamespace(state_directory=controller.host.lock_directory)
+    runtime.cpu_modes = lambda: controller
+    runtime.processing_refresh = lambda: SimpleNamespace(apply=repair)
+    assert runtime.refresh_processing_release() == {"status": "completed"}
+    assert len(repaired) == 1
+    assert controller.fixture.calls == calls
+    assert path.read_bytes() == policy
+
+
+def test_pending_cpu_recovery_with_stopped_dashboard_remains_strict_and_blocks_processing(
+    controller,
+):
+    from sm_trending_products.release_cli import HostRuntime
+
+    controller.fixture.crash_update = 1
+    with pytest.raises(KeyboardInterrupt):
+        controller.switch("economy")
+    dashboard = next(row[0] for row in controller.fixture.rows.values() if row[2] == "dashboard")
+    controller.fixture.rows.pop(dashboard)
+    path = controller.host.lock_directory / "cpu-mode.json"
+    intent = path.read_bytes()
+    calls = controller.fixture.calls
+    with pytest.raises(ReleaseBlocked, match="cpu_inventory_incomplete"):
+        controller.reconcile()
+    assert cpu_transition_pending(controller.host.lock_directory, controller.host.project)
+    assert path.read_bytes() == intent
+    assert controller.fixture.calls == calls
+
+    def unexpected_repair(*args, **kwargs):
+        raise AssertionError("Processing must wait for immutable CPU transition recovery")
+
+    runtime = object.__new__(HostRuntime)
+    runtime.config = SimpleNamespace(state_directory=controller.host.lock_directory)
+    runtime.cpu_modes = lambda: controller
+    runtime.processing_refresh = lambda: SimpleNamespace(apply=unexpected_repair)
+    with pytest.raises(ReleaseBlocked, match="cpu_inventory_incomplete"):
+        runtime.refresh_processing_release()
+    assert path.read_bytes() == intent
+    assert controller.fixture.calls == calls
+
+
+def test_stable_economy_does_not_hide_corrupt_or_unbounded_runtime_inventory(controller):
+    controller.switch("economy")
+    worker = next(row for row in controller.fixture.rows.values() if row[2] == "worker")
+    worker[9]["NanoCpus"] = 0
+    with pytest.raises(ReleaseBlocked, match="cpu_inventory_invalid"):
+        controller.reconcile()
+
+
+def test_unstable_empty_inventory_is_not_treated_as_a_missing_role_repair(controller, monkeypatch):
+    controller.switch("economy")
+    original = controller.fixture.command
+    probes = 0
+
+    def changing_inventory(host, arguments, **kwargs):
+        nonlocal probes
+        if arguments[0] == "ps":
+            probes += 1
+            if probes == 1:
+                return ""
+        return original(host, arguments, **kwargs)
+
+    monkeypatch.setattr(
+        ComposeReleaseHost,
+        "_command",
+        lambda host, arguments, **kwargs: changing_inventory(host, arguments, **kwargs),
+    )
+    path = controller.host.lock_directory / "cpu-mode.json"
+    policy = path.read_bytes()
+    calls = controller.fixture.calls
+    with pytest.raises(ReleaseBlocked, match="cpu_inventory_invalid"):
+        controller.reconcile()
+    assert probes == 2
+    assert path.read_bytes() == policy
+    assert controller.fixture.calls == calls

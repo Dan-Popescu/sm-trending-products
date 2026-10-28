@@ -103,7 +103,7 @@ class CpuModeController:
             },
         }
 
-    def _inventory(self) -> tuple[CpuContainer, ...]:
+    def _running_identifiers(self) -> list[str]:
         identifiers = self.host._command(
             [
                 "ps",
@@ -113,10 +113,18 @@ class CpuModeController:
                 f"label=com.docker.compose.project={self.host.project}",
             ]
         ).split()
-        if not 4 <= len(identifiers) <= 32 or any(
+        if len(identifiers) > 32 or any(
             not re.fullmatch(r"[a-f0-9]{64}", value) for value in identifiers
         ):
             raise ReleaseBlocked("cpu_inventory_unavailable")
+        return identifiers
+
+    def _inventory(self) -> tuple[CpuContainer, ...]:
+        identifiers = self._running_identifiers()
+        if not identifiers:
+            if self._running_identifiers():
+                raise ReleaseBlocked("cpu_inventory_invalid")
+            raise ReleaseBlocked("cpu_inventory_incomplete")
         try:
             body = self.host._command(["inspect", "--format", INSPECT_FORMAT, *identifiers])
             if len(body) > 128 * 1024:
@@ -166,25 +174,19 @@ class CpuModeController:
                     )
                 )
             services = [row.service for row in result]
+            if {row.identifier for row in result} != set(identifiers) or len(set(services)) != len(
+                services
+            ):
+                raise ValueError("Ambiguous CPU inventory")
+            after = self._running_identifiers()
+            if sorted(after) != sorted(identifiers):
+                raise ValueError("CPU inventory changed")
             if (
-                {row.identifier for row in result} != set(identifiers)
-                or len(set(services)) != len(services)
-                or not set(CPU_VARIABLES) <= set(services)
+                not set(CPU_VARIABLES) <= set(services)
                 or "postgres" not in services
                 or not {"worker", "worker-green"} & set(services)
             ):
-                raise ValueError("Incomplete CPU inventory")
-            after = self.host._command(
-                [
-                    "ps",
-                    "--quiet",
-                    "--no-trunc",
-                    "--filter",
-                    f"label=com.docker.compose.project={self.host.project}",
-                ]
-            ).split()
-            if sorted(after) != sorted(identifiers):
-                raise ValueError("CPU inventory changed")
+                raise ReleaseBlocked("cpu_inventory_incomplete")
             return tuple(sorted(result, key=lambda row: row.service))
         except (ValueError, KeyError, TypeError):
             raise ReleaseBlocked("cpu_inventory_invalid") from None
@@ -465,7 +467,13 @@ class CpuModeController:
                 if str(error) in {"cpu_release_in_progress", "cpu_processing_in_progress"}:
                     return None  # Deliberate release draining is not a new capture failure.
                 raise
-            if self._independent(self._inventory()):
+            try:
+                containers = self._inventory()
+            except ReleaseBlocked as error:
+                if str(error) == "cpu_inventory_incomplete":
+                    return None  # Let ordinary role repair restore missing/stopped services.
+                raise
+            if self._independent(containers):
                 try:
                     self._qualify_pins(policy.quotas, require_independent=True)
                 except ReleaseBlocked as error:

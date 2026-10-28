@@ -57,6 +57,9 @@ also checks this precondition while economy is active.
   If rolling back a standard increase would reduce CPU for legacy Dagster
   collection, complete that already authorized standard increase instead,
   subject to fresh capacity. Otherwise retain the safe partial state and intent.
+  A missing analytical role after a committed transition must not block managed
+  repair; preserve pins and defer that stable guard observation. Missing recorded
+  roles during an unfinished transition must still block its recovery.
 - Persist only allowlisted CPU settings under the controller's existing private
   writable state directory. They override inherited interpolation variables for
   subsequent managed service creation. Never copy application credentials into

@@ -92,6 +92,9 @@ instead completes the already requested standard increase after checking current
 headroom. Insufficient capacity preserves the partial higher limits and intent.
 Deployment mutations wait for that recovery. An identity or protected-resource
 change blocks automated restoration rather than updating an unexamined runtime.
+Once a profile is fully committed, a stopped analytical service may instead be
+repaired normally with its persisted pins. An incomplete CPU transition still
+requires its exact recorded runtime before repair can proceed.
 
 Before lowering quotas, the controller checks active acquisition health and
 overdue/unknown obligations whose original collection time is already due. This
