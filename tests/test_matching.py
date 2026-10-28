@@ -599,3 +599,71 @@ def test_expanding_identifier_unicode_cannot_break_entity_writes_after_index_set
     assert set(candidates(result)) == {"large-key"}
     assert result["suggestions"][0]["identifier_hit"] is False
     assert result["suggestions"][0]["missing_facts"] == ["sku"]
+
+
+@pytest.mark.parametrize(
+    "name,title,aliases",
+    [
+        ("Travel bottle 0.35 l", "Travel bottle 0.35 l", ()),
+        ("Travel bottle 0,35 l", "Travel bottle 0,35 l", ()),
+        ("Travel bottle", "Gourde 0.35 l", ("Gourde 0.35 l",)),
+        ("Wireless speaker v2.1", "Wireless speaker v2.1", ()),
+        ("Wireless speaker 5.3", "Wireless speaker 5.3", ()),
+        ("Device firmware 1.2.3", "Device firmware 1.2.3", ()),
+        ("Wireless speaker", "Bluetooth speaker v2.1", ("Bluetooth speaker v2.1",)),
+    ],
+)
+def test_indexed_title_parser_preserves_decimal_capacity_and_dotted_versions(
+    identity: Identity, name: str, title: str, aliases: tuple[str, ...]
+) -> None:
+    identity.create_product("selected", name)
+    add_candidate(identity, "same", title)
+    result = ProductMatcher(identity.catalog).suggest(
+        "selected", datetime.now(UTC), profile={"aliases": aliases}
+    )
+    assert set(candidates(result)) == {"same"}
+    assert result["suggestions"][0]["requires_review"] is True
+    assert not result["suggestions"][0]["conflicts"]
+    assert identity.links(datetime.now(UTC)) == []
+
+
+def test_native_decimal_query_keeps_explicit_variant_conflicts(identity: Identity) -> None:
+    identity.create_product("bottle", "Travel bottle 0.35 l")
+    add_candidate(identity, "same", "Travel bottle 0.35 l")
+    add_candidate(identity, "different", "Travel bottle 0.50 l")
+    rows = candidates(
+        ProductMatcher(identity.catalog).suggest(
+            "bottle", datetime.now(UTC), profile={"aliases": ["Travel bottle"]}
+        )
+    )
+    assert set(rows) == {"same", "different"}
+    assert not rows["same"]["conflicts"]
+    assert "numeric_variant_difference" in kinds(rows["different"])
+    assert rows["different"]["score"] <= 0.25
+
+
+@pytest.mark.parametrize(
+    "name,title,aliases",
+    [
+        ("Travel-bottle", "Travel bottle", ()),
+        ("Travel bottle", "Travel-bottle", ()),
+        ("USB-C adapter", "USB C adapter", ()),
+        ("USB C adapter", "USB-C adapter", ()),
+        ("Brosse-électrique", "Brosse électrique", ()),
+        ("Travel container", "Travel bottle", ("Travel-bottle",)),
+    ],
+)
+def test_native_queries_keep_normalized_compound_recall(
+    identity: Identity, name: str, title: str, aliases: tuple[str, ...]
+) -> None:
+    identity.create_product("selected", name)
+    add_candidate(identity, "normalized", title)
+    rows = candidates(
+        ProductMatcher(identity.catalog).suggest(
+            "selected", datetime.now(UTC), profile={"aliases": aliases}
+        )
+    )
+    assert set(rows) == {"normalized"}
+    assert rows["normalized"]["requires_review"] is True
+    assert not rows["normalized"]["conflicts"]
+    assert identity.links(datetime.now(UTC)) == []

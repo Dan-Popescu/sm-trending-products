@@ -108,16 +108,40 @@ def _terms(value: str) -> set[str]:
     return {term for term in _fold(value).split() if term not in STOP_WORDS}
 
 
-def _search_query(aliases: Sequence[str]) -> str:
+def _search_query(aliases: Sequence[str], connection) -> str:
+    variants = list(
+        dict.fromkeys(
+            text
+            for alias in aliases
+            for text in (
+                unicodedata.normalize("NFKC", alias).lower(),
+                " ".join(re.findall(r"[^\W_]+", unicodedata.normalize("NFKC", alias).lower())),
+                _fold(alias),
+                "".join(
+                    char
+                    for char in unicodedata.normalize("NFKD", alias.casefold())
+                    if not unicodedata.combining(char)
+                ),
+            )
+        )
+    )
+    # Native forms preserve decimals/versions; normalized words retain historical
+    # recall for spaced/hyphenated titles. At most 36 variants share one bounded batch.
+    parsed = connection.execute(
+        "SELECT a.ordinality,array_agg(t.lexeme ORDER BY t.positions[1],t.lexeme) AS terms "
+        "FROM unnest(%s::text[]) WITH ORDINALITY a(title,ordinality) "
+        "CROSS JOIN LATERAL unnest(to_tsvector('simple',a.title)) t "
+        "GROUP BY a.ordinality ORDER BY a.ordinality",
+        (variants,),
+    ).fetchall()
     clauses = set()
-    for alias in aliases:
-        for text in (unicodedata.normalize("NFKC", alias).lower(), _fold(alias)):
-            terms = list(dict.fromkeys(re.findall(r"[^\W_]+", text)))
-            terms = [term for term in terms if _fold(term) not in STOP_WORDS and len(term) <= 64][
-                :16
-            ]
-            if terms:
-                clauses.add("(" + " & ".join("'" + term + "'" for term in terms) + ")")
+    for row in parsed:
+        terms = [
+            term for term in row["terms"] if _fold(term) not in STOP_WORDS and len(term) <= 64
+        ][:16]
+        if terms:
+            escaped = [term.replace("\\", "\\\\").replace("'", "\\'") for term in terms]
+            clauses.add("(" + " & ".join("'" + term + "'" for term in escaped) + ")")
     if not clauses:
         raise ValueError("Provide at least one informative product name or alias")
     return " | ".join(sorted(clauses))
@@ -317,7 +341,7 @@ class ProductMatcher:
                 raise ValueError("Product is not known in this workspace at the selected cutoff")
             aliases = tuple(dict.fromkeys((product["name"], *target.aliases)))
             try:
-                query = _search_query(aliases)
+                query = _search_query(aliases, connection)
             except ValueError:
                 if not target.identifiers:
                     raise
