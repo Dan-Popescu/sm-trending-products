@@ -68,6 +68,11 @@ T14 must not promise a capacity number before measurement. This plan builds the 
 
 ## Published issues
 
+The approved [hot CPU mode specification](../../specs/hot-cpu-mode.md) is tracked
+by [#122](https://github.com/Dan-Popescu/sm-trending-products/issues/122). This
+host-only slice protects acquisition and changes analytical CPU quotas in place;
+it requires no VPS or live-source deployment to qualify its controlled behavior.
+
 The approved [resource-efficiency specification](../../specs/resource-efficiency.md)
 tracks the next measured optimizations and the clarified ecommerce cadence:
 

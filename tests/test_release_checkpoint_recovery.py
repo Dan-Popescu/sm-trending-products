@@ -84,7 +84,7 @@ def test_new_signed_request_supersedes_rollback_after_high_water_checkpoint_cras
     assert authority.rollback_state() is None
     runtime = object.__new__(HostRuntime)
     runtime.catalog = pipeline.catalog
-    runtime.config = SimpleNamespace(target="fixture")
+    runtime.config = SimpleNamespace(target="fixture", state_directory=authority.directory)
     runtime.authorization = authority
     runtime.trust = authority.trust
     runtime.controller = lambda current: controller
@@ -110,7 +110,7 @@ def test_private_rollback_action_recovers_missing_routing_marker_before_processi
     assert controller.apply(row["release_id"])["status"] == "completed"
     runtime = object.__new__(HostRuntime)
     runtime.catalog = pipeline.catalog
-    runtime.config = SimpleNamespace(target="fixture")
+    runtime.config = SimpleNamespace(target="fixture", state_directory=authority.directory)
     runtime.authorization = authority
     runtime.trust = authority.trust
     runtime.controller = lambda current: controller

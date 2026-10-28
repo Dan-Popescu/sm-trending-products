@@ -16,6 +16,11 @@ from .catalog import Catalog
 from .contracts import canonical, utc
 from .release_control import ReleaseBlocked, ReleaseManifest, ReleaseTrust, VerifiedRelease
 from .release_host import ComposeReleaseHost
+from .resource_cpu_state import (
+    INDEPENDENT_SERVICES,
+    independent_environment,
+    load_cpu_policy,
+)
 
 PROCESSING_SERVICES = ("normalizer", "dagster-daemon", "dagster-webserver", "dashboard")
 PLANNERS = {"blue": "capture-planner", "green": "capture-planner-green"}
@@ -163,7 +168,11 @@ class ProcessingRefresh:
 
     def _admit_role(self, service: str) -> None:
         capacity = self.host.capacity
-        if capacity is None:
+        policy = load_cpu_policy(self.host.lock_directory, self.host.project)
+        require_independent = bool(
+            policy and policy.mode == "economy" and service in INDEPENDENT_SERVICES
+        )
+        if capacity is None and not require_independent:
             return
         # Compose is private host configuration. Discard its raw output, which
         # can include environment secrets; retain only explicit numeric limits.
@@ -171,6 +180,12 @@ class ProcessingRefresh:
             config = json.loads(
                 self.host._command([*self.host._compose(), "config", "--format", "json", service])
             )["services"][service]
+            # The trusted configuration can change between resumable refresh
+            # attempts. Never create a legacy source collector with economy pins.
+            if require_independent and not independent_environment(config.get("environment")):
+                raise ReleaseBlocked("cpu_legacy_collection_active")
+            if capacity is None:
+                return
             memory, cpus = int(config["mem_limit"]), float(config["cpus"])
             if memory <= 0 or not math.isfinite(cpus) or cpus <= 0:
                 raise ValueError("Unbounded role")

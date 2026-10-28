@@ -126,7 +126,37 @@ class ComposeReleaseHost:
         if target != self.project:
             raise ReleaseBlocked("deployment_target_mismatch")
 
-    def _command(self, arguments: list[str], *, timeout: int = 45) -> str:
+    def _command(
+        self,
+        arguments: list[str],
+        *,
+        timeout: int = 45,
+        cpu_overrides: dict[str, int] | None = None,
+    ) -> str:
+        from .resource_cpu_state import (
+            CPU_VARIABLES,
+            cpu_environment,
+            cpu_transition_pending,
+            validate_quotas,
+        )
+
+        pins = cpu_environment(self.lock_directory, self.project)
+        if cpu_overrides is not None:
+            # Prospective pins may only inspect the effective Compose config;
+            # they cannot authorize creation with uncommitted policy settings.
+            if arguments != [*self._compose(), "config", "--format", "json"]:
+                raise ValueError("CPU overrides are restricted to Compose configuration preview")
+            validate_quotas(cpu_overrides)
+            pins = {
+                variable: format(cpu_overrides[service] / 10**9, ".9f")
+                for service, variable in CPU_VARIABLES.items()
+            }
+        mutating_release = arguments[0] in {"pull", "stop"} or (
+            arguments[0] == "compose"
+            and any(value in {"up", "down", "restart", "stop", "rm"} for value in arguments)
+        )
+        if mutating_release and cpu_transition_pending(self.lock_directory, self.project):
+            raise ReleaseBlocked("cpu_transition_recovery_required")
         environment = dict(os.environ)
         # The controller is local. Inherited selectors must not redirect writes
         # to another Docker daemon or a remote endpoint.
@@ -144,6 +174,9 @@ class ComposeReleaseHost:
         for variable in ROLE_IMAGE_VARIABLES:
             environment.pop(variable, None)
         environment.update(self.role_images or {})
+        # Host-private CPU pins are authoritative even when a console or service
+        # manager inherited conflicting Compose interpolation variables.
+        environment.update(pins)
         try:
             result = subprocess.run(
                 [self.docker, "--host=unix:///var/run/docker.sock", *arguments],

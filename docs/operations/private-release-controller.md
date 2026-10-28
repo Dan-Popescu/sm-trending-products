@@ -111,6 +111,11 @@ workflow identity or disable signature verification. See
 
 ## Request and monitor an update
 
+For live analytical CPU changes, use the [hot CPU mode commands](hot-cpu-mode.md)
+after upgrading this independently trusted controller. Their private state shares
+the release lock and persists CPU pins for later processing creation. An
+interrupted CPU transition must recover before release mutations proceed.
+
 Run the main release workflow with the desired full main revision and `deploy`
 enabled. CI requires successful checks for that exact revision, publishes its
 image by digest, signs the manifest, then signs a pilot deployment request.
@@ -170,8 +175,8 @@ demonstrate cryptographic publication, actual VPS rollout or TikTok continuity;
 those require their separate qualification evidence.
 
 Back up the private controller configuration, accepted-request counter,
-authorization seals and processing journal separately through a trusted encrypted
-host-admin backup. The application PostgreSQL/S3 checkpoint deliberately cannot
+authorization seals, processing journal and CPU policy/recovery journal separately
+through a trusted encrypted host-admin backup. The application PostgreSQL/S3 checkpoint deliberately cannot
 read these root-only files. After disaster recovery, keep the deployment timer
 disabled until the restored SQL, actual containers and private controller state
 are reconciled; an older SQL dump must not silently reset deployment authority.
