@@ -34,11 +34,14 @@ accepted by this mode.
 - Check acquisition health conservatively before lowering quotas. Retain the
   existing source deadlines: a heartbeat alone does not establish coverage and
   this feature does not issue artificial source requests to qualify itself.
-  Inspect at most 1,001 current uncaptured obligations through the indexed
-  frontier; more than 1,000 conservatively rejects economy. This sampled guard
-  does not rescan all retained history or certify every completed capture.
+  Inspect at most 1,001 originally due uncaptured obligations through the indexed
+  frontier; more than 1,000 conservatively rejects economy. Future scheduled
+  obligations do not consume this budget, and retry deferral cannot hide an
+  original missed deadline. This sampled guard does not rescan all retained
+  history or certify every completed capture.
 - Recheck effective host CPU and aggregate running quotas plus reserve before
   increasing ceilings. Old capacity is not a permanent resource reservation.
+  Pure reductions, including recovery to economy, remain available under pressure.
 - Persist private intent, original quotas and verified container identities
   before the first Docker mutation. Verify the result before publishing the
   committed profile. Roll back a failed or uncertain transition; retain recovery

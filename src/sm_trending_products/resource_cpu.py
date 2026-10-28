@@ -220,6 +220,7 @@ class CpuModeController:
         pending = self.catalog.one(
             "WITH pending AS MATERIALIZED (SELECT deadline_at FROM capture_obligations "
             "WHERE synthetic=%s AND capture_dataset_id IS NULL "
+            "AND original_due_at<=statement_timestamp() "
             "ORDER BY original_due_at,obligation_id LIMIT 1001) "
             "SELECT count(*)<=1000 AND coalesce(bool_and(deadline_at IS NOT NULL "
             "AND deadline_at>=clock_timestamp()),true) AS healthy FROM pending",
@@ -232,19 +233,16 @@ class CpuModeController:
         return {row.service: row.nanocpus for row in containers if row.service in CPU_VARIABLES}
 
     def _admit(self, current: tuple[CpuContainer, ...], quotas: dict[str, int]) -> None:
+        increase = sum(
+            max(0, quotas[row.service] - row.nanocpus) for row in current if row.service in quotas
+        )
+        if increase == 0:
+            return  # Reducing verified live quotas needs no additional host capacity.
         if self.host.capacity is None:
             return  # Explicit controlled-test host, matching the existing release adapter.
         try:
             allocated = self.host.capacity._allocations()["allocated_cpus"]
-            required = (
-                allocated
-                + sum(
-                    max(0, quotas[row.service] - row.nanocpus) / 10**9
-                    for row in current
-                    if row.service in quotas
-                )
-                + self.host.capacity.budget.cpu_reserve
-            )
+            required = allocated + increase / 10**9 + self.host.capacity.budget.cpu_reserve
             limit = _host_limits()["cpus"]
             if (
                 not all(math.isfinite(value) for value in (required, limit))

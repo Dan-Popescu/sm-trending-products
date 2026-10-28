@@ -489,11 +489,19 @@ def test_native_capture_guard_uses_current_pending_windows_and_a_bounded_budget(
         ),
         synthetic=True,
     )
+    # Future collection windows do not consume the current due-inspection budget.
     pipeline.catalog.execute(
         "INSERT INTO collection_tasks(task_id,source,account_id,operation,payload,"
         "synthetic,due_at) "
-        "SELECT 'cpu-'||n::text,'tiktok_display','fixture-account','query','{}'::jsonb,true,"
-        "clock_timestamp()+interval '1 day' FROM generate_series(1,1000) n"
+        "SELECT 'cpu-future-'||n::text,'tiktok_display','fixture-account','query','{}'::jsonb,true,"
+        "statement_timestamp()+interval '1 day' FROM generate_series(1,1001) n"
+    )
+    assert controller._healthy()
+    pipeline.catalog.execute(
+        "INSERT INTO collection_tasks(task_id,source,account_id,operation,payload,"
+        "synthetic,due_at) "
+        "SELECT 'cpu-due-'||n::text,'tiktok_display','fixture-account','query','{}'::jsonb,true,"
+        "statement_timestamp() FROM generate_series(1,1000) n"
     )
     assert controller._healthy()
     extra = pipeline.catalog.enqueue(
@@ -508,7 +516,7 @@ def test_native_capture_guard_uses_current_pending_windows_and_a_bounded_budget(
     assert not controller._healthy()
     pipeline.catalog.execute("DELETE FROM collection_tasks WHERE task_id=%s", (extra,))
     assert controller._healthy()
-    pipeline.catalog.execute("DELETE FROM collection_tasks WHERE task_id='cpu-1000'")
+    pipeline.catalog.execute("DELETE FROM collection_tasks WHERE task_id LIKE 'cpu-due-%%'")
     pipeline.capture_contracts.register(
         CapturePolicy(
             source="tiktok_display",
@@ -520,7 +528,7 @@ def test_native_capture_guard_uses_current_pending_windows_and_a_bounded_budget(
         ),
         synthetic=True,
     )
-    pipeline.catalog.enqueue(
+    expired = pipeline.catalog.enqueue(
         "tiktok_display",
         "expiry-account",
         "query",
@@ -529,6 +537,77 @@ def test_native_capture_guard_uses_current_pending_windows_and_a_bounded_budget(
         due_at=datetime.now(UTC) + timedelta(milliseconds=100),
         idempotency_key="expiry",
     )
+    pipeline.catalog.execute(
+        "UPDATE collection_tasks SET due_at=clock_timestamp()+interval '1 day' WHERE task_id=%s",
+        (expired,),
+    )
     time.sleep(0.15)
     assert not controller._healthy()
+    assert controller.fixture.calls == 0
+
+
+def test_lowering_cpu_is_allowed_when_host_has_no_spare_capacity(controller, monkeypatch):
+    from dataclasses import replace
+
+    capacity = SimpleNamespace(
+        _allocations=lambda: {"allocated_cpus": 4.0},
+        budget=CapacityBudget(cpu_reserve=0.25),
+    )
+    controller.host = replace(controller.host, capacity=capacity)
+    controller.fixture.host = controller.host
+    monkeypatch.setattr(resource_cpu, "_host_limits", lambda: {"cpus": 4})
+    assert controller.switch("economy")["mode"] == "economy"
+    calls = controller.fixture.calls
+    with pytest.raises(ReleaseBlocked, match="cpu_headroom_insufficient"):
+        controller.switch("standard")
+    assert controller.fixture.calls == calls
+    assert controller.status()["mode"] == "economy"
+
+
+def test_recovering_an_interrupted_cpu_increase_needs_no_fresh_headroom(controller, monkeypatch):
+    from dataclasses import replace
+
+    controller.switch("economy")
+    expected = copy.deepcopy(controller.fixture.rows)
+    capacity = SimpleNamespace(
+        _allocations=lambda: {"allocated_cpus": 3.0},
+        budget=CapacityBudget(cpu_reserve=0.25),
+    )
+    controller.host = replace(controller.host, capacity=capacity)
+    controller.fixture.host = controller.host
+    monkeypatch.setattr(resource_cpu, "_host_limits", lambda: {"cpus": 4})
+    controller.fixture.crash_update = controller.fixture.calls + 1
+    with pytest.raises(KeyboardInterrupt):
+        controller.switch("standard")
+    assert cpu_transition_pending(controller.host.lock_directory, "fixture")
+
+    def unavailable():
+        raise OSError("capacity read unavailable after the interrupted increase")
+
+    capacity._allocations = unavailable
+    monkeypatch.setattr(resource_cpu, "_host_limits", unavailable)
+    assert controller.reconcile()["recovered"]
+    assert controller.fixture.rows == expected
+    assert controller.status()["mode"] == "economy"
+
+
+def test_mixed_changes_admit_each_positive_delta_without_offsetting_reductions(
+    controller, monkeypatch
+):
+    from dataclasses import replace
+
+    capacity = SimpleNamespace(
+        _allocations=lambda: {"allocated_cpus": 3.75},
+        budget=CapacityBudget(cpu_reserve=0.25),
+    )
+    controller.host = replace(controller.host, capacity=capacity)
+    controller.fixture.host = controller.host
+    monkeypatch.setattr(resource_cpu, "_host_limits", lambda: {"cpus": 4})
+    current = controller._inventory()
+    quotas = controller._quotas(current)
+    quotas["dagster-daemon"] += 100_000_000
+    quotas["dagster-webserver"] -= 100_000_000
+    quotas["dashboard"] -= 100_000_000
+    with pytest.raises(ReleaseBlocked, match="cpu_headroom_insufficient"):
+        controller._admit(current, quotas)
     assert controller.fixture.calls == 0

@@ -85,10 +85,12 @@ Deployment mutations wait for that recovery. An identity or protected-resource
 change blocks automated restoration rather than updating an unexamined runtime.
 
 Before lowering quotas, the controller checks active acquisition health and
-overdue/unknown outstanding capture obligations. This uses the existing indexed
-pending frontier and inspects at most 1,001 obligations; more than 1,000 pending
-items conservatively blocks economy rather than scanning a massive queue. It
-does not retrospectively certify every already completed capture. In economy, subsequent timer
+overdue/unknown obligations whose original collection time is already due. This
+uses the existing indexed pending frontier and inspects at most 1,001 such
+obligations; more than 1,000 conservatively blocks economy rather than scanning
+a massive queue. Future scheduled work does not consume this budget; deferring
+a retry cannot hide its original missed deadline. The guard does not
+retrospectively certify every completed capture. In economy, subsequent timer
 polls request standard mode if the capture guard becomes unhealthy. This is a
 conservative signal: source failures or intentional source withdrawal can also
 cause restoration; the guard does not attribute every failure to CPU limits.
@@ -102,6 +104,8 @@ container can therefore leave a visible recovery block. Inspect `cpu-status`
 and the service journal, restore capacity or reconcile the independent host
 change, then run `cpu-recover`. Collection continues with its untouched settings;
 never use Compose down, kill a collector or delete its spool as a remedy.
+Pure reductions do not require extra host CPU headroom; recovery to economy
+remains possible when another workload has consumed the available reserve.
 
 These protections avoid restarting or throttling capture as part of this mode.
 They do not prove that arbitrary workloads meet source deadlines, reserve

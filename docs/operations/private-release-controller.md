@@ -175,8 +175,8 @@ demonstrate cryptographic publication, actual VPS rollout or TikTok continuity;
 those require their separate qualification evidence.
 
 Back up the private controller configuration, accepted-request counter,
-authorization seals and processing journal separately through a trusted encrypted
-host-admin backup. The application PostgreSQL/S3 checkpoint deliberately cannot
+authorization seals, processing journal and CPU policy/recovery journal separately
+through a trusted encrypted host-admin backup. The application PostgreSQL/S3 checkpoint deliberately cannot
 read these root-only files. After disaster recovery, keep the deployment timer
 disabled until the restored SQL, actual containers and private controller state
 are reconciled; an older SQL dump must not silently reset deployment authority.
