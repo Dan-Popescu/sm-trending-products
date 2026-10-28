@@ -179,6 +179,29 @@ and frozen outcomes. The core catalog fingerprint alone does not cover these
 optional tables. A missing object or record fails the recovery check; replaying a
 previously completed report is not treated as fresh evidence verification.
 
+CI also seeds `scripts/research_recovery_fixture.py` before backup. Its ten checks
+cover an immutable research protocol, selected-policy lock, held-out attempt and
+lineage owner; a reviewed category assignment; permissioned quoted text and its
+reviewed context; one free local analysis reused by two requests; and optional
+module versions/checksums. The protocol uses fixed synthetic dates and an empty
+attention panel: it qualifies persistence and guards, not predictive usefulness.
+
+The CI-only expected receipt remains outside the sealed backup. CI supplies its
+explicit path and SHA-256 through `RESEARCH_RECOVERY_RECEIPT` and
+`RESEARCH_RECOVERY_SHA256` to the opt-in isolated restore. The receipt is mounted
+read-only, with its size, checksum and JSON shape checked before application
+access. Verification performs fresh public reads and compares the known immutable
+fixture rows and hashes; it never initializes, executes validation, analyzes text
+or reserves additional work. Live state, enabled source capabilities and remote
+object stores are refused. Ordinary restores do not invoke this fixture, and
+capture schema, catalog export hashes and production backup metadata are unchanged.
+
+Native tests can additionally use an existing disposable PostgreSQL test container
+by setting `RESEARCH_TEST_PG_CONTAINER`. They run real `pg_dump`/`pg_restore` into a
+new isolated database, verify the research receipt, then prove that a lost lineage
+owner fails verification. That local database round trip reuses its fixture HTTP
+objects; CI separately qualifies restoration from copied object bytes.
+
 The local rehearsal uses Moto and checks logical evidence recovery. Native PostgreSQL is used in the container exercise. Real provider versioning, access policies, encryption, and durability require separate provider acceptance. Record elapsed restore time, data volume, missing objects, and verification output; decide recovery objectives from measured results.
 
 ## Recovery after an incident
