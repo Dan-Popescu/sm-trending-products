@@ -149,6 +149,13 @@
       "number": 23,
       "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/23",
       "kind": "ticket"
+    },
+    {
+      "path": "docs/specs/bounded-evidence-windows.md",
+      "title": "Deepen bounded Evidence windows and preserve coherent input provenance",
+      "number": 144,
+      "url": "https://github.com/Dan-Popescu/sm-trending-products/issues/144",
+      "kind": "ticket"
     }
   ]
 }

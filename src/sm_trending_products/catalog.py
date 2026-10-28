@@ -17,6 +17,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from .analysis_batches import WindowMetadataBudget
 from .contracts import Observation, canonical, digest, utc
 from .worker_control import WorkerControl
 
@@ -488,6 +489,175 @@ class Catalog:
             )
         )
 
+    @staticmethod
+    def _object_time_scope(as_of, since, until, period_window=None):
+        clauses, params = [], []
+        if as_of:
+            clauses.append("(o.min_available_at IS NULL OR o.min_available_at<=%s)")
+            params.append(as_of)
+        observed = []
+        if since:
+            observed.append("(o.max_observed_at IS NULL OR o.max_observed_at>=%s)")
+            params.append(since)
+        if until:
+            observed.append("(o.min_observed_at IS NULL OR o.min_observed_at<=%s)")
+            params.append(until)
+        if observed:
+            predicate = " AND ".join(observed)
+            if period_window is not None:
+                predicate = (
+                    "(" + predicate + ") OR NOT o.periods_indexed OR "
+                    "(o.max_period_start>=%s AND o.min_period_end<=%s)"
+                )
+                params.extend(period_window)
+            clauses.append("(" + predicate + ")")
+        return clauses, params
+
+    @contextmanager
+    def window_snapshot(self, synthetic: bool):
+        """Start the metadata snapshot only after acquiring the retention fence.
+
+        A repeatable-read transaction would otherwise take its snapshot before
+        waiting for a transaction advisory lock. Hold a session fence across the
+        short admission transaction and the subsequent read-only snapshot on the
+        same checked-out connection. Never return a locked session to the pool.
+        """
+        with self.pool.connection() as connection:
+            try:
+                with connection.transaction():
+                    connection.execute("SET LOCAL statement_timeout='30s'")
+                    connection.execute("SET LOCAL lock_timeout='10s'")
+                    connection.execute("SELECT pg_advisory_lock_shared(%s)", (RETENTION_GUARD_KEY,))
+                with connection.transaction():
+                    connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                    connection.execute("SET LOCAL statement_timeout='30s'")
+                    connection.execute("SET LOCAL lock_timeout='10s'")
+                    self.guard_namespace(connection, synthetic)
+                    yield connection
+            finally:
+                try:
+                    with connection.transaction():
+                        connection.execute(
+                            "SELECT pg_advisory_unlock_shared(%s)", (RETENTION_GUARD_KEY,)
+                        )
+                except BaseException:
+                    connection.close()
+                    raise
+
+    def select_window_objects(
+        self, connection, owners, cutoff, since, synthetic, budget: WindowMetadataBudget
+    ) -> list[dict]:
+        """Gate descriptor transfer in SQL, including a single very large dataset.
+
+        The caller holds a repeatable-read metadata snapshot and retention fence.
+        Only an admitted collection is aggregated; a refused query returns scalar
+        totals without descriptor JSON. SQL execution retains its statement budget.
+        """
+        if not owners:
+            return []
+        clauses, params = self._object_time_scope(cutoff, since, cutoff)
+        fields = (
+            "dataset_id,source,synthetic,state,transform_version,created_at,committed_at,"
+            "min_available_at,max_available_at,row_count,quarantine_count"
+        ).split(",")
+        dataset = "jsonb_build_object(" + ",".join(f"'{name}',d.{name}" for name in fields) + ")"
+        body = (
+            "jsonb_build_object('object_id',o.object_id,'dataset_id',o.dataset_id,"
+            "'object_key',o.object_key,'descriptor',o.descriptor,'dataset'," + dataset + ")"
+        )
+        max_objects, max_bytes = (
+            budget.max_objects - budget.objects,
+            budget.max_bytes - budget.bytes,
+        )
+        result = connection.execute(
+            "WITH requested(entity_key,product_id) AS MATERIALIZED ("
+            "SELECT * FROM unnest(%s::text[],%s::text[])), candidates AS MATERIALIZED ("
+            "SELECT d.created_at,d.dataset_id,o.object_key," + body + " AS body,"
+            "(SELECT count(DISTINCT r.product_id) FROM normalized_object_entities e "
+            "JOIN requested r USING(entity_key) WHERE e.object_id=o.object_id) AS memberships "
+            "FROM datasets d JOIN normalized_objects o USING(dataset_id) "
+            "WHERE d.state='committed' AND d.compacted_into IS NULL AND d.synthetic=%s "
+            "AND (d.min_available_at<=%s OR d.row_count=0) "
+            "AND (d.max_available_at>=%s OR d.row_count=0) "
+            "AND EXISTS(SELECT 1 FROM normalized_object_entities e JOIN requested r "
+            "USING(entity_key) WHERE e.object_id=o.object_id) AND "
+            + " AND ".join(clauses)
+            + " ORDER BY d.created_at,d.dataset_id,o.object_key LIMIT %s), "
+            "admission AS MATERIALIZED (SELECT count(*) AS objects,"
+            "COALESCE(sum(octet_length(body::text)+512+128*memberships),0)::bigint AS bytes "
+            "FROM candidates) SELECT objects,bytes,CASE WHEN objects<=%s AND bytes<=%s THEN "
+            "(SELECT jsonb_agg(body ORDER BY created_at,dataset_id,object_key) FROM candidates) "
+            "ELSE NULL END AS records FROM admission",
+            (
+                list(owners),
+                list(owners.values()),
+                synthetic,
+                cutoff,
+                since,
+                *params,
+                max_objects + 1,
+                max_objects,
+                max_bytes,
+            ),
+        ).fetchone()
+        assert result is not None
+        budget.admit(result["objects"], result["bytes"])
+        rows = result["records"] or []
+        for row in rows:
+            row["state"], row["compacted_into"] = "committed", None
+            for name in ("created_at", "committed_at", "min_available_at", "max_available_at"):
+                if row["dataset"][name] is not None:
+                    row["dataset"][name] = utc(row["dataset"][name])
+        return rows
+
+    def select_window_state(self, connection, product_ids, budget: WindowMetadataBudget):
+        """Admit optional pointer/coverage bytes before transferring their values."""
+        headers = connection.execute(
+            "SELECT w.product_id,CASE WHEN cardinality(w.covered_object_ids)<=%s THEN "
+            "octet_length(to_jsonb(w)::text)+512+128*cardinality(w.covered_object_ids) "
+            "ELSE NULL END AS metadata_bytes FROM feature_product_windows w "
+            "JOIN derived_publications p ON p.object_key=w.audit_root "
+            "WHERE w.product_id=ANY(%s) AND w.state='ready' AND p.state='committed' "
+            "AND NOT EXISTS(SELECT 1 FROM retention_objects r "
+            "WHERE r.object_key=w.descriptor->>'key') ORDER BY w.product_id",
+            (budget.max_objects, product_ids),
+        ).fetchall()
+        admitted = [
+            row["product_id"]
+            for row in headers
+            if row["metadata_bytes"] is not None
+            and budget.admit(0, row["metadata_bytes"], optional=True)
+        ]
+        return (
+            connection.execute(
+                "SELECT * FROM feature_product_windows WHERE product_id=ANY(%s)", (admitted,)
+            ).fetchall()
+            if admitted
+            else []
+        )
+
+    def select_prior_window_objects(self, connection, identifiers, budget: WindowMetadataBudget):
+        """Decline optional prior coverage without bypassing metadata admission."""
+        if not identifiers:
+            return []
+        max_objects = budget.max_objects - budget.objects
+        max_bytes = budget.max_bytes - budget.bytes
+        result = connection.execute(
+            "WITH candidates AS MATERIALIZED (SELECT jsonb_build_object("
+            "'object_id',o.object_id,'descriptor',o.descriptor,'state',d.state,"
+            "'compacted_into',d.compacted_into) AS body FROM normalized_objects o "
+            "JOIN datasets d USING(dataset_id) WHERE o.object_id=ANY(%s) "
+            "ORDER BY o.object_id LIMIT %s), admission AS MATERIALIZED ("
+            "SELECT count(*) AS objects,COALESCE(sum(octet_length(body::text)+512),0)::bigint "
+            "AS bytes FROM candidates) SELECT objects,bytes,CASE WHEN objects<=%s AND bytes<=%s "
+            "THEN (SELECT jsonb_agg(body) FROM candidates) ELSE NULL END AS records FROM admission",
+            (identifiers, max_objects + 1, max_objects, max_bytes),
+        ).fetchone()
+        assert result is not None
+        if not budget.admit(result["objects"], result["bytes"], optional=True):
+            return []
+        return result["records"] or []
+
     def iter_manifests(
         self,
         *,
@@ -539,28 +709,12 @@ class Catalog:
                 "AND e.entity_key=ANY(%s)) "
             )
             object_params: list[Any] = [sorted(entity_keys)]
-            if as_of:
-                joins += "AND (o.min_available_at IS NULL OR o.min_available_at<=%s) "
-                object_params.append(as_of)
-            observed_clauses = []
-            if since:
-                observed_clauses.append("(o.max_observed_at IS NULL OR o.max_observed_at>=%s)")
-                object_params.append(since)
-            if until:
-                observed_clauses.append("(o.min_observed_at IS NULL OR o.min_observed_at<=%s)")
-                object_params.append(until)
-            if observed_clauses:
-                observed_scope = " AND ".join(observed_clauses)
-                if period_window is not None:
-                    # Unknown legacy metadata must remain a conservative match.
-                    # Extrema are necessary conditions for any contained report,
-                    # with exact row-level period validation retained in History.
-                    observed_scope = (
-                        "(" + observed_scope + ") OR NOT o.periods_indexed OR "
-                        "(o.max_period_start>=%s AND o.min_period_end<=%s)"
-                    )
-                    object_params.extend(period_window)
-                joins += "AND (" + observed_scope + ") "
+            object_clauses, time_params = self._object_time_scope(
+                as_of, since, until, period_window
+            )
+            if object_clauses:
+                joins += "AND " + " AND ".join(object_clauses) + " "
+            object_params.extend(time_params)
             joins += ") selected ON selected.objects IS NOT NULL "
             clauses.append(
                 "EXISTS (SELECT 1 FROM normalized_object_entities matching "
