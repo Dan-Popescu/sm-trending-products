@@ -41,6 +41,8 @@ class DashboardPipeline(Protocol):
 
     def product_matcher(self) -> Any: ...
 
+    def transcript_insights(self) -> Any: ...
+
     def products(
         self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
     ) -> list[Row]: ...
@@ -732,6 +734,7 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
                 "Opportunities",
                 "Catalog",
                 "Launch preparation",
+                "Transcript insights",
                 "Collection plan",
                 "Datasets and evaluations",
                 "Health and coverage",
@@ -758,7 +761,7 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
         st.success(notice)
     # Read results on every interaction, but only for the selected view. No result
     # cache can retain pre-mutation identity or source-capability state.
-    if view in {"Opportunities", "Catalog"}:
+    if view in {"Opportunities", "Catalog", "Transcript insights"}:
         product_page = st.number_input(
             "Product page", min_value=1, value=1, step=1, key="product_page"
         )
@@ -769,7 +772,11 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
             ),
             [],
         )
-        if view == "Opportunities":
+        if view == "Transcript insights":
+            from sm_trending_products.transcript_dashboard import render_transcripts
+
+            render_transcripts(pipeline.transcript_insights(), products, synthetic)
+        elif view == "Opportunities":
             _opportunities(pipeline, products, as_of, synthetic)
             if st.checkbox("Inspect multi-day product growth", value=False):
                 from sm_trending_products.trend_dashboard import render_trends

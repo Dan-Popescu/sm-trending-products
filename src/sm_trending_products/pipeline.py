@@ -125,6 +125,11 @@ class Pipeline:
 
         return ProductMatcher(self.catalog)
 
+    def transcript_insights(self):
+        from .enrichment import TranscriptInsights
+
+        return TranscriptInsights(self.catalog, self.provenance)
+
     def initialize(self, create_bucket: bool = False) -> dict:
         self.catalog.initialize()
         self.history.initialize(create_bucket)
