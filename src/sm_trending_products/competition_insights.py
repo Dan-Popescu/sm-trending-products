@@ -598,6 +598,7 @@ def _prices(entity_key, observations, cutoff, selected_scope, conflicting):
     exclusions: Counter[str] = Counter()
     matching = [row for row in observations if _scope(row) == selected_scope]
     context = None
+    collection_scope_id = digest(selected_scope)
     for row in observations:
         if _scope(row) != selected_scope:
             previous = None
@@ -619,7 +620,13 @@ def _prices(entity_key, observations, cutoff, selected_scope, conflicting):
             if previous["signature"] != quote["signature"]:
                 exclusions["changed_variant_currency_tax_shipping_or_price_basis"] += 1
             else:
-                changes.append(_price_change(previous, quote))
+                changes.append(
+                    {
+                        **_price_change(previous, quote),
+                        "price_context": context,
+                        "collection_scope_id": collection_scope_id,
+                    }
+                )
         previous = quote
     if conflicting:
         exclusions["conflicting_revision_history"] += 1
@@ -629,6 +636,7 @@ def _prices(entity_key, observations, cutoff, selected_scope, conflicting):
         "status": "observed" if changes else "not_comparable",
         "reason": None if changes else "insufficient_compatible_price_history",
         "price_context": context,
+        "price_context_scope": "latest_valid_quote",
         "last_observation_age_hours": (cutoff - utc(matching[-1].observed_at)).total_seconds()
         / 3600,
         "quote_count": len(matching),

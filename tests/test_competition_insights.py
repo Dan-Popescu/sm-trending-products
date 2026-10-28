@@ -188,6 +188,71 @@ def test_currency_variant_tax_shipping_and_basis_changes_do_not_make_price_press
     }
 
 
+def test_price_intervals_retain_their_currency_before_the_latest_currency_switch(pipeline):
+    base = now()
+    rows = [
+        observation("quote", base + timedelta(hours=index), price=price, currency=currency)
+        for index, (price, currency) in enumerate(
+            (("20", "EUR"), ("18", "EUR"), ("30", "USD"), ("25", "USD"))
+        )
+    ]
+    insights, cutoff, _ = seed(pipeline, rows)
+    scope = insights.describe("competitive", cutoff, True)["scopes"][0]
+    offer = scope["price_offers_preview"][0]
+    assert offer["price_context"]["currency"] == "USD"
+    assert offer["observed_decrease_count"] == 2
+    assert [row["change_lower"] for row in offer["intervals_preview"]] == ["-2", "-5"]
+    assert [row["price_context"]["currency"] for row in offer["intervals_preview"]] == [
+        "EUR",
+        "USD",
+    ]
+
+
+@pytest.mark.parametrize(
+    "field,initial,changed",
+    [
+        ("currency", "EUR", "USD"),
+        ("variant_id", "blue-1pack", "red-2pack"),
+        ("tax_basis", "tax_included", "tax_excluded"),
+        ("shipping_basis", "shipping_excluded", "shipping_included"),
+        ("price_basis", "per_item", "per_pack"),
+    ],
+)
+def test_price_context_round_trips_keep_each_interval_and_never_bridge_transitions(
+    pipeline, field, initial, changed
+):
+    base = now()
+    rows = [
+        observation("quote", base + timedelta(hours=index), price=price, **{field: context})
+        for index, (price, context) in enumerate(
+            (
+                ("20", initial),
+                ("18", initial),
+                ("30", changed),
+                ("25", changed),
+                ("20", initial),
+                ("19", initial),
+            )
+        )
+    ]
+    insights, cutoff, _ = seed(pipeline, rows)
+    scope = insights.describe("competitive", cutoff, True)["scopes"][0]
+    offer = scope["price_offers_preview"][0]
+    intervals = offer["intervals_preview"]
+    assert [row["change_lower"] for row in intervals] == ["-2", "-5", "-1"]
+    assert [row["price_context"][field] for row in intervals] == [initial, changed, initial]
+    assert all(row["collection_scope_id"] == scope["scope_id"] for row in intervals)
+    assert all(row["interval_hours"] == 1 for row in intervals)
+    assert [row["evidence_refs"] for row in intervals] == [
+        [rows[index]["observation_id"], rows[index + 1]["observation_id"]] for index in (0, 2, 4)
+    ]
+    assert offer["comparable_interval_count"] == offer["observed_decrease_count"] == 3
+    assert offer["excluded_quotes_or_intervals"] == {
+        "changed_variant_currency_tax_shipping_or_price_basis": 2
+    }
+    assert offer["price_context_scope"] == "latest_valid_quote"
+
+
 def test_unknown_price_context_bounded_quotes_and_revisions_stay_explicit(pipeline):
     base = now()
     rows = [

@@ -179,10 +179,75 @@ def test_competition_dashboard_sanitizes_every_scope_timeline_and_price_frame(
     monkeypatch.setenv("REVIEW_API_SECRET", secret)
     app = _app(pipeline, cutoff)
     _field(app, "button", "Inspect observed competition").click().run()
-    assert not app.exception and len(app.dataframe) == 3
+    assert not app.exception and len(app.dataframe) == 4
     visible = "".join(str(frame.value.to_dict()) for frame in app.dataframe) + app.json[0].value
     for value in (secret, "reader:pass", "shape-value", "signed-value"):
         assert value not in visible
     assert app.dataframe[0].value["Compatible price intervals"].sum() == 1
     assert app.dataframe[2].value["Observed decreases"].sum() == 1
     assert insights.describe("competitive", cutoff, True) == original
+
+
+def test_competition_dashboard_labels_each_price_interval_with_its_own_context(pipeline):
+    base = now()
+    _, cutoff, _ = seed(
+        pipeline,
+        [
+            observation(
+                "quote",
+                base + timedelta(hours=index),
+                price=price,
+                currency=currency,
+                variant_id=variant,
+                tax_basis=tax,
+                shipping_basis=shipping,
+            )
+            for index, (price, currency, variant, tax, shipping) in enumerate(
+                (
+                    ("20", "EUR", "blue", "tax_included", "shipping_excluded"),
+                    ("18", "EUR", "blue", "tax_included", "shipping_excluded"),
+                    ("30", "USD", "red", "tax_excluded", "shipping_included"),
+                    ("25", "USD", "red", "tax_excluded", "shipping_included"),
+                    ("20", "EUR", "blue", "tax_included", "shipping_excluded"),
+                    ("19", "EUR", "blue", "tax_included", "shipping_excluded"),
+                )
+            )
+        ],
+    )
+    app = _app(pipeline, cutoff)
+    _field(app, "button", "Inspect observed competition").click().run()
+    assert not app.exception
+    intervals = app.dataframe[3].value
+    assert list(intervals["Currency"]) == ["EUR", "USD", "EUR"]
+    assert list(intervals["Variant"]) == ["blue", "red", "blue"]
+    assert list(intervals["Tax basis"]) == ["tax_included", "tax_excluded", "tax_included"]
+    assert list(intervals["Shipping basis"]) == [
+        "shipping_excluded",
+        "shipping_included",
+        "shipping_excluded",
+    ]
+    assert list(intervals["Measured change (lower)"]) == ["-2", "-5", "-1"]
+    assert list(intervals["Measured interval (hours)"]) == [1, 1, 1]
+
+
+def test_competition_dashboard_bounds_the_interval_preview_across_multiple_offers(pipeline):
+    base = now()
+    _, cutoff, _ = seed(
+        pipeline,
+        [
+            observation(entity, base + timedelta(minutes=index), price=str(1000 - index))
+            for entity in ("first", "second")
+            for index in range(103)
+        ],
+    )
+    app = _app(pipeline, cutoff)
+    _field(app, "button", "Inspect observed competition").click().run()
+    assert not app.exception
+    assert len(app.dataframe[3].value) == 200
+    report = json.loads(app.json[0].value)
+    assert report["scopes"][0]["price_interval_count"] == 204
+    assert all(
+        not offer["intervals_preview_truncated"]
+        for offer in report["scopes"][0]["price_offers_preview"]
+    )
+    assert any("Price-interval table is a bounded preview" in row.value for row in app.warning)
