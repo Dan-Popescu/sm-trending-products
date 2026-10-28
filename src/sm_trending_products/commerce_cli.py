@@ -23,6 +23,9 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "operations", help="Reconcile orders and review financial actuals (operations --help)"
     )
+    commands.add_parser(
+        "rehearse", help="Exercise isolated synthetic commerce and recovery (rehearse --help)"
+    )
     commands.add_parser("template", help="Print an editable JSON template without credentials")
     commands.add_parser("init", help="Explicitly initialize optional commercial tables")
     commands.add_parser("delivery-init", help="Initialize recoverable draft delivery tables")
@@ -108,6 +111,10 @@ def main(argv: list[str] | None = None) -> int:
         from .commerce_operations_cli import main as operations_main
 
         return operations_main(effective[1:])
+    if effective and effective[0] == "rehearse":
+        from .commerce_rehearsal import main as rehearsal_main
+
+        return rehearsal_main(effective[1:])
     arguments = parser().parse_args(argv)
     result: dict | list
     try:

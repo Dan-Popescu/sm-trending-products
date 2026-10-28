@@ -19,3 +19,23 @@ GitHub records authoritative status, pull requests and validation evidence. A
 completed synthetic rehearsal does not activate a real store, establish source
 access or prove commercial value. Actual activation needs explicit country,
 currency, supplier facts, store configuration and credentials.
+
+## Operator entry points
+
+The optional modules remain independent from collection. Initialize only the
+modules being used; a missing store, supplier or analysis provider does not stop
+capture. The base capture SQL version and protocol are unchanged.
+
+- [Launch preparation](../operations/launch-preparation.md): country-specific
+  supplier facts, explicit missing costs, scenario margins and versioned decisions.
+- [Store connections](../operations/store-connections.md): inactive WooCommerce or
+  Shopify configuration, owned draft creation and uncertain-operation recovery.
+- [Commercial workspace](../operations/commerce-workspace.md) and
+  [commands](../operations/commerce-commands.md): authoritative order reads,
+  manual fulfillment intents and reviewed actual costs.
+- [Trend insights](../operations/trend-insights.md),
+  [product matching](../operations/product-matching.md) and
+  [transcript insights](../operations/transcript-insights.md): bounded optional
+  reports and suggestions, preserving historical decisions and source controls.
+- [Synthetic rehearsal](../operations/commerce-rehearsal.md): a complete local
+  walkthrough and separate verification of persisted evidence after restore.

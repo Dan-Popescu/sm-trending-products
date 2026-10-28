@@ -131,5 +131,14 @@ fi
 if [[ "$exercise_synthetic" == true ]]; then
   docker run --rm --network "$restore_network" "${restore_environment[@]}" "$pipeline_image" \
     python scripts/recovery_fixture.py resume
+  docker run --rm --network "$restore_network" "${restore_environment[@]}" "$pipeline_image" \
+    python -c 'from sm_trending_products.commerce_rehearsal import verify_rehearsal
+from sm_trending_products.contracts import canonical
+from sm_trending_products.pipeline import Pipeline
+with Pipeline.from_env() as application:
+    report = verify_rehearsal(application, synthetic=True, run_id="ci-commerce-v1")
+    assert report["status"] == "verified", report
+    assert report["controlled_http_requests"] == 0
+    print(canonical(report))'
 fi
 echo 'Isolated restore verified. No production destination was written.'
