@@ -60,7 +60,7 @@ Build a continuously operating evidence pipeline that collects accessible TikTok
 
 ## Out of Scope
 
-Automatic store creation, advertising spend, purchasing inventory, automatic product launches, resale of collected data, access circumvention, and cloud provisioning. Kubernetes, Kafka, a custom general-purpose orchestrator, distributed query infrastructure, and speculative machine-learning complexity are not prerequisites.
+Advertising spend, purchasing inventory, unconfigured real product launches, resale of collected data, access circumvention, and cloud provisioning. The owner approved private launch preparation, inactive hosted-commerce connections and commercial learning on 2026-10-28; [the commercial-learning specification](../specs/commerce-learning.md) defines that expansion. Kubernetes, Kafka, a custom general-purpose orchestrator, distributed query infrastructure, and speculative machine-learning complexity are not prerequisites.
 
 ## Further Notes
 

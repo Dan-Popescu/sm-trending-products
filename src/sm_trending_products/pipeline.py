@@ -105,6 +105,11 @@ class Pipeline:
 
         return Identity(self.catalog)
 
+    def launch_service(self):
+        from .commerce import LaunchService
+
+        return LaunchService(self.catalog)
+
     def initialize(self, create_bucket: bool = False) -> dict:
         self.catalog.initialize()
         self.history.initialize(create_bucket)
