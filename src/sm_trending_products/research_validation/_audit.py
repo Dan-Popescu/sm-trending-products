@@ -171,6 +171,8 @@ def measurement_snapshot(
     sample["methodology"] = {
         **sample["methodology"],
         "measurement_only": True,
+        "sampling_method": "seeded_digest_order_without_replacement",
+        "sampling_seed": seed,
         "sampling_population": len(candidates),
         "sample_size": len(selected),
         "inclusion_probability": len(selected) / len(candidates) if candidates else None,

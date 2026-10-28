@@ -9,6 +9,7 @@ from streamlit.testing.v1 import AppTest
 from test_transcript_insights import import_selected, reservation, selected
 from test_transcript_operator import operator_environment, widget  # noqa: F401
 
+from sm_trending_products.contracts import canonical, now
 from sm_trending_products.enrichment import EnrichmentBudget
 from sm_trending_products.text_selection import TextSelection
 from sm_trending_products.text_selection_cli import main
@@ -98,6 +99,54 @@ def test_selection_cli_preview_apply_replay_and_namespace(operator_environment, 
     failure = capsys.readouterr().err
     assert "gagner du temps" not in failure
     assert reservation(pipeline, "local-rules")["requests_reserved"] == 1
+
+
+def test_selection_cli_exports_exact_nonsecret_executable_plan(
+    operator_environment, tmp_path, capsys, monkeypatch
+):
+    pipeline = operator_environment
+    service, value = selected(pipeline)
+    import_selected(service, value)
+    cutoff = now()
+    expected = TextSelection(pipeline.catalog, pipeline.provenance).preview(
+        ["p"], synthetic=True, as_of=cutoff
+    )
+    assert main(["preview", "--product-id", "p", "--synthetic", "--as-of", cutoff.isoformat()]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == canonical(expected) + "\n" and not captured.err
+    assert pipeline.catalog.all("SELECT * FROM enrichment_requests") == []
+    file = tmp_path / "exact-plan.json"
+    file.write_text(captured.out)
+    assert (
+        main(["apply", "--file", str(file), "--request-prefix", "exact-export", "--synthetic"]) == 0
+    )
+    applied = json.loads(capsys.readouterr().out)
+    assert applied["state"] == "completed"
+    assert reservation(pipeline, "local-rules")["requests_reserved"] == 1
+    secret_request = applied["results"][0]["request_id"]
+    monkeypatch.setenv("CURRENT_RESULT_SECRET", secret_request)
+    assert (
+        main(["apply", "--file", str(file), "--request-prefix", "exact-export", "--synthetic"]) == 0
+    )
+    captured = capsys.readouterr()
+    assert secret_request not in captured.out and "REDACTED" in captured.out
+    assert reservation(pipeline, "local-rules")["requests_reserved"] == 1
+
+
+def test_selection_cli_refuses_secret_altered_plan_without_stdout_or_reservations(
+    operator_environment, monkeypatch, capsys
+):
+    pipeline = operator_environment
+    secret = "current-private-entity"
+    service, value = selected(pipeline, entity=secret)
+    import_selected(service, value)
+    monkeypatch.setenv("CURRENT_EXPORT_SECRET", secret)
+    assert main(["preview", "--product-id", "p", "--synthetic"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == "" and secret not in captured.err
+    assert json.loads(captured.err)["error"] == "selection_plan_not_exportable"
+    assert pipeline.catalog.all("SELECT * FROM enrichment_requests") == []
+    assert pipeline.catalog.all("SELECT * FROM enrichment_daily_budgets") == []
 
 
 def test_selection_cli_partial_budget_result_is_nonzero(operator_environment, tmp_path, capsys):

@@ -107,6 +107,12 @@ and scope checks happen before opening service configuration. An unusually large
 plan requires a smaller candidate page before it can be applied through these
 operator paths. There is no external adapter or paid-provider flag.
 
+CLI preview emits the exact executable plan on standard output. If current
+secret redaction would alter its metadata, preview returns code 2 with
+`selection_plan_not_exportable` on standard error and emits no plan. Correct the
+source metadata before exporting again. A redacted copy is never offered with
+the original plan identity. Application results remain redacted normally.
+
 Use `--synthetic` on both preview and apply for synthetic plans. Apply requires
 its visible namespace flag to match the saved plan, retains its exact cutoff and
 configuration, and rechecks current eligibility through `execute`. Exit code 0

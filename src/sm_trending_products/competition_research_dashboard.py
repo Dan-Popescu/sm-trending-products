@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from itertools import islice
 from typing import TYPE_CHECKING
 
 import streamlit as st
 
 from .competition_insights import CompetitionInsights
+
+PRICE_INTERVAL_PREVIEW_LIMIT = 200
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
@@ -134,6 +137,10 @@ def render_competition(
                 "or collection context remains unavailable."
             )
         if scope["price_offers_preview"]:
+            st.caption(
+                "Offer totals count compatible intervals across their own price contexts. "
+                "The latest valid quote context does not relabel earlier changes."
+            )
             st.dataframe(
                 [
                     {
@@ -149,6 +156,36 @@ def render_competition(
                 ],
                 hide_index=True,
             )
+            intervals = list(
+                islice(
+                    (
+                        {
+                            "Offer": offer["entity_key"],
+                            "Currency": interval["price_context"]["currency"],
+                            "Variant": interval["price_context"]["variant_id"],
+                            "Price basis": interval["price_context"]["price_basis"],
+                            "Tax basis": interval["price_context"]["tax_basis"],
+                            "Shipping basis": interval["price_context"]["shipping_basis"],
+                            "Measured change (lower)": interval["change_lower"],
+                            "Measured change (upper)": interval["change_upper"],
+                            "Direction": interval["direction"],
+                            "Measured interval (hours)": interval["interval_hours"],
+                        }
+                        for offer in scope["price_offers_preview"]
+                        for interval in offer["intervals_preview"]
+                    ),
+                    PRICE_INTERVAL_PREVIEW_LIMIT + 1,
+                )
+            )
+            if intervals:
+                st.dataframe(intervals[:PRICE_INTERVAL_PREVIEW_LIMIT], hide_index=True)
+            if len(intervals) > PRICE_INTERVAL_PREVIEW_LIMIT or any(
+                offer["intervals_preview_truncated"] for offer in scope["price_offers_preview"]
+            ):
+                st.warning(
+                    "Price-interval table is a bounded preview. Totals include all compatible "
+                    "intervals in the bounded input."
+                )
         if scope["price_preview_truncated"]:
             st.warning("Offer preview is truncated; price counts include all bounded offers.")
     if report["scope_change_count"]:
