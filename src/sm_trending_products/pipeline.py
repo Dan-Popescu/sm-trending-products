@@ -452,7 +452,10 @@ class Pipeline:
         with AnalyticalDiagnostics(self.history).attempt(
             "assessment", as_of, synthetic
         ) as diagnostic:
-            with self.catalog.evidence_transaction(synthetic):
+            with (
+                phase(self.history, "input_selection"),
+                self.catalog.evidence_transaction(synthetic),
+            ):
                 pass
             from .analytics import AssessmentIdentity
 

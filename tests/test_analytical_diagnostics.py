@@ -12,6 +12,7 @@ from time import monotonic, sleep
 import pytest
 from test_feature_projection import video
 
+import sm_trending_products.evaluation_service as evaluation_module
 import sm_trending_products.pipeline as pipeline_module
 from sm_trending_products.analysis_batches import MetadataBudgetExceeded
 from sm_trending_products.cli import main
@@ -369,3 +370,28 @@ def test_default_assessment_clock_still_resolves_after_the_retention_guard(pipel
         result = future.result(timeout=10)
     assert result["as_of"] == after_guard
     assert pipeline.analytical_runs(True)[0]["cutoff"] == after_guard
+
+
+@pytest.mark.parametrize("originally_allowed", [True, False])
+def test_live_freeze_admission_uses_its_original_clock_before_diagnostic_io(
+    pipeline, monkeypatch, originally_allowed
+):
+    initial = now()
+    cutoff = (
+        initial - timedelta(minutes=5) + timedelta(milliseconds=100)
+        if originally_allowed
+        else initial + timedelta(seconds=30, milliseconds=100)
+    )
+
+    def clock():
+        # A persisted running marker represents time spent in telemetry I/O.
+        return initial + timedelta(seconds=1) if pipeline.analytical_runs(False) else initial
+
+    monkeypatch.setattr(evaluation_module, "now", clock)
+    if originally_allowed:
+        assert pipeline.freeze(cutoff)["evaluation_id"]
+        assert pipeline.analytical_runs(False)[0]["state"] == "succeeded"
+    else:
+        with pytest.raises(ValueError, match="future dated"):
+            pipeline.freeze(cutoff)
+        assert pipeline.analytical_runs(False)[0]["state"] == "failed"

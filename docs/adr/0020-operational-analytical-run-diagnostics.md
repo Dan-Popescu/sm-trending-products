@@ -27,6 +27,10 @@ there is no per-observation diagnostic storage or unbounded list of labels.
 An implicit assessment cutoff is resolved at the existing point after its initial
 retention guard. A running marker can therefore have a null cutoff. Recording an
 attempt earlier must not move the analytical clock across that guard.
+Live freeze admission likewise captures its original past/future window decisions
+before diagnostic I/O, then records a rejected attempt inside the context. A slow
+diagnostic write cannot make an originally valid decision stale or admit an
+originally over-future decision.
 
 Persist running state before analytical work and completion after normal return or
 an exception. Error types are bounded; exception messages, SQL, tracebacks and raw

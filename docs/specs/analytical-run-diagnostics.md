@@ -22,6 +22,8 @@ Do not call decoded rows unique input facts or sum nested durations as total tim
 Persist a running marker before work and completion on success or an exception.
 An implicit assessment cutoff stays unknown until its existing retention guard
 completes; instrumentation must preserve that clock-selection order.
+Freeze live-window guard decisions must be captured at their original point,
+before diagnostic persistence can delay them; rejected attempts are still recorded.
 Store only a bounded error category/type, never exception messages, observations,
 product/entity lists, SQL, credentials or tracebacks. Process termination can leave
 a running marker with incomplete counters; do not invent a completed failure or

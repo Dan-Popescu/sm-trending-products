@@ -406,11 +406,15 @@ class EvaluationService:
         policy: AssessmentPolicy | None = None,
     ) -> dict:
         cutoff = utc(as_of)
+        # Keep live admission on its original clock, before telemetry can wait.
+        rejection = None
+        if not synthetic and cutoff < now() - timedelta(minutes=5):
+            rejection = "A live forward decision cannot be retrospectively backdated"
+        elif not synthetic and cutoff > now() + timedelta(seconds=30):
+            rejection = "A live forward decision cannot be future dated"
         with AnalyticalDiagnostics(self.history).attempt("freeze", cutoff, synthetic) as diagnostic:
-            if not synthetic and cutoff < now() - timedelta(minutes=5):
-                raise ValueError("A live forward decision cannot be retrospectively backdated")
-            if not synthetic and cutoff > now() + timedelta(seconds=30):
-                raise ValueError("A live forward decision cannot be future dated")
+            if rejection is not None:
+                raise ValueError(rejection)
             configuration = EvaluationConfig.for_creation(config)
             configuration.validate_creation()
             with phase(self.history, "input_selection"):
