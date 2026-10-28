@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from collections.abc import Mapping
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ..contracts import Contract
+from ..contracts import Contract, utc
 
 MAX_TEXT_CHARACTERS = 16_000
 IDENTIFIER = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
@@ -45,6 +47,42 @@ def revalidate[T: Contract](contract: type[T], value: object) -> T:
     return contract.model_validate(_plain(value))
 
 
+class TranscriptContext(_EnrichmentContract):
+    """Versioned operator attestation; never proof of a customer's identity."""
+
+    reference: str = Field(min_length=1, max_length=512)
+    known_at: datetime
+    creator_id: str | None = Field(default=None, min_length=1, max_length=128)
+    creator_role: Literal["unknown", "creator", "seller", "buyer"] = "unknown"
+    variant: str | None = Field(default=None, min_length=1, max_length=128)
+    known_theme_ids: tuple[str, ...] = Field(default=(), max_length=16)
+
+    @field_validator("known_theme_ids")
+    @classmethod
+    def bounded_themes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not re.fullmatch(IDENTIFIER, theme) for theme in value):
+            raise ValueError("Context themes require bounded identifiers")
+        return tuple(sorted(set(value)))
+
+    @field_validator("reference", "creator_id", "variant")
+    @classmethod
+    def nonblank(cls, value: str | None) -> str | None:
+        if value is not None and (not value.strip() or any(ord(char) < 32 for char in value)):
+            raise ValueError("Context values require printable explicit metadata")
+        return value.strip() if value is not None else None
+
+    @field_validator("known_at")
+    @classmethod
+    def aware(cls, value: datetime) -> datetime:
+        return utc(value)
+
+    @model_validator(mode="after")
+    def identified_role(self):
+        if self.creator_role != "unknown" and self.creator_id is None:
+            raise ValueError("An attributed role requires an explicit creator identifier")
+        return self
+
+
 class TranscriptInput(_EnrichmentContract):
     product_id: str = Field(pattern=IDENTIFIER)
     entity_key: str = Field(pattern=r"^[A-Za-z0-9_.-]+:video:\S{1,384}$", max_length=512)
@@ -55,6 +93,7 @@ class TranscriptInput(_EnrichmentContract):
     source_kind: Literal["subtitles", "human_transcript", "description"]
     language: str | None = Field(default=None, pattern=r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")
     permission_reference: str = Field(min_length=1, max_length=512)
+    context: TranscriptContext | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("permission_reference")
     @classmethod

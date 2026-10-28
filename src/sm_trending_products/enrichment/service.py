@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Sequence
 from datetime import datetime
 from uuid import uuid4
 
@@ -130,7 +131,7 @@ class TranscriptInsights:
 
     def import_transcript(self, value: TranscriptInput, *, as_of: datetime | None = None) -> dict:
         value = revalidate(TranscriptInput, value)
-        require_module(self.catalog, "transcript_insights")
+        require_module(self.catalog, "transcript_insights", 2)
         content_key = digest(
             {
                 "entity_key": value.entity_key,
@@ -140,8 +141,19 @@ class TranscriptInsights:
                 "text_sha256": hashlib.sha256(value.text.encode()).hexdigest(),
             }
         )
+        context = value.context.model_dump(mode="json") if value.context is not None else None
+        context_hash = digest(context) if context is not None else ""
+        metadata = {
+            "source_kind": value.source_kind,
+            "language": value.language,
+            "text_characters": len(value.text),
+            "text_sha256": hashlib.sha256(value.text.encode()).hexdigest(),
+            **({"context": context} if context is not None else {}),
+        }
         with self.catalog.evidence_transaction(value.synthetic) as connection:
             cutoff = self._clock(connection, as_of, value.synthetic)
+            if value.context is not None and value.context.known_at > cutoff:
+                raise EnrichmentDenied("enrichment_context_not_available_at_cutoff")
             self._scope(
                 connection,
                 value.product_id,
@@ -157,7 +169,8 @@ class TranscriptInsights:
                 "LEFT JOIN source_policies policy ON policy.source=d.source "
                 "JOIN derived_publications p "
                 "ON p.object_key=t.descriptor#>>'{root,key}' AND p.state='committed' "
-                "WHERE t.synthetic=%s AND t.content_key=%s AND t.available_at<=%s "
+                "WHERE t.synthetic=%s AND t.content_key=%s AND t.context_sha256=%s "
+                "AND t.available_at<=%s "
                 "AND EXISTS(SELECT 1 FROM observation_deliveries o JOIN normalized_objects n "
                 "ON n.object_id=o.object_id WHERE n.dataset_id=t.source_dataset_id "
                 "AND o.entity_key=t.entity_key AND o.observation_id=t.observation_id "
@@ -165,7 +178,7 @@ class TranscriptInsights:
                 "AND (t.synthetic OR (policy.verified AND (policy.retention_days IS NULL OR "
                 "d.created_at>=clock_timestamp()-policy.retention_days*interval '1 day'))) "
                 "ORDER BY t.available_at DESC,t.transcript_id LIMIT 1",
-                (value.synthetic, content_key, cutoff, cutoff),
+                (value.synthetic, content_key, context_hash, cutoff, cutoff),
             ).fetchone()
             if cached:
                 self._scope(
@@ -184,6 +197,7 @@ class TranscriptInsights:
                 "content_key": content_key,
                 "dataset": value.dataset_id,
                 "observation": value.observation_id,
+                **({"context_sha256": context_hash} if context_hash else {}),
             }
         )
         source_refs = self.provenance.references(
@@ -198,12 +212,15 @@ class TranscriptInsights:
                     "permission_reference": value.permission_reference,
                     "text_normalization": "nfc-lf-trim-v1",
                     "input_provenance": source_refs,
+                    **({"context": context} if context is not None else {}),
                 }
             },
             value.synthetic,
         )
         with self.catalog.evidence_transaction(value.synthetic) as connection:
             cutoff = self._clock(connection, as_of, value.synthetic)
+            if value.context is not None and value.context.known_at > cutoff:
+                raise EnrichmentDenied("enrichment_context_not_available_at_cutoff")
             source_available_at = self._scope(
                 connection,
                 value.product_id,
@@ -216,8 +233,9 @@ class TranscriptInsights:
             self.provenance.guard(connection, self.provenance.roots(descriptor))
             connection.execute(
                 "INSERT INTO enrichment_transcripts(transcript_id,content_key,entity_key,"
-                "source_dataset_id,observation_id,synthetic,descriptor,available_at) "
-                "VALUES(%s,%s,%s,%s,%s,%s,%s,GREATEST(clock_timestamp(),%s)) "
+                "source_dataset_id,observation_id,synthetic,descriptor,metadata,context_sha256,"
+                "available_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                "GREATEST(clock_timestamp(),%s,%s)) "
                 "ON CONFLICT DO NOTHING",
                 (
                     transcript_id,
@@ -227,7 +245,10 @@ class TranscriptInsights:
                     value.observation_id,
                     value.synthetic,
                     Jsonb(descriptor),
+                    Jsonb(metadata),
+                    context_hash,
                     source_available_at,
+                    value.context.known_at if value.context is not None else source_available_at,
                 ),
             )
             row = connection.execute(
@@ -265,6 +286,203 @@ class TranscriptInsights:
         except ValueError:
             raise EnrichmentDenied("enrichment_transcript_unavailable") from None
         return row
+
+    @staticmethod
+    def _cached_analysis(connection, synthetic, cache_key, cutoff, *, visible_at=None):
+        """One cache-eligibility rule for reservations and bounded metadata reads.
+
+        Unknown outcomes remain barriers even after source retirement. Completed
+        results require their eligible source/publication lifecycle. A metadata
+        replay may additionally hide analyses not yet created at its cutoff.
+        """
+        return connection.execute(
+            "SELECT a.* FROM enrichment_analyses a JOIN enrichment_transcripts t "
+            "ON t.transcript_id=a.transcript_id JOIN datasets d "
+            "ON d.dataset_id=t.source_dataset_id "
+            "LEFT JOIN source_policies policy ON policy.source=d.source "
+            "JOIN derived_publications p "
+            "ON p.object_key=t.descriptor#>>'{root,key}' "
+            "LEFT JOIN derived_publications r ON r.object_key=a.descriptor#>>'{root,key}' "
+            "WHERE a.synthetic=%s AND a.cache_key=%s "
+            "AND (%s::timestamptz IS NULL OR a.created_at<=%s) "
+            "AND (a.state<>'completed' OR (p.state='committed' AND r.state='committed' "
+            "AND t.synthetic=a.synthetic AND d.synthetic=a.synthetic "
+            "AND d.created_at<=COALESCE(%s,clock_timestamp()) "
+            "AND t.available_at<=COALESCE(%s,clock_timestamp()) "
+            "AND a.created_at<=COALESCE(%s,clock_timestamp()) "
+            "AND a.finished_at<=COALESCE(%s,clock_timestamp()) "
+            "AND EXISTS(SELECT 1 FROM observation_deliveries o JOIN normalized_objects n "
+            "ON n.object_id=o.object_id WHERE n.dataset_id=t.source_dataset_id "
+            "AND o.entity_key=t.entity_key AND o.observation_id=t.observation_id "
+            "AND o.available_at<=COALESCE(%s,clock_timestamp())) "
+            "AND d.state='committed' AND (a.synthetic OR (policy.verified AND "
+            "(policy.retention_days IS NULL OR d.created_at>=clock_timestamp()-"
+            "policy.retention_days*interval '1 day'))))) "
+            "ORDER BY a.created_at DESC,a.analysis_id LIMIT 1",
+            (synthetic, cache_key, visible_at, visible_at, cutoff, cutoff, cutoff, cutoff, cutoff),
+        ).fetchone()
+
+    def eligible_texts(
+        self,
+        product_id: str,
+        *,
+        synthetic: bool = False,
+        as_of: datetime | None = None,
+        limit: int = 100,
+        after: str | None = None,
+    ) -> dict:
+        """Inspect one bounded product page without loading any transcript text.
+
+        Metadata added in module revision 2 is intentionally unknown for legacy
+        imports. Reading a page neither backfills it nor reserves analysis work.
+        Every returned row crosses the same source and ownership boundary as an
+        individual analysis. A cursor advances over unavailable rows as well.
+        """
+        require_module(self.catalog, "transcript_insights", 2)
+        if not re.fullmatch(IDENTIFIER, product_id):
+            raise ValueError("Invalid product identifier")
+        if type(synthetic) is not bool or type(limit) is not int or not 1 <= limit <= 200:
+            raise ValueError("A text page requires a namespace and a limit between 1 and 200")
+        if after is not None and not re.fullmatch(r"[a-f0-9]{64}", after):
+            raise ValueError("Invalid transcript cursor")
+        items, unavailable = [], []
+        local = LocalTranscriptAdapter.spec
+        with self.catalog.evidence_transaction(synthetic) as connection:
+            cutoff = self._clock(connection, as_of, synthetic)
+            self.catalog.guard_namespace(connection, synthetic)
+            rows = connection.execute(
+                "SELECT t.* FROM enrichment_transcripts t JOIN "
+                "(SELECT DISTINCT entity_key FROM product_links WHERE product_id=%s "
+                "AND available_at<=%s) reviewed ON reviewed.entity_key=t.entity_key "
+                "WHERE t.synthetic=%s AND t.available_at<=%s "
+                "AND t.transcript_id>%s ORDER BY t.transcript_id LIMIT %s",
+                (product_id, cutoff, synthetic, cutoff, after or "", limit + 1),
+            ).fetchall()
+            for row in rows[:limit]:
+                try:
+                    self._transcript(
+                        connection, row["transcript_id"], product_id, synthetic, cutoff
+                    )
+                except EnrichmentDenied as error:
+                    unavailable.append(
+                        {"transcript_id": row["transcript_id"], "reason": str(error)}
+                    )
+                    continue
+                cache_key = digest(
+                    {
+                        "content": row["content_key"],
+                        "provider": local.provider_id,
+                        "version": local.version,
+                    }
+                )
+                latest = connection.execute(
+                    "SELECT * FROM enrichment_analyses WHERE synthetic=%s AND cache_key=%s "
+                    "AND created_at<=%s ORDER BY created_at DESC,analysis_id LIMIT 1",
+                    (synthetic, cache_key, cutoff),
+                ).fetchone()
+                state = "not_analyzed"
+                if (
+                    latest is not None
+                    and latest["state"] == "completed"
+                    and latest["finished_at"] > cutoff
+                ):
+                    state = "unresolved"
+                else:
+                    analysis = self._cached_analysis(
+                        connection, synthetic, cache_key, cutoff, visible_at=cutoff
+                    )
+                    if analysis is not None:
+                        # Running and uncertain do not have immutable transition
+                        # histories in the original module. Preserve one unresolved
+                        # barrier rather than leaking a later state into a replay.
+                        state = "unresolved"
+                        if analysis["state"] == "completed":
+                            state = "completed"
+                            try:
+                                self._transcript(
+                                    connection,
+                                    analysis["transcript_id"],
+                                    product_id,
+                                    synthetic,
+                                    cutoff,
+                                )
+                                self.provenance.guard(
+                                    connection, self.provenance.roots(analysis["descriptor"])
+                                )
+                            except ValueError:
+                                state = "not_analyzed"
+                items.append(
+                    {
+                        "transcript_id": row["transcript_id"],
+                        "content_key": row["content_key"],
+                        "entity_key": row["entity_key"],
+                        "available_at": row["available_at"],
+                        "metadata": row["metadata"],
+                        "local_analysis_state": state,
+                        "local_provider_version": local.version,
+                    }
+                )
+        return {
+            "product_id": product_id,
+            "synthetic": synthetic,
+            "as_of": cutoff,
+            "items": items,
+            "unavailable": unavailable,
+            "scanned": min(len(rows), limit),
+            "next_cursor": rows[limit - 1]["transcript_id"] if len(rows) > limit else None,
+            "scope": "supplied_texts_for_confirmed_product_videos",
+        }
+
+    def read_texts(
+        self,
+        product_id: str,
+        transcript_ids: Sequence[str],
+        *,
+        synthetic: bool = False,
+        as_of: datetime | None = None,
+    ) -> dict:
+        """Read at most 200 explicitly selected texts under evidence fencing."""
+        require_module(self.catalog, "transcript_insights")
+        if (
+            not re.fullmatch(IDENTIFIER, product_id)
+            or type(synthetic) is not bool
+            or isinstance(transcript_ids, str | bytes)
+            or len(transcript_ids) > 200
+            or any(not re.fullmatch(r"[a-f0-9]{64}", item) for item in transcript_ids)
+        ):
+            raise ValueError("Provide one product and at most 200 explicit transcript identifiers")
+        items, unavailable = [], []
+        with self.catalog.evidence_transaction(synthetic) as connection:
+            cutoff = self._clock(connection, as_of, synthetic)
+            self.catalog.guard_namespace(connection, synthetic)
+            for transcript_id in dict.fromkeys(transcript_ids):
+                try:
+                    row = self._transcript(connection, transcript_id, product_id, synthetic, cutoff)
+                    document = self.provenance.selected_records(
+                        row["descriptor"], ["transcript"], connection=connection
+                    )["transcript"]
+                except ValueError as error:
+                    unavailable.append({"transcript_id": transcript_id, "reason": str(error)})
+                    continue
+                items.append(
+                    {
+                        "transcript_id": transcript_id,
+                        "content_key": row["content_key"],
+                        "entity_key": row["entity_key"],
+                        "available_at": row["available_at"],
+                        "text": document["text"],
+                        "source_kind": document["source_kind"],
+                        "language": document["language"],
+                        "context": document.get("context"),
+                    }
+                )
+        return {
+            "product_id": product_id,
+            "synthetic": synthetic,
+            "as_of": cutoff,
+            "items": items,
+            "unavailable": unavailable,
+        }
 
     def analyze(
         self,
@@ -323,39 +541,7 @@ class TranscriptInsights:
                 # Explicit replay cutoffs stay fixed. Current reads use statement
                 # time so an analysis completing during lock wait remains reusable.
                 cache_cutoff = cutoff if as_of is not None else None
-                analysis = connection.execute(
-                    "SELECT a.* FROM enrichment_analyses a JOIN enrichment_transcripts t "
-                    "ON t.transcript_id=a.transcript_id JOIN datasets d "
-                    "ON d.dataset_id=t.source_dataset_id "
-                    "LEFT JOIN source_policies policy ON policy.source=d.source "
-                    "JOIN derived_publications p "
-                    "ON p.object_key=t.descriptor#>>'{root,key}' "
-                    "LEFT JOIN derived_publications r ON r.object_key=a.descriptor#>>'{root,key}' "
-                    "WHERE a.synthetic=%s AND a.cache_key=%s "
-                    "AND (a.state<>'completed' OR (p.state='committed' AND r.state='committed' "
-                    "AND t.synthetic=a.synthetic AND d.synthetic=a.synthetic "
-                    "AND d.created_at<=COALESCE(%s,clock_timestamp()) "
-                    "AND t.available_at<=COALESCE(%s,clock_timestamp()) "
-                    "AND a.created_at<=COALESCE(%s,clock_timestamp()) "
-                    "AND a.finished_at<=COALESCE(%s,clock_timestamp()) "
-                    "AND EXISTS(SELECT 1 FROM observation_deliveries o JOIN normalized_objects n "
-                    "ON n.object_id=o.object_id WHERE n.dataset_id=t.source_dataset_id "
-                    "AND o.entity_key=t.entity_key AND o.observation_id=t.observation_id "
-                    "AND o.available_at<=COALESCE(%s,clock_timestamp())) "
-                    "AND d.state='committed' AND (a.synthetic OR (policy.verified AND "
-                    "(policy.retention_days IS NULL OR d.created_at>=clock_timestamp()-"
-                    "policy.retention_days*interval '1 day'))))) "
-                    "ORDER BY a.created_at DESC,a.analysis_id LIMIT 1",
-                    (
-                        synthetic,
-                        cache_key,
-                        cache_cutoff,
-                        cache_cutoff,
-                        cache_cutoff,
-                        cache_cutoff,
-                        cache_cutoff,
-                    ),
-                ).fetchone()
+                analysis = self._cached_analysis(connection, synthetic, cache_key, cache_cutoff)
                 if analysis is None:
                     analysis_id = digest({"cache": cache_key, "transcript": transcript_id})
                     if connection.execute(
