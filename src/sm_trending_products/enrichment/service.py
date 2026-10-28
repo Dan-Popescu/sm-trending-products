@@ -85,7 +85,7 @@ class TranscriptInsights:
             raise EnrichmentDenied("enrichment_future_live_cutoff")
         return cutoff
 
-    def _scope(self, connection, product, entity, dataset, synthetic, cutoff, observation=None):
+    def _scope(self, connection, product, entity, dataset, synthetic, cutoff, observation):
         self.catalog.guard_namespace(connection, synthetic)
         try:
             self.catalog.guard_inputs(connection, [dataset])
@@ -117,15 +117,16 @@ class TranscriptInsights:
                 >= source["retention_days"] * 86400
             ):
                 raise EnrichmentDenied("enrichment_source_retention_expired")
-        if observation is not None:
-            delivered = connection.execute(
-                "SELECT 1 FROM observation_deliveries o JOIN normalized_objects n "
-                "ON n.object_id=o.object_id WHERE n.dataset_id=%s AND o.entity_key=%s "
-                "AND o.observation_id=%s AND o.available_at<=%s LIMIT 1",
-                (dataset, entity, observation, cutoff),
-            ).fetchone()
-            if not delivered:
-                raise EnrichmentDenied("enrichment_source_observation_unavailable")
+        delivered = connection.execute(
+            "SELECT min(o.available_at) AS available_at FROM observation_deliveries o "
+            "JOIN normalized_objects n ON n.object_id=o.object_id "
+            "WHERE n.dataset_id=%s AND o.entity_key=%s "
+            "AND o.observation_id=%s AND o.available_at<=%s",
+            (dataset, entity, observation, cutoff),
+        ).fetchone()
+        if not delivered or delivered["available_at"] is None:
+            raise EnrichmentDenied("enrichment_source_observation_unavailable")
+        return delivered["available_at"]
 
     def import_transcript(self, value: TranscriptInput, *, as_of: datetime | None = None) -> dict:
         value = revalidate(TranscriptInput, value)
@@ -157,10 +158,14 @@ class TranscriptInsights:
                 "JOIN derived_publications p "
                 "ON p.object_key=t.descriptor#>>'{root,key}' AND p.state='committed' "
                 "WHERE t.synthetic=%s AND t.content_key=%s AND t.available_at<=%s "
+                "AND EXISTS(SELECT 1 FROM observation_deliveries o JOIN normalized_objects n "
+                "ON n.object_id=o.object_id WHERE n.dataset_id=t.source_dataset_id "
+                "AND o.entity_key=t.entity_key AND o.observation_id=t.observation_id "
+                "AND o.available_at<=%s) "
                 "AND (t.synthetic OR (policy.verified AND (policy.retention_days IS NULL OR "
                 "d.created_at>=clock_timestamp()-policy.retention_days*interval '1 day'))) "
                 "ORDER BY t.available_at DESC,t.transcript_id LIMIT 1",
-                (value.synthetic, content_key, cutoff),
+                (value.synthetic, content_key, cutoff, cutoff),
             ).fetchone()
             if cached:
                 self._scope(
@@ -170,6 +175,7 @@ class TranscriptInsights:
                     cached["source_dataset_id"],
                     value.synthetic,
                     cutoff,
+                    cached["observation_id"],
                 )
                 self.provenance.guard(connection, self.provenance.roots(cached["descriptor"]))
                 return self._transcript_summary(cached, reused=True)
@@ -198,7 +204,7 @@ class TranscriptInsights:
         )
         with self.catalog.evidence_transaction(value.synthetic) as connection:
             cutoff = self._clock(connection, as_of, value.synthetic)
-            self._scope(
+            source_available_at = self._scope(
                 connection,
                 value.product_id,
                 value.entity_key,
@@ -210,8 +216,8 @@ class TranscriptInsights:
             self.provenance.guard(connection, self.provenance.roots(descriptor))
             connection.execute(
                 "INSERT INTO enrichment_transcripts(transcript_id,content_key,entity_key,"
-                "source_dataset_id,observation_id,synthetic,descriptor) "
-                "VALUES(%s,%s,%s,%s,%s,%s,%s) "
+                "source_dataset_id,observation_id,synthetic,descriptor,available_at) "
+                "VALUES(%s,%s,%s,%s,%s,%s,%s,GREATEST(clock_timestamp(),%s)) "
                 "ON CONFLICT DO NOTHING",
                 (
                     transcript_id,
@@ -221,6 +227,7 @@ class TranscriptInsights:
                     value.observation_id,
                     value.synthetic,
                     Jsonb(descriptor),
+                    source_available_at,
                 ),
             )
             row = connection.execute(
@@ -245,7 +252,13 @@ class TranscriptInsights:
         if not row:
             raise EnrichmentDenied("enrichment_transcript_unavailable")
         self._scope(
-            connection, product, row["entity_key"], row["source_dataset_id"], synthetic, cutoff
+            connection,
+            product,
+            row["entity_key"],
+            row["source_dataset_id"],
+            synthetic,
+            cutoff,
+            row["observation_id"],
         )
         try:
             self.provenance.guard(connection, self.provenance.roots(row["descriptor"]))
@@ -307,6 +320,9 @@ class TranscriptInsights:
                     "SELECT pg_advisory_xact_lock(hashtextextended(%s,492371247))",
                     (f"enrichment-content:{synthetic}:{cache_key}",),
                 )
+                # Explicit replay cutoffs stay fixed. Current reads use statement
+                # time so an analysis completing during lock wait remains reusable.
+                cache_cutoff = cutoff if as_of is not None else None
                 analysis = connection.execute(
                     "SELECT a.* FROM enrichment_analyses a JOIN enrichment_transcripts t "
                     "ON t.transcript_id=a.transcript_id JOIN datasets d "
@@ -317,13 +333,35 @@ class TranscriptInsights:
                     "LEFT JOIN derived_publications r ON r.object_key=a.descriptor#>>'{root,key}' "
                     "WHERE a.synthetic=%s AND a.cache_key=%s "
                     "AND (a.state<>'completed' OR (p.state='committed' AND r.state='committed' "
+                    "AND t.synthetic=a.synthetic AND d.synthetic=a.synthetic "
+                    "AND d.created_at<=COALESCE(%s,clock_timestamp()) "
+                    "AND t.available_at<=COALESCE(%s,clock_timestamp()) "
+                    "AND a.created_at<=COALESCE(%s,clock_timestamp()) "
+                    "AND a.finished_at<=COALESCE(%s,clock_timestamp()) "
+                    "AND EXISTS(SELECT 1 FROM observation_deliveries o JOIN normalized_objects n "
+                    "ON n.object_id=o.object_id WHERE n.dataset_id=t.source_dataset_id "
+                    "AND o.entity_key=t.entity_key AND o.observation_id=t.observation_id "
+                    "AND o.available_at<=COALESCE(%s,clock_timestamp())) "
                     "AND d.state='committed' AND (a.synthetic OR (policy.verified AND "
                     "(policy.retention_days IS NULL OR d.created_at>=clock_timestamp()-"
                     "policy.retention_days*interval '1 day'))))) "
                     "ORDER BY a.created_at DESC,a.analysis_id LIMIT 1",
-                    (synthetic, cache_key),
+                    (
+                        synthetic,
+                        cache_key,
+                        cache_cutoff,
+                        cache_cutoff,
+                        cache_cutoff,
+                        cache_cutoff,
+                        cache_cutoff,
+                    ),
                 ).fetchone()
                 if analysis is None:
+                    analysis_id = digest({"cache": cache_key, "transcript": transcript_id})
+                    if connection.execute(
+                        "SELECT 1 FROM enrichment_analyses WHERE analysis_id=%s", (analysis_id,)
+                    ).fetchone():
+                        raise EnrichmentDenied("enrichment_cached_result_unavailable_at_cutoff")
                     document = self.provenance.selected_records(
                         transcript["descriptor"], ["transcript"], connection=connection
                     )["transcript"]
@@ -352,7 +390,6 @@ class TranscriptInsights:
                         (spec.reserved_cost, synthetic, spec.provider_id, daily["budget_day"]),
                     )
                     token = uuid4().hex
-                    analysis_id = digest({"cache": cache_key, "transcript": transcript_id})
                     analysis = connection.execute(
                         "INSERT INTO enrichment_analyses(analysis_id,cache_key,transcript_id,"
                         "synthetic,provider_id,provider_version,state,run_token,"
@@ -500,8 +537,21 @@ class TranscriptInsights:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
             raise ValueError("Enrichment page limit must be between 1 and 200")
         rows = self.catalog.all(
-            "SELECT request_id FROM enrichment_requests WHERE product_id=%s AND synthetic=%s "
-            "AND request_id>%s ORDER BY request_id LIMIT %s",
+            "SELECT r.request_id FROM enrichment_requests r "
+            "JOIN enrichment_transcripts t ON t.transcript_id=r.transcript_id "
+            "JOIN enrichment_analyses a USING(analysis_id) "
+            "JOIN enrichment_transcripts origin ON origin.transcript_id=a.transcript_id "
+            "WHERE r.product_id=%s AND r.synthetic=%s AND r.request_id>%s "
+            "AND t.available_at<=clock_timestamp() AND origin.available_at<=clock_timestamp() "
+            "AND EXISTS(SELECT 1 FROM observation_deliveries o JOIN normalized_objects n "
+            "ON n.object_id=o.object_id WHERE n.dataset_id=t.source_dataset_id "
+            "AND o.entity_key=t.entity_key AND o.observation_id=t.observation_id "
+            "AND o.available_at<=clock_timestamp()) "
+            "AND EXISTS(SELECT 1 FROM observation_deliveries o JOIN normalized_objects n "
+            "ON n.object_id=o.object_id WHERE n.dataset_id=origin.source_dataset_id "
+            "AND o.entity_key=origin.entity_key AND o.observation_id=origin.observation_id "
+            "AND o.available_at<=clock_timestamp()) "
+            "ORDER BY r.request_id LIMIT %s",
             (product_id, synthetic, after or "", limit + 1),
         )
         visible = []

@@ -758,6 +758,199 @@ def test_scoped_instance_revalidation_preserves_inherited_contract_guards(contra
     assert contract.model_config["allow_inf_nan"] is False
 
 
+def future_source(pipeline, value):
+    available = now() + timedelta(days=1)
+    source, _kind, entity = value.entity_key.split(":", 2)
+    observation = Observation(
+        observation_id="future-transcript-source",
+        source=source,
+        entity_type="video",
+        entity_id=entity,
+        observed_at=available,
+        available_at=available,
+        synthetic=True,
+    )
+    dataset = pipeline.import_records([observation.model_dump(mode="json")], synthetic=True)[0]
+    return value.model_copy(
+        update={"dataset_id": dataset, "observation_id": observation.observation_id}
+    ), available
+
+
+def test_future_source_cannot_be_analyzed_or_read_before_its_availability(pipeline):
+    service, value = selected(pipeline)
+    future, available = future_source(pipeline, value)
+    cutoff = available + timedelta(minutes=1)
+    imported = service.import_transcript(future, as_of=cutoff)
+    external_budget(service)
+    adapter = ControlledAdapter()
+    with pytest.raises(EnrichmentDenied):
+        analyze(service, imported["transcript_id"], adapter=adapter)
+    assert adapter.calls == 0
+    assert reservation(pipeline)["requests_reserved"] == 0
+    assert reservation(pipeline)["cost_reserved"] == 0
+    assert imported["available_at"] == available
+    for request in ("future-a", "future-b"):
+        result = service.analyze(
+            request, "p", imported["transcript_id"], synthetic=True, as_of=cutoff, adapter=adapter
+        )
+        assert result["state"] == "completed"
+        with pytest.raises(EnrichmentDenied):
+            service.result(request, "p", synthetic=True)
+    assert adapter.calls == 1 and reservation(pipeline)["requests_reserved"] == 1
+    assert service.summaries("p", synthetic=True, limit=1) == {"items": [], "next_cursor": None}
+
+
+def test_stored_wall_clock_from_an_older_import_cannot_hide_future_source_dependency(pipeline):
+    service, value = selected(pipeline)
+    future, available = future_source(pipeline, value)
+    cutoff = available + timedelta(minutes=1)
+    transcript = service.import_transcript(future, as_of=cutoff)["transcript_id"]
+    pipeline.catalog.execute(
+        "UPDATE enrichment_transcripts SET available_at=clock_timestamp() WHERE transcript_id=%s",
+        (transcript,),
+    )
+    external_budget(service)
+    adapter = ControlledAdapter()
+    with pytest.raises(EnrichmentDenied, match="source_observation_unavailable"):
+        analyze(service, transcript, adapter=adapter)
+    assert adapter.calls == 0 and reservation(pipeline)["requests_reserved"] == 0
+    for request in ("future-a", "future-b"):
+        service.analyze(request, "p", transcript, synthetic=True, as_of=cutoff, adapter=adapter)
+        with pytest.raises(EnrichmentDenied, match="source_observation_unavailable"):
+            service.result(request, "p", synthetic=True)
+    assert service.summaries("p", synthetic=True, limit=1) == {"items": [], "next_cursor": None}
+    assert adapter.calls == 1 and reservation(pipeline)["cost_reserved"] == Decimal("0.10")
+
+
+def test_a_known_available_transcript_stays_reusable_after_future_metric_import(pipeline):
+    service, value = selected(pipeline)
+    known = service.import_transcript(value)
+    future, available = future_source(pipeline, value)
+    reused = service.import_transcript(future, as_of=available + timedelta(minutes=1))
+    assert reused["reused"] is True and reused["transcript_id"] == known["transcript_id"]
+    assert reused["available_at"] == known["available_at"]
+    assert analyze(service, reused["transcript_id"])["state"] == "completed"
+
+
+@pytest.mark.parametrize("future_first", [True, False], ids=["future_first", "current_first"])
+def test_completed_cache_only_reuses_origins_available_at_the_requested_cutoff(
+    pipeline, future_first
+):
+    service, value = selected(pipeline)
+    future_value, available = future_source(pipeline, value)
+    cutoff = available + timedelta(minutes=1)
+    external_budget(service)
+    adapter = ControlledAdapter()
+    if future_first:
+        future = service.import_transcript(future_value, as_of=cutoff)
+        future_result = service.analyze(
+            "future", "p", future["transcript_id"], synthetic=True, as_of=cutoff, adapter=adapter
+        )
+        current = service.import_transcript(value)
+        assert current["transcript_id"] != future["transcript_id"]
+        current_result = analyze(service, current["transcript_id"], "current", adapter=adapter)
+        assert current_result["analysis_id"] != future_result["analysis_id"]
+        with pytest.raises(EnrichmentDenied):
+            service.result("future", "p", synthetic=True)
+    else:
+        current = service.import_transcript(value)
+        current_result = analyze(service, current["transcript_id"], "current", adapter=adapter)
+        future = service.import_transcript(future_value, as_of=cutoff)
+        future_result = service.analyze(
+            "future", "p", future["transcript_id"], synthetic=True, as_of=cutoff, adapter=adapter
+        )
+        assert current_result["analysis_id"] == future_result["analysis_id"]
+    assert current_result["state"] == future_result["state"] == "completed"
+    assert analyze(service, current["transcript_id"], "current", adapter=adapter) == current_result
+    assert (
+        analyze(service, current["transcript_id"], "alias", adapter=adapter)["analysis_id"]
+        == current_result["analysis_id"]
+    )
+    assert adapter.calls == (2 if future_first else 1)
+    assert reservation(pipeline)["requests_reserved"] == adapter.calls
+    assert reservation(pipeline)["cost_reserved"] == Decimal("0.10") * adapter.calls
+
+
+@pytest.mark.parametrize("field", ["created_at", "finished_at"])
+def test_completed_cache_recorded_after_cutoff_cannot_poison_request_or_reserve_again(
+    pipeline, field
+):
+    service, value = selected(pipeline)
+    transcript = import_selected(service, value)
+    external_budget(service)
+    adapter = ControlledAdapter()
+    original = analyze(service, transcript, adapter=adapter)
+    cutoff = now()
+    pipeline.catalog.execute(
+        f"UPDATE enrichment_analyses SET {field}=%s WHERE analysis_id=%s",
+        (cutoff + timedelta(days=1), original["analysis_id"]),
+    )
+    with pytest.raises(EnrichmentDenied, match="cached_result_unavailable_at_cutoff"):
+        service.analyze(
+            "historical", "p", transcript, synthetic=True, as_of=cutoff, adapter=adapter
+        )
+    assert (
+        pipeline.catalog.one("SELECT 1 FROM enrichment_requests WHERE request_id='historical'")
+        is None
+    )
+    assert adapter.calls == 1 and reservation(pipeline)["requests_reserved"] == 1
+    later = cutoff + timedelta(days=2)
+    assert (
+        service.analyze(
+            "historical", "p", transcript, synthetic=True, as_of=later, adapter=adapter
+        )["analysis_id"]
+        == original["analysis_id"]
+    )
+    assert adapter.calls == 1
+
+
+@pytest.mark.parametrize("outcome", ["running", "uncertain"])
+def test_unresolved_future_cache_stays_a_barrier_against_a_new_paid_call(pipeline, outcome):
+    service, value = selected(pipeline)
+    future_value, available = future_source(pipeline, value)
+    cutoff = available + timedelta(minutes=1)
+    future = service.import_transcript(future_value, as_of=cutoff)
+    external_budget(service)
+    adapter = ControlledAdapter()
+
+    class ProcessDeath(BaseException):
+        pass
+
+    def unresolved(_document):
+        adapter.calls += 1
+        if outcome == "running":
+            raise ProcessDeath()
+        raise TimeoutError()
+
+    adapter.analyze = unresolved
+    with pytest.raises(ProcessDeath if outcome == "running" else EnrichmentDenied):
+        service.analyze(
+            "future", "p", future["transcript_id"], synthetic=True, as_of=cutoff, adapter=adapter
+        )
+    current = service.import_transcript(value)
+    with pytest.raises(EnrichmentDenied):
+        analyze(service, current["transcript_id"], "current", adapter=adapter)
+    assert adapter.calls == 1
+    assert reservation(pipeline)["requests_reserved"] == 1
+    assert reservation(pipeline)["cost_reserved"] == Decimal("0.10")
+
+
+def test_exact_source_availability_remains_readable_after_native_compaction(pipeline):
+    service, value = selected(pipeline)
+    transcript = import_selected(service, value)
+    original = analyze(service, transcript)
+    refreshed = refresh(pipeline, value)
+    compacted = pipeline.compact(synthetic=True)
+    assert compacted["status"] == "compacted"
+    assert value.dataset_id in compacted["parent_dataset_ids"]
+    assert refreshed.dataset_id in compacted["parent_dataset_ids"]
+    assert service.result("request", "p", synthetic=True) == original
+    assert service.import_transcript(refreshed)["transcript_id"] == transcript
+    assert (
+        service.summaries("p", synthetic=True)["items"][0]["analysis_id"] == original["analysis_id"]
+    )
+
+
 @pytest.mark.parametrize("change", [{"label": "winner_prediction"}, {"start": False}, {"end": 501}])
 def test_segment_and_output_models_revalidate_existing_nested_instances(change):
     segment = TextSegment.model_construct(**{"start": 0, "end": 5, "label": "hook", **change})
