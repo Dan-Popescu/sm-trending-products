@@ -216,11 +216,12 @@ def _source_scope(
     rows: Sequence[Observation],
     capabilities: Sequence[Capability],
     cutoff: datetime,
+    controlled_sources: Sequence[str] = (),
 ) -> list[Observation]:
-    if not capabilities:
+    if not capabilities and not controlled_sources:
         return list(rows)
     latest: dict[tuple[str, str, str], Capability] = {}
-    scoped_sources = {capability.source for capability in capabilities}
+    scoped_sources = {capability.source for capability in capabilities} | set(controlled_sources)
     for capability in capabilities:
         if capability.available_at <= cutoff:
             key = (capability.source, capability.account_id, capability.capability)
@@ -250,6 +251,7 @@ def eligible_evidence(
     capabilities: Sequence[Capability] = (),
     *,
     since: datetime | None = None,
+    controlled_sources: Sequence[str] = (),
 ) -> list[Observation]:
     """Apply the same knowledge and capability gates to a bounded evidence partition."""
     return _source_scope(
@@ -262,6 +264,7 @@ def eligible_evidence(
         ),
         capabilities,
         utc(cutoff),
+        controlled_sources,
     )
 
 
@@ -775,9 +778,20 @@ def mature_decision(
         and (observations or verified_evidence_refs is None)
     ):
         raise ValueError("Partitioned maturation requires validated references and no raw history")
-    eligible = _eligible_observations(
-        observations, cutoff, bool(snapshot["synthetic"]), config.market
-    )
+
+    def outcome_evidence(rows: Sequence[Observation]) -> list[Observation]:
+        if "controlled_sources" in snapshot:
+            return eligible_evidence(
+                rows,
+                cutoff,
+                bool(snapshot["synthetic"]),
+                config.market,
+                [Capability.model_validate(row) for row in snapshot["capabilities"]],
+                controlled_sources=snapshot["controlled_sources"],
+            )
+        return _eligible_observations(rows, cutoff, bool(snapshot["synthetic"]), config.market)
+
+    eligible = outcome_evidence(observations)
     evidence: dict[str, list[Observation]] = defaultdict(list)
     for row in eligible:
         evidence[row.entity_key].append(row)
@@ -829,12 +843,7 @@ def mature_decision(
             if product_evidence_loader is None:
                 product_evidence.update({key: evidence[key] for key in keys if key in evidence})
             else:
-                for item in _eligible_observations(
-                    product_evidence_loader(product_id),
-                    cutoff,
-                    bool(snapshot["synthetic"]),
-                    config.market,
-                ):
+                for item in outcome_evidence(product_evidence_loader(product_id)):
                     if item.entity_key in keys:
                         product_evidence[item.entity_key].append(item)
             product_bindings = {key: product_id for key in keys}
