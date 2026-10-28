@@ -109,7 +109,7 @@ def test_authorized_source_handover_refreshes_all_roles_and_reverse_too(pipeline
     authority, controller, row, evidence, _ = authorized(pipeline, tmp_path)
     runtime = object.__new__(HostRuntime)
     runtime.catalog = pipeline.catalog
-    runtime.config = SimpleNamespace(target="fixture")
+    runtime.config = SimpleNamespace(target="fixture", state_directory=authority.directory)
     runtime.authorization = authority
     runtime.controller = lambda current: controller
     refreshed = []
@@ -147,7 +147,7 @@ def test_sealed_execution_rejects_sql_intent_swap_between_cli_and_controller(pip
     evidence.ready = True
     runtime = object.__new__(HostRuntime)
     runtime.catalog = pipeline.catalog
-    runtime.config = SimpleNamespace(target="fixture")
+    runtime.config = SimpleNamespace(target="fixture", state_directory=authority.directory)
     runtime.authorization = authority
 
     def swapped(current):
@@ -184,7 +184,7 @@ def test_sql_progress_cannot_cancel_or_manufacture_a_completed_source_handover(
     controller.host.running["green"] = release("b").manifest.image
     runtime = object.__new__(HostRuntime)
     runtime.catalog = pipeline.catalog
-    runtime.config = SimpleNamespace(target="fixture")
+    runtime.config = SimpleNamespace(target="fixture", state_directory=authority.directory)
     runtime.authorization = authority
     runtime.controller = lambda current: controller
     runtime.refresh_processing_release = lambda *args, **kwargs: pytest.fail(
@@ -277,7 +277,7 @@ def test_explicit_rollback_uses_private_phase_before_persisting_cancellation(pip
     pipeline.catalog.execute("UPDATE deployment_runs SET phase='retired',status='completed'")
     runtime = object.__new__(HostRuntime)
     runtime.catalog = pipeline.catalog
-    runtime.config = SimpleNamespace(target="fixture")
+    runtime.config = SimpleNamespace(target="fixture", state_directory=authority.directory)
     runtime.authorization = authority
     runtime.controller = lambda current: controller
     controller.workers.busy = True
@@ -308,7 +308,7 @@ def test_rollback_after_sql_commit_gap_survives_another_crash_and_preempts_proce
         controller.apply(row["release_id"])
     runtime = object.__new__(HostRuntime)
     runtime.catalog = pipeline.catalog
-    runtime.config = SimpleNamespace(target="fixture")
+    runtime.config = SimpleNamespace(target="fixture", state_directory=authority.directory)
     runtime.authorization = authority
     runtime.trust = authority.trust
     runtime.controller = lambda current: controller
