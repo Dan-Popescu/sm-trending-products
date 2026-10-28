@@ -27,6 +27,8 @@ def parser() -> argparse.ArgumentParser:
         "match-products", help="Explain multilingual candidates (match-products --help)"
     )
 
+    commands.add_parser("transcripts", help="Analyze selected supplied text (transcripts --help)")
+
     def command(name: str, help_text: str, *, synthetic: bool = False):
         child = commands.add_parser(name, help=help_text, description=help_text)
         child.add_argument("--json", action="store_true", help="Emit JSON (the default)")
@@ -282,6 +284,11 @@ def main(argv: list[str] | None = None) -> int:
         from .matching_cli import main as matching_main
 
         return matching_main(effective[1:])
+
+    if effective and effective[0] == "transcripts":
+        from .transcript_cli import main as transcript_main
+
+        return transcript_main(effective[1:])
     if effective and effective[0] == "commerce":
         from .commerce_cli import main as commerce_main
 
