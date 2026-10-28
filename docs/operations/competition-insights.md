@@ -58,6 +58,16 @@ Unknown quotes and intervening scope changes also break continuity. Corrections
 available later replace an earlier point only at the later knowledge cutoff;
 revisions do not add price-change intervals. Simultaneous conflicting revisions
 suppress the affected offer's price claims.
+Every retained interval carries its own `price_context` (currency, variant,
+price basis, tax basis and shipping basis), plus `collection_scope_id` linking
+its unchanged country/source/query/coverage/distribution/account context to
+the enclosing scope. The offer-level `price_context` is explicitly labelled
+`price_context_scope="latest_valid_quote"`; it does not describe older intervals.
+For EUR 20 → EUR 18 → USD 30 → USD 25, the report retains a EUR 2 decrease
+and a USD 5 decrease, excludes the currency transition and never adds these
+amounts together. Counts of compatible changes may cover multiple contexts.
+Returning to an earlier variant or basis starts another adjacent interval;
+it never bridges across the intervening incompatible quotes.
 
 ## Operator command and private view
 
@@ -88,3 +98,6 @@ showing a previously assembled report.
 The complete report is sanitized before rendering any scope, timeline or price
 table as well as JSON details. Configured secret values, authentication tokens
 and URL credentials are removed only from the display copy.
+The private price-interval table shows each interval's own currency, variant
+and price/tax/shipping bases. It previews at most 200 intervals per scope and
+explicitly marks truncation; offer totals retain the complete bounded counts.

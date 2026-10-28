@@ -425,6 +425,7 @@ class EvaluationService:
                 snapshot["selection_audit"]["measurement_sample"] = {
                     "product_ids": sample["selected"],
                     "measurement_only": True,
+                    "methodology": deepcopy(sample["methodology"]),
                     "report": self._report_header(sampled_report, synthetic),
                 }
                 snapshot.pop("snapshot_id")

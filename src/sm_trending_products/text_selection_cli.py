@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 from .content_research_cli import _cursor, _failure, _identifier, _read_object, _SafeParser
@@ -79,7 +80,20 @@ def main(argv: list[str] | None = None) -> int:
                 if args.action == "preview"
                 else service.execute(plan, request_prefix=args.request_prefix)
             )
-        print(canonical(redact(result)))
+        encoded = canonical(redact(result))
+        if args.action == "preview" and encoded != canonical(result):
+            print(
+                canonical(
+                    {
+                        "error": "selection_plan_not_exportable",
+                        "hint": "The plan contains private metadata. Correct its source metadata "
+                        "before creating an apply-ready plan.",
+                    }
+                ),
+                file=sys.stderr,
+            )
+            return 2
+        print(encoded)
         return 1 if args.action == "apply" and result["state"] != "completed" else 0
     except KeyboardInterrupt:
         return 130
