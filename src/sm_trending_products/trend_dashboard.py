@@ -23,9 +23,10 @@ def render_trends(
         st.info("Create a product and review its video links first.")
         return
     product = st.selectbox("Product for trend details", [row["product_id"] for row in products])
+    diagnostics = st.checkbox("Compare periods and inspect dominant contributors", value=False)
     if st.button("Inspect multi-day growth"):
         try:
-            report = insights.describe(product, as_of, synthetic)
+            report = insights.describe(product, as_of, synthetic, diagnostics=diagnostics)
         except Exception:
             st.error(
                 "Trend details are unavailable. Check evidence availability "
@@ -47,6 +48,14 @@ def render_trends(
             ],
             hide_index=True,
         )
+        if diagnostics:
+            st.caption(
+                "Continuing-video comparisons use measured time only. Removing a contributor "
+                "is a robustness check, not a prediction of what would have happened."
+            )
+            from .dashboard import display_safe
+
+            st.json(display_safe(report["diagnostics"]))
         with st.expander("Coverage, identity and evidence details"):
             from .dashboard import display_safe
 
