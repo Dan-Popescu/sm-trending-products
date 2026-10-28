@@ -43,6 +43,10 @@ class DashboardPipeline(Protocol):
 
     def transcript_insights(self) -> Any: ...
 
+    def commerce_orders(self) -> Any: ...
+
+    def commercial_learning(self) -> Any: ...
+
     def products(
         self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
     ) -> list[Row]: ...
@@ -735,6 +739,7 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
                 "Catalog",
                 "Launch preparation",
                 "Transcript insights",
+                "Commerce operations",
                 "Collection plan",
                 "Datasets and evaluations",
                 "Health and coverage",
@@ -792,6 +797,10 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
         from sm_trending_products.commerce_dashboard import render_launches
 
         render_launches(pipeline.launch_service(), synthetic, pipeline.commerce_delivery())
+    elif view == "Commerce operations":
+        from sm_trending_products.commerce_operations_dashboard import render_commerce_operations
+
+        render_commerce_operations(pipeline, synthetic)
     elif view == "Datasets and evaluations":
         _history(pipeline, synthetic)
     elif view == "Collection plan":

@@ -20,6 +20,9 @@ def parser() -> argparse.ArgumentParser:
         "sm-trends commerce show --id PRODUCT-FR; sm-trends commerce preview --id PRODUCT-FR",
     )
     commands = root.add_subparsers(dest="action", required=True)
+    commands.add_parser(
+        "operations", help="Reconcile orders and review financial actuals (operations --help)"
+    )
     commands.add_parser("template", help="Print an editable JSON template without credentials")
     commands.add_parser("init", help="Explicitly initialize optional commercial tables")
     commands.add_parser("delivery-init", help="Initialize recoverable draft delivery tables")
@@ -100,6 +103,11 @@ def template() -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    effective = sys.argv[1:] if argv is None else argv
+    if effective and effective[0] == "operations":
+        from .commerce_operations_cli import main as operations_main
+
+        return operations_main(effective[1:])
     arguments = parser().parse_args(argv)
     result: dict | list
     try:

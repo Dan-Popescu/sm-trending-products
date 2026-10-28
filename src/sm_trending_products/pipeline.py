@@ -130,6 +130,16 @@ class Pipeline:
 
         return TranscriptInsights(self.catalog, self.provenance)
 
+    def commerce_orders(self):
+        from .commerce_orders import CommerceOrders
+
+        return CommerceOrders(self.catalog, self.commerce_delivery())
+
+    def commercial_learning(self):
+        from .commerce_learning import CommercialLearning
+
+        return CommercialLearning(self.catalog, self.history, self.identity)
+
     def initialize(self, create_bucket: bool = False) -> dict:
         self.catalog.initialize()
         self.history.initialize(create_bucket)
