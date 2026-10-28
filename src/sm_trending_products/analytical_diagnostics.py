@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -188,8 +188,14 @@ class AnalyticalDiagnostics:
 
     @contextmanager
     def attempt(
-        self, operation: str, cutoff: datetime | None, synthetic: bool
+        self,
+        operation: str,
+        cutoff: datetime | None,
+        synthetic: bool,
+        *,
+        admission: Callable[[], None] | None = None,
     ) -> Iterator[_Attempt]:
+        """Attribute admission before persistence can affect its clock decisions."""
         run = _Attempt(self.history, operation, synthetic, cutoff)
         run.summary = {
             "version": 1,
@@ -210,10 +216,15 @@ class AnalyticalDiagnostics:
                 )
             },
         }
-        self._save(run)
         token = _active.set((*_active.get(), run))
         started = perf_counter()
+        persistence_seconds = 0.0
         try:
+            if admission is not None:
+                admission()
+            saving = perf_counter()
+            self._save(run)
+            persistence_seconds = perf_counter() - saving
             yield run
         except BaseException as error:
             run.state, run.error_type = "failed", type(error).__name__[:128]
@@ -222,7 +233,9 @@ class AnalyticalDiagnostics:
             run.state = "succeeded"
         finally:
             run.finished_at = now()
-            run.summary["elapsed_ms"] = round((perf_counter() - started) * 1000, 3)
+            run.summary["elapsed_ms"] = round(
+                (perf_counter() - started - persistence_seconds) * 1000, 3
+            )
             _active.reset(token)
             self._save(run)
 

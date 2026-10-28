@@ -889,8 +889,6 @@ class Pipeline:
         *,
         policy: AssessmentPolicy | None = None,
     ) -> dict:
-        with self.catalog.evidence_transaction(synthetic):
-            pass
         return self._evaluation.freeze(
             as_of=as_of, synthetic=synthetic, config=config, policy=policy
         )

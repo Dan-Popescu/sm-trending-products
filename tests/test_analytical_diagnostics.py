@@ -15,8 +15,10 @@ from test_feature_projection import video
 import sm_trending_products.evaluation_service as evaluation_module
 import sm_trending_products.pipeline as pipeline_module
 from sm_trending_products.analysis_batches import MetadataBudgetExceeded
+from sm_trending_products.catalog import InvalidationPending
 from sm_trending_products.cli import main
 from sm_trending_products.contracts import AssessmentPolicy, now
+from sm_trending_products.invalidation import SourceInvalidation
 
 
 def seed(pipeline, *, products=1, samples=3):
@@ -297,6 +299,77 @@ def test_validation_failure_records_a_type_without_copying_its_sensitive_message
     assert row["state"] == "failed"
     assert row["error_type"] == "ValidationError"
     assert "sensitive-input-example" not in json.dumps(row, default=str)
+
+
+@pytest.mark.parametrize("diagnostics_available", [True, False])
+def test_public_freeze_admission_failure_is_recorded_without_masking_invalidation(
+    pipeline, monkeypatch, diagnostics_available
+):
+    if os.environ.get("TEST_DATABASE_ENGINE") == "pglite":
+        pytest.skip("Requires independent native PostgreSQL backends")
+    cutoff = seed(pipeline)
+    dataset = pipeline.catalog.one("SELECT dataset_id FROM datasets LIMIT 1")["dataset_id"]
+    SourceInvalidation(pipeline.catalog).begin(dataset, "source_deleted")
+    monkeypatch.setattr(
+        evaluation_module, "now", lambda: pytest.fail("Admission must reject before live clocks")
+    )
+    if not diagnostics_available:
+        pipeline.catalog.execute(
+            "ALTER TABLE analytical_run_diagnostics RENAME TO unavailable_diagnostics"
+        )
+    before = pipeline.history.metrics.copy()
+    try:
+        # A real shared retention pin prevents automatic invalidation continuation,
+        # while allowing the public admission guard to observe the durable gate.
+        with pipeline.catalog.transaction() as pin:
+            pipeline.catalog.guard_retention(pin)
+            with pytest.raises(InvalidationPending, match="retry after bounded maintenance"):
+                pipeline.freeze(cutoff, True)
+        if diagnostics_available:
+            attempts = pipeline.analytical_runs(True)
+            assert len(attempts) == 1
+            assert attempts[0]["state"] == "failed"
+            assert attempts[0]["error_type"] == "InvalidationPending"
+            assert attempts[0]["operation"] == "freeze"
+            assert attempts[0]["summary"]["phase_ms"]["input_selection"] > 0
+    finally:
+        if not diagnostics_available:
+            pipeline.catalog.execute(
+                "ALTER TABLE unavailable_diagnostics RENAME TO analytical_run_diagnostics"
+            )
+    assert pipeline.history.metrics == before
+    assert pipeline.catalog.one("SELECT count(*) AS n FROM evaluation_runs")["n"] == 0
+
+
+def test_live_freeze_clock_checks_still_follow_the_public_admission_guard(pipeline, monkeypatch):
+    if os.environ.get("TEST_DATABASE_ENGINE") == "pglite":
+        pytest.skip("Requires independent native PostgreSQL backends")
+    initial = now()
+    cutoff = initial + timedelta(seconds=31)
+    released = Event()
+    monkeypatch.setattr(
+        evaluation_module,
+        "now",
+        lambda: initial + timedelta(seconds=2) if released.is_set() else initial,
+    )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with pipeline.catalog.transaction() as fence:
+            pipeline.catalog.guard_retention(fence, exclusive=True)
+            future = executor.submit(pipeline.freeze, cutoff)
+            deadline = monotonic() + 5
+            while monotonic() < deadline:
+                if pipeline.catalog.one(
+                    "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' "
+                    "AND objid=492371205 AND NOT granted) AS waiting"
+                )["waiting"]:
+                    break
+                sleep(0.01)
+            else:
+                pytest.fail("Freeze should wait for the actual admission fence")
+            assert pipeline.analytical_runs(False) == []
+            released.set()
+        assert future.result(timeout=10)["evaluation_id"]
+    assert pipeline.analytical_runs(False)[0]["state"] == "succeeded"
 
 
 def test_killed_cli_leaves_an_incomplete_running_marker_without_claiming_failure(

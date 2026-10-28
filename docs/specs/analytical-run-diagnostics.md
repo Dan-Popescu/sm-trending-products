@@ -20,11 +20,14 @@ peaks, source/local rows decoded, source objects read, adaptive splits, and boun
 cache/fallback reasons. Failed reads and splits count work actually attempted.
 Do not call decoded rows unique input facts or sum nested durations as total time.
 
-Persist a running marker before work and completion on success or an exception.
+Persist a running marker before analytical work and completion on success or an exception.
 An implicit assessment cutoff stays unknown until its existing retention guard
 completes; instrumentation must preserve that clock-selection order.
-Freeze live-window guard decisions must be captured at their original point,
-before diagnostic persistence can delay them; rejected attempts are still recorded.
+Freeze admission runs inside the attributed context before persistence: first the
+existing evidence guard, then its original live-window checks. This preserves
+clock ordering without letting telemetry delay admission. Rejected admissions are
+persisted directly as failed attempts; process loss during admission can leave no
+marker. Accepted admission persists running before analytical preparation.
 Store only a bounded error category/type, never exception messages, observations,
 product/entity lists, SQL, credentials or tracebacks. Process termination can leave
 a running marker with incomplete counters; do not invent a completed failure or
@@ -52,7 +55,8 @@ expanding analytical provenance or reading evidence payloads.
 Use the already approved public Pipeline/CLI seams, native PostgreSQL and HTTP
 Moto. Verify cold, unchanged, changed, split and failed runs; exact existing result
 identifiers; work reconciliation; concurrent/nested context isolation; failed
-diagnostic writes; bounded retention, namespace isolation and CLI behavior.
+diagnostic writes; pending-invalidation admission, guard/clock ordering, bounded
+retention, namespace isolation and CLI behavior.
 Run formatting/lint/types, the full suite once at the final revision, independent
 Standards/Spec review and actual-image CI before autonomous merge.
 

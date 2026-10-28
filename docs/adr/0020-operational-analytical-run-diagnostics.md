@@ -27,13 +27,18 @@ there is no per-observation diagnostic storage or unbounded list of labels.
 An implicit assessment cutoff is resolved at the existing point after its initial
 retention guard. A running marker can therefore have a null cutoff. Recording an
 attempt earlier must not move the analytical clock across that guard.
-Live freeze admission likewise captures its original past/future window decisions
-before diagnostic I/O, then records a rejected attempt inside the context. A slow
-diagnostic write cannot make an originally valid decision stale or admit an
-originally over-future decision.
+Freeze admission belongs to the evaluation service and runs inside the attributed
+attempt before diagnostic I/O: the existing evidence guard precedes the original
+past/future window checks. The diagnostics owner executes this admission callback
+before saving running state, so callers cannot forget to activate persistence.
+Admission failure is saved directly as failed; guard work and duration remain
+attributed. A slow diagnostic write cannot change live admission. Termination
+during admission can leave no marker; accepted admission persists running before
+analytical preparation.
 
-Persist running state before analytical work and completion after normal return or
-an exception. Error types are bounded; exception messages, SQL, tracebacks and raw
+Persist running state after any admission and before analytical work, then
+completion after normal return or an exception. Error types are bounded;
+exception messages, SQL, tracebacks and raw
 evidence are excluded. Ordinary diagnostic write failures log only attempt ID and
 exception type, preserving the successful result or original analytical exception.
 SIGKILL, a lost completion write or process loss can leave a running marker with

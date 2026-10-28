@@ -37,6 +37,13 @@ active work, process loss, SIGKILL or a failed final diagnostic write. Its count
 remain the initial incomplete snapshot; there is no progress heartbeat. Confirm
 the ordinary authoritative result/worker state before deciding to rerun anything.
 
+Freeze admission precedes this persisted marker: the attempt first tracks its
+evidence guard and live-window checks in memory, preserving their original clock
+order before telemetry I/O. Admission rejection is saved directly as failed;
+termination while admission is waiting can leave no diagnostic. Accepted admission
+persists running before analytical preparation. Admission work contributes to the
+completed counters and elapsed time.
+
 ## Interpret the summary
 
 `summary.version` is 1. Counters are attributed to this execution and History
