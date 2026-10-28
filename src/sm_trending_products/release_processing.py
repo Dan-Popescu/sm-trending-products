@@ -13,7 +13,13 @@ from pathlib import Path
 from .catalog import Catalog
 from .contracts import canonical, utc
 from .release_control import ReleaseBlocked, ReleaseManifest, ReleaseTrust, VerifiedRelease
-from .release_host import PLANNERS, PROCESSING_SERVICES, ROLE_VARIABLES, ComposeReleaseHost
+from .release_host import (
+    PLANNERS,
+    PROCESSING_SERVICES,
+    ROLE_VARIABLES,
+    ComposeReleaseHost,
+    RoleContainer,
+)
 
 
 class ProcessingRefresh:
@@ -132,7 +138,9 @@ class ProcessingRefresh:
             raise ReleaseBlocked("processing_acquisition_container_unavailable")
         return identity
 
-    def _start(self, service: str, image: str, manifest: ReleaseManifest, watch: dict) -> str:
+    def _start(
+        self, service: str, image: str, manifest: ReleaseManifest, watch: dict
+    ) -> RoleContainer:
         self._acquisition(manifest, watch)
         container = self.host.start_role(service, image)
         self._acquisition(manifest, watch)
@@ -232,7 +240,7 @@ class ProcessingRefresh:
         retire = "green" if slot == "blue" else "blue"
         if old := self.host.role_container(PLANNERS[retire]):
             self._acquisition(manifest, watch)
-            self.host.stop_planner(PLANNERS[retire], old)
+            self.host.stop_planner(old)
             self._acquisition(manifest, watch)
         self._ensure_planner(row, manifest, watch)
 

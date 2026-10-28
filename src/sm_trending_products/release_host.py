@@ -99,6 +99,15 @@ INSPECT_FORMAT = (
 
 
 @dataclass(frozen=True)
+class RoleContainer:
+    """An immutable container selection bound to its Compose project and role."""
+
+    project: str
+    service: str
+    identifier: str
+
+
+@dataclass(frozen=True)
 class ComposeReleaseHost:
     """Configuration belongs to the host, never to an untrusted release manifest.
 
@@ -299,18 +308,18 @@ class ComposeReleaseHost:
         except (ValueError, TypeError):
             raise ReleaseBlocked("capture_slot_identity_unavailable") from None
 
-    def role_container(self, service: str) -> str | None:
+    def role_container(self, service: str) -> RoleContainer | None:
         self._role_service(service)
         containers = self._command([*self._compose(), "ps", "--all", "--quiet", service]).split()
         if len(containers) > 1 or any(
             not re.fullmatch(r"[a-f0-9]{12,64}", value) for value in containers
         ):
             raise ReleaseBlocked("processing_container_ambiguous")
-        return containers[0] if containers else None
+        return RoleContainer(self.project, service, containers[0]) if containers else None
 
-    def running_role(self, service: str, image: str) -> str | None:
+    def running_role(self, service: str, image: str) -> RoleContainer | None:
         container = self.role_container(service)
-        if container and self._identity(container)[:2] == (image, True):
+        if container and self._identity(container.identifier)[:2] == (image, True):
             return container
         return None
 
@@ -347,13 +356,14 @@ class ComposeReleaseHost:
         )
         replace(capacity, budget=budget).admit()
 
-    def planner_identity(self, container: str) -> dict:
+    def planner_identity(self, container: RoleContainer) -> dict:
+        identifier = self._planner_container(container)
         values = self._command(
             [
                 "inspect",
                 "--format",
                 "{{json .Config.Hostname}}\n{{json .State.StartedAt}}",
-                container,
+                identifier,
             ]
         ).splitlines()
         try:
@@ -365,14 +375,25 @@ class ComposeReleaseHost:
             utc(started)
         except (ValueError, TypeError):
             raise ReleaseBlocked("processing_planner_identity_unavailable") from None
-        return {"container": container, "hostname": hostname, "started_at": started}
+        return {"container": identifier, "hostname": hostname, "started_at": started}
+
+    def _planner_container(self, container: RoleContainer) -> str:
+        if (
+            not isinstance(container, RoleContainer)
+            or container.project != self.project
+            or container.service not in PLANNERS.values()
+            or not isinstance(container.identifier, str)
+            or not re.fullmatch(r"[a-f0-9]{12,64}", container.identifier)
+        ):
+            raise ReleaseBlocked("processing_service_not_allowed")
+        return container.identifier
 
     @staticmethod
     def _role_service(service: str) -> None:
         if service not in (*PROCESSING_SERVICES, *PLANNERS.values()):
             raise ReleaseBlocked("processing_service_not_allowed")
 
-    def start_role(self, service: str, image: str) -> str:
+    def start_role(self, service: str, image: str) -> RoleContainer:
         """Start one pinned replayable role, preserving an already running identity."""
         self._role_service(service)
         variable = ROLE_VARIABLES.get(service)
@@ -425,23 +446,22 @@ class ComposeReleaseHost:
         container = self.role_container(service)
         if not container:
             raise ReleaseBlocked("processing_planner_bootstrap_required")
-        image, running, _ = self._identity(container)
+        image, running, _ = self._identity(container.identifier)
         if not running:
             raise ReleaseBlocked("processing_planner_unavailable")
         return image
 
-    def planner_probe(self, container: str) -> dict:
+    def planner_probe(self, container: RoleContainer) -> dict:
         """Run the fixed coordinator probe without exposing a command surface."""
+        identifier = self._planner_container(container)
         return json.loads(
             self._command(
-                ["exec", container, "python", "-m", "sm_trending_products.capture_coordinator"]
+                ["exec", identifier, "python", "-m", "sm_trending_products.capture_coordinator"]
             )
         )
 
-    def stop_planner(self, service: str, container: str) -> None:
-        if service not in PLANNERS.values() or not re.fullmatch(r"[a-f0-9]{12,64}", container):
-            raise ReleaseBlocked("processing_service_not_allowed")
-        self._command(["stop", "--time=-1", container])
+    def stop_planner(self, container: RoleContainer) -> None:
+        self._command(["stop", "--time=-1", self._planner_container(container)])
 
     def _running_role_identifiers(self) -> list[str]:
         identifiers = self._command(
