@@ -21,6 +21,37 @@ from sm_trending_products.release_control import (
 pytestmark = pytest.mark.integration
 
 
+@pytest.mark.parametrize("operation", ["apply", "rollback"])
+def test_production_mutation_requires_private_execution_before_host_changes(
+    pipeline, tmp_path, operation
+):
+    authority, fixture, row, evidence, _ = authorized(pipeline, tmp_path)
+    proof = Jsonb({"method": "cosign_bundle", "bundle": {"controlled_fixture": True}})
+    pipeline.catalog.execute(
+        "UPDATE deployment_runs SET candidate_proof=%s,prior_proof=%s WHERE release_id=%s",
+        (proof, proof, row["release_id"]),
+    )
+    controller = DeploymentController(
+        pipeline.catalog, fixture.host, fixture.workers, evidence, trust=authority.trust
+    )
+    with pytest.raises(ReleaseBlocked, match="deployment_execution_unconfigured"):
+        getattr(controller, operation)(row["release_id"])
+    assert fixture.host.events == [] and not fixture.workers.drained
+
+
+def executing(controller, execution):
+    """Recreate the real controller at its public construction seam."""
+    return DeploymentController(
+        controller.catalog,
+        controller.host,
+        controller.workers,
+        controller.evidence,
+        trust=controller.trust,
+        allow_synthetic=controller.allow_synthetic,
+        execution=execution,
+    )
+
+
 def authorized(pipeline, tmp_path, *, before_seal=None):
     binary = tmp_path / "controlled-verifier"
     binary.write_text("#!" + sys.executable + "\nraise SystemExit(0)\n")
@@ -111,7 +142,7 @@ def test_authorized_source_handover_refreshes_all_roles_and_reverse_too(pipeline
     runtime.catalog = pipeline.catalog
     runtime.config = SimpleNamespace(target="fixture", state_directory=authority.directory)
     runtime.authorization = authority
-    runtime.controller = lambda current: controller
+    runtime.controller = lambda current: executing(controller, authority.execution(current))
     refreshed = []
     options = []
 
@@ -168,7 +199,7 @@ def test_sealed_execution_rejects_sql_intent_swap_between_cli_and_controller(pip
                 row["candidate_worker_id"],
             ),
         )
-        return controller
+        return executing(controller, authority.execution(current))
 
     runtime.controller = swapped
     with pytest.raises(ReleaseBlocked, match="deployment_intent_changed"):
@@ -186,7 +217,7 @@ def test_sql_progress_cannot_cancel_or_manufacture_a_completed_source_handover(
     runtime.catalog = pipeline.catalog
     runtime.config = SimpleNamespace(target="fixture", state_directory=authority.directory)
     runtime.authorization = authority
-    runtime.controller = lambda current: controller
+    runtime.controller = lambda current: executing(controller, authority.execution(current))
     runtime.refresh_processing_release = lambda *args, **kwargs: pytest.fail(
         "Forged completion refreshed processing"
     )
@@ -211,7 +242,7 @@ def test_private_execution_resumes_after_host_and_cross_journal_crashes(
 
     authority, controller, row, evidence, _ = authorized(pipeline, tmp_path)
     execution = authority.execution(row)
-    controller.execution = execution
+    controller = executing(controller, execution)
     evidence.ready = True
     if boundary == "committed_checkpoint":
         original = execution.checkpoint
@@ -240,7 +271,7 @@ def test_private_execution_resumes_after_host_and_cross_journal_crashes(
     fresh = pipeline.catalog.one(
         "SELECT * FROM deployment_runs WHERE release_id=%s", (row["release_id"],)
     )
-    controller.execution = authority.execution(fresh)
+    controller = executing(controller, authority.execution(fresh))
     result = controller.apply(row["release_id"])
     assert result["status"] == "completed" and set(controller.host.running) == {"green"}
 
@@ -264,7 +295,7 @@ def test_first_private_seal_cannot_promote_forged_sql_progress_or_worker_identit
             authorized(pipeline, tmp_path, before_seal=forged)
         return
     authority, controller, row, _, _ = authorized(pipeline, tmp_path, before_seal=forged)
-    controller.execution = authority.execution(row)
+    controller = executing(controller, authority.execution(row))
     result = controller.apply(row["release_id"])
     assert result["status"] == "blocked" and result["reason"] == "capture_proof_missing"
     assert "retire" not in controller.host.events and "blue" in controller.host.running
@@ -272,14 +303,14 @@ def test_first_private_seal_cannot_promote_forged_sql_progress_or_worker_identit
 
 def test_explicit_rollback_uses_private_phase_before_persisting_cancellation(pipeline, tmp_path):
     authority, controller, row, evidence, _ = authorized(pipeline, tmp_path)
-    controller.execution = authority.execution(row)
+    controller = executing(controller, authority.execution(row))
     assert controller.apply(row["release_id"])["reason"] == "capture_proof_missing"
     pipeline.catalog.execute("UPDATE deployment_runs SET phase='retired',status='completed'")
     runtime = object.__new__(HostRuntime)
     runtime.catalog = pipeline.catalog
     runtime.config = SimpleNamespace(target="fixture", state_directory=authority.directory)
     runtime.authorization = authority
-    runtime.controller = lambda current: controller
+    runtime.controller = lambda current: executing(controller, authority.execution(current))
     controller.workers.busy = True
     assert runtime.rollback(row["release_id"])["reason"] == "candidate_busy"
     evidence.ready = True
@@ -294,7 +325,7 @@ def test_rollback_after_sql_commit_gap_survives_another_crash_and_preempts_proce
 
     authority, controller, row, evidence, request = authorized(pipeline, tmp_path)
     execution = authority.execution(row)
-    controller.execution = execution
+    controller = executing(controller, execution)
     evidence.ready = True
     checkpoint = execution.checkpoint
 
@@ -311,7 +342,7 @@ def test_rollback_after_sql_commit_gap_survives_another_crash_and_preempts_proce
     runtime.config = SimpleNamespace(target="fixture", state_directory=authority.directory)
     runtime.authorization = authority
     runtime.trust = authority.trust
-    runtime.controller = lambda current: controller
+    runtime.controller = lambda current: executing(controller, authority.execution(current))
     runtime.pending_processing = lambda: pytest.fail("Rollback must preempt blocked processing")
     refreshed = []
 
@@ -320,16 +351,22 @@ def test_rollback_after_sql_commit_gap_survives_another_crash_and_preempts_proce
         return {"status": "completed", "target": "fixture"}
 
     runtime.refresh_processing_release = processing
-    apply = controller.apply
     interrupted = []
 
-    def crash_after_private_rollback_intent(release_id):
-        if not interrupted:
-            interrupted.append(True)
-            raise ProcessDeath()
-        return apply(release_id)
+    def fresh_controller(current):
+        bound = executing(controller, authority.execution(current))
+        apply = bound.apply
 
-    controller.apply = crash_after_private_rollback_intent
+        def crash_after_private_rollback_intent(release_id):
+            if not interrupted:
+                interrupted.append(True)
+                raise ProcessDeath()
+            return apply(release_id)
+
+        bound.apply = crash_after_private_rollback_intent
+        return bound
+
+    runtime.controller = fresh_controller
     with pytest.raises(ProcessDeath):
         runtime.rollback(row["release_id"])
     assert authority.verify(row) == "rollback"
