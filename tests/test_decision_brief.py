@@ -36,11 +36,8 @@ def codes(result, bucket):
 def test_partial_brief_never_initializes_modules_or_turns_absence_into_success(pipeline):
     pipeline.create_product("p1", "Selected physical product", synthetic=True)
     cutoff = now()
-    assert (
-        pipeline.catalog.one("SELECT to_regclass('application_module_migrations') AS relation")[
-            "relation"
-        ]
-        is None
+    modules = pipeline.catalog.all(
+        "SELECT * FROM application_module_migrations ORDER BY module,version"
     )
     report = brief(pipeline, cutoff=cutoff, taxonomy_id="reviewed")
     assert report["status"] == "watch"
@@ -55,10 +52,8 @@ def test_partial_brief_never_initializes_modules_or_turns_absence_into_success(p
         report["report_id"] == brief(pipeline, cutoff=cutoff, taxonomy_id="reviewed")["report_id"]
     )
     assert (
-        pipeline.catalog.one("SELECT to_regclass('application_module_migrations') AS relation")[
-            "relation"
-        ]
-        is None
+        pipeline.catalog.all("SELECT * FROM application_module_migrations ORDER BY module,version")
+        == modules
     )
 
 
