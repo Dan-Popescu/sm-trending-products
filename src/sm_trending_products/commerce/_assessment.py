@@ -9,6 +9,20 @@ from .models import REQUIRED_COSTS, LaunchDraft
 
 
 def assess(draft: LaunchDraft, evaluated_at: datetime) -> tuple[dict, dict]:
+    # Zero has no economic scale. Bound legacy/imported zero exponents before
+    # arithmetic and formatting; the immutable source draft remains unchanged.
+    def amount(value: Decimal | None) -> Decimal | None:
+        return Decimal(0) if value is not None and value.is_zero() else value
+
+    draft = draft.model_copy(
+        update={
+            **{
+                name: amount(getattr(draft, name))
+                for name in ("retail_price", "tax_per_order", "desired_profit")
+            },
+            "costs": {name: amount(value) for name, value in draft.costs.items()},
+        }
+    )
     reasons: list[dict[str, str]] = []
     blocked = False
 
