@@ -33,6 +33,8 @@ class DashboardPipeline(Protocol):
 
     def status(self) -> Row: ...
 
+    def launch_service(self) -> Any: ...
+
     def products(
         self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
     ) -> list[Row]: ...
@@ -723,6 +725,7 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
             [
                 "Opportunities",
                 "Catalog",
+                "Launch preparation",
                 "Collection plan",
                 "Datasets and evaluations",
                 "Health and coverage",
@@ -764,6 +767,10 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
             _opportunities(pipeline, products, as_of, synthetic)
         else:
             _catalog(pipeline, products, as_of, synthetic)
+    elif view == "Launch preparation":
+        from sm_trending_products.commerce_dashboard import render_launches
+
+        render_launches(pipeline.launch_service(), synthetic)
     elif view == "Datasets and evaluations":
         _history(pipeline, synthetic)
     elif view == "Collection plan":

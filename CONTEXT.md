@@ -50,3 +50,23 @@ its permitted window. A later counter value does not silently fill that gap.
 **Replayability**: The verified ability to retrieve the same required historical
 source evidence later, within its availability window and permitted request budget.
 An undocumented recovery ability remains unknown.
+
+**Launch dossier**: A versioned decision record for offering a canonical product
+in one country, with commercial facts, assumptions and unresolved requirements.
+Being ready to test is distinct from being proven profitable.
+
+**Commercial test**: An actual attempt to sell under a recorded offer, launch
+decision and measurement period. A synthetic rehearsal remains a rehearsal.
+
+**Order**: A commerce platform's record of a customer's purchase request. An order
+is distinct from a successful payment, completed fulfillment or realized profit.
+
+**Fulfillment**: The supplier or warehouse work that delivers ordered products.
+A handoff request is distinct from acceptance, shipment and delivery.
+
+**Commercial outcome**: Measured sales and declared actual costs for a product,
+country and period, with incomplete evidence identified explicitly.
+
+**Transcript insight**: A reproducible interpretation of supplied spoken-text or
+subtitle evidence, with its origin, version and uncertainty. A description is not
+automatically a transcript of speech.
