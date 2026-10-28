@@ -23,6 +23,9 @@ def parser() -> argparse.ArgumentParser:
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("commerce", help="Prepare private launch dossiers (commerce --help)")
     commands.add_parser("trend-insights", help="Explain multi-day growth (trend-insights --help)")
+    commands.add_parser(
+        "match-products", help="Explain multilingual candidates (match-products --help)"
+    )
 
     def command(name: str, help_text: str, *, synthetic: bool = False):
         child = commands.add_parser(name, help=help_text, description=help_text)
@@ -275,6 +278,10 @@ def main(argv: list[str] | None = None) -> int:
         from .trend_cli import main as trend_main
 
         return trend_main(effective[1:])
+    if effective and effective[0] == "match-products":
+        from .matching_cli import main as matching_main
+
+        return matching_main(effective[1:])
     if effective and effective[0] == "commerce":
         from .commerce_cli import main as commerce_main
 

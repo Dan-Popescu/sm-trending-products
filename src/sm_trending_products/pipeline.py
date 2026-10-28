@@ -120,6 +120,11 @@ class Pipeline:
 
         return TrendInsights(self.catalog, self.history)
 
+    def product_matcher(self):
+        from .matching import ProductMatcher
+
+        return ProductMatcher(self.catalog)
+
     def initialize(self, create_bucket: bool = False) -> dict:
         self.catalog.initialize()
         self.history.initialize(create_bucket)
