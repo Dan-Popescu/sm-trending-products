@@ -170,6 +170,15 @@ The probe refuses live state, enabled capabilities or unrelated task queues; it 
 not a general queue-draining or production cutover command. The default restore
 check remains read-only after restoring its isolated copy.
 
+The dedicated CI fixture also runs the [synthetic commerce rehearsal](commerce-rehearsal.md)
+before backup. After restoring and resuming the interrupted checkpoint, it verifies
+the stored commercial evidence through the public module interfaces, with no shop
+or source requests. This covers the optional dossier, draft operation, sanitized
+order, manual follow-up records, reviewed financial revisions, transcript output
+and frozen outcomes. The core catalog fingerprint alone does not cover these
+optional tables. A missing object or record fails the recovery check; replaying a
+previously completed report is not treated as fresh evidence verification.
+
 The local rehearsal uses Moto and checks logical evidence recovery. Native PostgreSQL is used in the container exercise. Real provider versioning, access policies, encryption, and durability require separate provider acceptance. Record elapsed restore time, data volume, missing objects, and verification output; decide recovery objectives from measured results.
 
 ## Recovery after an incident

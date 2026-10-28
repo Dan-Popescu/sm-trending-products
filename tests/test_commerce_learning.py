@@ -81,6 +81,27 @@ def planned(learning, **changes):
     return learning.plan_test("launch-p1-fr", 1, "plan-first", True, plan=plan(**changes))
 
 
+def test_test_exposes_declaration_delivery_without_mutating_or_repairing_it(learning, pipeline):
+    original = planned(learning)
+    publication = original["declaration_publication"]
+    assert publication["state"] == "published"
+    assert pipeline.verify(publication["dataset_id"])["ok"]
+    pipeline.catalog.execute(
+        "UPDATE commercial_publications SET state='pending' WHERE dataset_id=%s",
+        (publication["dataset_id"],),
+    )
+    assert learning.test(original["test_id"], True)["declaration_publication"] == {
+        "dataset_id": publication["dataset_id"],
+        "state": "pending",
+    }
+    pipeline.catalog.execute(
+        "DELETE FROM commercial_publications WHERE dataset_id=%s", (publication["dataset_id"],)
+    )
+    assert learning.test(original["test_id"], True)["declaration_publication"] is None
+    watch = learning.plan_test("launch-p1-fr", 1, "watch-test", True, plan=plan(selection="watch"))
+    assert watch["declaration_publication"] is None
+
+
 @pytest.mark.parametrize("value", [1.25, True, "NaN", "Infinity", "1.1234567"])
 def test_money_rejects_inexact_nonfinite_or_overprecise_values(value):
     with pytest.raises(ValueError):

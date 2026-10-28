@@ -99,6 +99,7 @@ docker compose run --rm --no-deps -T initialize python - <<'PY' > "$recovery_wor
 from datetime import timedelta
 
 from sm_trending_products.contracts import AssessmentPolicy, canonical, now
+from sm_trending_products.commerce_rehearsal import rehearse
 from sm_trending_products.pipeline import Pipeline
 from scripts.recovery_fixture import seed
 
@@ -132,12 +133,18 @@ with Pipeline.from_env() as application:
     assert any(row["evaluation_id"] == frozen["evaluation_id"]
                for row in application.evaluations(synthetic=True))
     assert application.verify()["ok"] is True
+    commerce = rehearse(application, synthetic=True, run_id="ci-commerce-v1")
+    assert commerce["status"] == "completed", commerce
     checkpoint = seed(application)
     print(canonical({
         "dataset_ids": dataset_ids, "observation_count": 2, "product_count": 1,
         "alert_count": 1, "forward_decision_id": frozen["evaluation_id"],
         "synthetic": True,
         "interrupted_checkpoint": checkpoint,
+        "commerce_rehearsal": {
+            "run_id": commerce["run_id"], "status": commerce["status"],
+            "product_id": commerce["product_id"],
+        },
     }))
 PY
 
@@ -176,6 +183,7 @@ Path(sys.argv[2]).write_text(json.dumps({
     "dashboard_health": "ready", "dagster_webserver_health": "ready",
     "dagster_daemon_heartbeat": "ready", "backup_mode": "online",
     "restored_checkpoint_recovery": "passed", "restored_restart_duplicates": 0,
+    "restored_commerce_evidence": "passed",
 }, indent=2) + "\n")
 PY
 echo 'Native PostgreSQL and HTTP object-store backup/restore rehearsal passed.'

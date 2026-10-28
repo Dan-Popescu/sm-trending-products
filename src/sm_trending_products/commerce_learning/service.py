@@ -221,11 +221,23 @@ class CommercialLearning:
         self._require()
         _request(0, "read", synthetic)
         row = self.catalog.one(
-            "SELECT * FROM commercial_tests WHERE test_id=%s AND synthetic=%s", (test_id, synthetic)
+            "SELECT t.*,p.dataset_id AS declaration_dataset_id,p.state AS declaration_state "
+            "FROM commercial_tests t LEFT JOIN LATERAL "
+            "(SELECT dataset_id,state FROM commercial_publications WHERE test_id=t.test_id "
+            "AND kind='declaration' ORDER BY dataset_id LIMIT 1) p ON true "
+            "WHERE t.test_id=%s AND t.synthetic=%s",
+            (test_id, synthetic),
         )
         if row is None:
             raise LearningError("test_not_found")
-        return self._test_record(row)
+        return {
+            **self._test_record(row),
+            "declaration_publication": (
+                {"dataset_id": row["declaration_dataset_id"], "state": row["declaration_state"]}
+                if row["declaration_dataset_id"] is not None
+                else None
+            ),
+        }
 
     @staticmethod
     def _test_record(row: dict) -> dict:
