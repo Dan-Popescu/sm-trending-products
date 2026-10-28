@@ -22,6 +22,39 @@ def parser() -> argparse.ArgumentParser:
     commands = root.add_subparsers(dest="action", required=True)
     commands.add_parser("template", help="Print an editable JSON template without credentials")
     commands.add_parser("init", help="Explicitly initialize optional commercial tables")
+    commands.add_parser("delivery-init", help="Initialize recoverable draft delivery tables")
+    connection = commands.add_parser(
+        "connection-template", help="Print inactive connection settings"
+    )
+    connection.add_argument("--provider", choices=["woocommerce", "shopify"], required=True)
+    inspect = commands.add_parser(
+        "connection-inspect", help="Validate local configuration without HTTP"
+    )
+    inspect.add_argument("--connection", type=Path, required=True)
+    operations = commands.add_parser(
+        "draft-operations", help="Find stored recovery IDs without HTTP"
+    )
+    operations.add_argument("--connection-id", required=True)
+    operations.add_argument("--id", required=True)
+    operations.add_argument("--synthetic", action="store_true")
+    operations.add_argument("--limit", type=int, default=20)
+    operations.add_argument("--offset", type=int, default=0)
+    for action in ("prepare-draft", "recover-draft", "draft-operation"):
+        child = commands.add_parser(
+            action, help="Inspect or execute a durable private draft operation"
+        )
+        child.add_argument("--synthetic", action="store_true")
+        if action != "draft-operation":
+            child.add_argument("--connection", type=Path, required=True)
+            child.add_argument(
+                "--apply", action="store_true", help="Execute; default is read-only preview"
+            )
+        if action == "prepare-draft":
+            child.add_argument("--id", required=True)
+            child.add_argument("--expected-revision", type=int, required=True)
+            child.add_argument("--request-id", required=True)
+        else:
+            child.add_argument("--operation-id", required=True)
     save = commands.add_parser("save", help="Save an immutable revision; replay by request ID")
     save.add_argument("--file", type=Path, required=True)
     save.add_argument("--expected-revision", type=int, required=True)
@@ -68,9 +101,27 @@ def template() -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
+    result: dict | list
     try:
         if arguments.action == "template":
             print(canonical(template()))
+            return 0
+        if arguments.action in {"connection-template", "connection-inspect"}:
+            from .commerce_connection import connection_template, load_connection
+
+            if arguments.action == "connection-template":
+                result = connection_template(arguments.provider)
+            else:
+                provider = load_connection(arguments.connection)
+                result = {
+                    "status": "configuration_valid",
+                    "connection_id": provider.config.connection_id,
+                    "provider": provider.config.provider,
+                    "enabled": provider.config.enabled,
+                    "synthetic": provider.config.test_mode,
+                    "network_contacted": False,
+                }
+            print(canonical(result))
             return 0
         from .catalog import Catalog
         from .commerce import LaunchDraft, LaunchService
@@ -80,8 +131,15 @@ def main(argv: list[str] | None = None) -> int:
         catalog = Catalog(settings.database_url.get_secret_value())
         try:
             service = LaunchService(catalog)
-            result: dict | list
-            if arguments.action == "init":
+            if arguments.action in {
+                "delivery-init",
+                "prepare-draft",
+                "recover-draft",
+                "draft-operation",
+                "draft-operations",
+            }:
+                result = _delivery(service, catalog, arguments)
+            elif arguments.action == "init":
                 result = service.initialize()
             elif arguments.action == "save":
                 result = service.save(
@@ -113,11 +171,19 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             catalog.close()
         print(canonical(result), flush=True)
-        return 0
+        return (
+            1
+            if arguments.action in {"prepare-draft", "recover-draft"}
+            and isinstance(result, dict)
+            and result.get("state") in {"pending", "uncertain", "failed", "running"}
+            else 0
+        )
     except KeyboardInterrupt:
         return 130
     except Exception as error:
         from .commerce import LaunchError
+        from .commerce_delivery import DeliveryError
+        from .commerce_providers import ProviderError
 
         body: dict = {
             "error": "launch_operation_failed",
@@ -129,8 +195,64 @@ def main(argv: list[str] | None = None) -> int:
                 "error": "invalid_launch_record",
                 "fields": [list(item["loc"]) for item in error.errors(include_input=False)],
             }
-        elif isinstance(error, LaunchError):
+        elif isinstance(error, (LaunchError, DeliveryError, ProviderError)):
             body["error"] = error.code
         # Do not expose raw database errors, connection strings or arbitrary supplied content.
         print(canonical(body), file=sys.stderr)
         return 2
+
+
+def _delivery(service, catalog, arguments) -> dict:
+    from .commerce import LaunchError
+    from .commerce_connection import load_connection
+    from .commerce_delivery import CommerceDelivery
+
+    delivery = CommerceDelivery(catalog)
+    if arguments.action == "delivery-init":
+        return delivery.initialize()
+    if arguments.action == "draft-operation":
+        return delivery.operation(arguments.operation_id, synthetic=arguments.synthetic)
+    if arguments.action == "draft-operations":
+        return {
+            "operations": delivery.operations(
+                arguments.connection_id,
+                arguments.id,
+                synthetic=arguments.synthetic,
+                limit=arguments.limit,
+                offset=arguments.offset,
+            )
+        }
+    provider = load_connection(arguments.connection)
+    if not arguments.apply:
+        if arguments.action == "recover-draft":
+            return {
+                "preview": True,
+                "operation": delivery.operation(
+                    arguments.operation_id, synthetic=arguments.synthetic
+                ),
+                "network_contacted": False,
+            }
+        dossier = service.dossier(arguments.id, synthetic=arguments.synthetic)
+        if dossier["revision"] != arguments.expected_revision:
+            raise LaunchError("revision_conflict")
+        if provider.config.test_mode != arguments.synthetic:
+            raise LaunchError("workspace_mismatch")
+        return {
+            "preview": True,
+            "dossier_id": dossier["dossier_id"],
+            "revision": dossier["revision"],
+            "readiness": dossier["readiness"],
+            "connection_id": provider.config.connection_id,
+            "provider": provider.config.provider,
+            "connection_enabled": provider.config.enabled,
+            "network_contacted": False,
+        }
+    if arguments.action == "recover-draft":
+        return delivery.recover(arguments.operation_id, provider, synthetic=arguments.synthetic)
+    return delivery.prepare(
+        arguments.id,
+        provider,
+        arguments.expected_revision,
+        arguments.request_id,
+        synthetic=arguments.synthetic,
+    )

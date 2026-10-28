@@ -11,9 +11,12 @@ from .commerce import REQUIRED_COSTS
 
 if TYPE_CHECKING:
     from .commerce import LaunchService
+    from .commerce_delivery import CommerceDelivery
 
 
-def render_launches(service: LaunchService, synthetic: bool) -> None:
+def render_launches(
+    service: LaunchService, synthetic: bool, delivery: CommerceDelivery | None = None
+) -> None:
     st.subheader("Launch dossiers")
     st.caption(
         "Prepare one product for one country and currency. Saving does not publish a shop, "
@@ -55,6 +58,10 @@ def render_launches(service: LaunchService, synthetic: bool) -> None:
                 file_name="product-draft.html",
                 mime="text/html",
             )
+        if delivery is not None:
+            from .commerce_delivery_dashboard import render_delivery
+
+            render_delivery(delivery, dossier, synthetic)
     # Pin one displayed draft per workspace until submission or explicit reload.
     # A concurrent save must reach CAS with the displayed revision, not rebuild
     # the form under a newer ID and silently discard its submitted widget state.
