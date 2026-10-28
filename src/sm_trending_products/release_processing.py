@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import math
 import os
-import re
 import stat
 import tempfile
 import time
@@ -15,21 +13,7 @@ from pathlib import Path
 from .catalog import Catalog
 from .contracts import canonical, utc
 from .release_control import ReleaseBlocked, ReleaseManifest, ReleaseTrust, VerifiedRelease
-from .release_host import ComposeReleaseHost
-from .resource_cpu_state import (
-    INDEPENDENT_SERVICES,
-    independent_environment,
-    load_cpu_policy,
-)
-
-PROCESSING_SERVICES = ("normalizer", "dagster-daemon", "dagster-webserver", "dashboard")
-PLANNERS = {"blue": "capture-planner", "green": "capture-planner-green"}
-ROLE_VARIABLES = {
-    "normalizer": "NORMALIZER_IMAGE",
-    "dagster-daemon": "ANALYTICS_IMAGE",
-    "dagster-webserver": "ANALYTICS_IMAGE",
-    "dashboard": "DASHBOARD_IMAGE",
-}
+from .release_host import PLANNERS, PROCESSING_SERVICES, ROLE_VARIABLES, ComposeReleaseHost
 
 
 class ProcessingRefresh:
@@ -148,119 +132,20 @@ class ProcessingRefresh:
             raise ReleaseBlocked("processing_acquisition_container_unavailable")
         return identity
 
-    def _container(self, service: str) -> str | None:
-        if service not in (*PROCESSING_SERVICES, *PLANNERS.values()):
-            raise ReleaseBlocked("processing_service_not_allowed")
-        containers = self.host._command(
-            [*self.host._compose(), "ps", "--all", "--quiet", service]
-        ).split()
-        if len(containers) > 1 or any(
-            not re.fullmatch(r"[a-f0-9]{12,64}", value) for value in containers
-        ):
-            raise ReleaseBlocked("processing_container_ambiguous")
-        return containers[0] if containers else None
-
-    def _running(self, service: str, image: str) -> str | None:
-        container = self._container(service)
-        if container and self.host._identity(container)[:2] == (image, True):
-            return container
-        return None
-
-    def _admit_role(self, service: str) -> None:
-        capacity = self.host.capacity
-        policy = load_cpu_policy(self.host.lock_directory, self.host.project)
-        require_independent = bool(
-            policy and policy.mode == "economy" and service in INDEPENDENT_SERVICES
-        )
-        if capacity is None and not require_independent:
-            return
-        # Compose is private host configuration. Discard its raw output, which
-        # can include environment secrets; retain only explicit numeric limits.
-        try:
-            config = json.loads(
-                self.host._command([*self.host._compose(), "config", "--format", "json", service])
-            )["services"][service]
-            # The trusted configuration can change between resumable refresh
-            # attempts. Never create a legacy source collector with economy pins.
-            if require_independent and not independent_environment(config.get("environment")):
-                raise ReleaseBlocked("cpu_legacy_collection_active")
-            if capacity is None:
-                return
-            memory, cpus = int(config["mem_limit"]), float(config["cpus"])
-            if memory <= 0 or not math.isfinite(cpus) or cpus <= 0:
-                raise ValueError("Unbounded role")
-        except (KeyError, ValueError, TypeError):
-            raise ReleaseBlocked("processing_role_limits_unavailable") from None
-        budget = replace(
-            capacity.budget,
-            candidate_memory_bytes=max(capacity.budget.candidate_memory_bytes, memory),
-            candidate_cpus=max(capacity.budget.candidate_cpus, cpus),
-        )
-        replace(capacity, budget=budget).admit()
-
     def _start(self, service: str, image: str, manifest: ReleaseManifest, watch: dict) -> str:
         self._acquisition(manifest, watch)
-        if not self._running(service, image):
-            self._admit_role(service)
-            self.host._command(
-                [
-                    *self.host._compose(),
-                    "up",
-                    "--detach",
-                    "--no-deps",
-                    "--no-build",
-                    "--pull",
-                    "never",
-                    service,
-                ]
-            )
-        container = self._running(service, image)
-        if not container:
-            raise ReleaseBlocked("processing_container_unavailable")
+        container = self.host.start_role(service, image)
         self._acquisition(manifest, watch)
         return container
 
     def _prepare(self, manifest: ReleaseManifest, watch: dict) -> None:
         self._acquisition(manifest, watch)
-        command = ["image", "inspect", "--format", "{{json .RepoDigests}}", manifest.image]
-        try:
-            images = json.loads(self.host._command(command))
-        except ReleaseBlocked as error:
-            if str(error) != "deployment_host_command_failed":
-                raise
-            images = None
-        if not isinstance(images, list) or manifest.image not in images:
-            if self.host.capacity is not None:
-                self.host.capacity.admit()
-            self.host._command(["pull", manifest.image], timeout=300)
-            images = json.loads(self.host._command(command))
-            if not isinstance(images, list) or manifest.image not in images:
-                raise ReleaseBlocked("image_digest_mismatch")
+        self.host.ensure_image(manifest.image)
         self._acquisition(manifest, watch)
 
-    def _planner_identity(self, container: str) -> dict:
-        values = self.host._command(
-            [
-                "inspect",
-                "--format",
-                "{{json .Config.Hostname}}\n{{json .State.StartedAt}}",
-                container,
-            ]
-        ).splitlines()
-        try:
-            hostname, started = (json.loads(value) for value in values)
-            if not isinstance(hostname, str) or not re.fullmatch(
-                r"[A-Za-z0-9_.-]{1,253}", hostname
-            ):
-                raise ValueError("Invalid planner identity")
-            utc(started)
-        except (ValueError, TypeError):
-            raise ReleaseBlocked("processing_planner_identity_unavailable") from None
-        return {"container": container, "hostname": hostname, "started_at": started}
-
     def _planner_current(self, service: str, image: str, identity: dict) -> bool:
-        container = self._running(service, image)
-        return bool(container and self._planner_identity(container) == identity)
+        container = self.host.running_role(service, image)
+        return bool(container and self.host.planner_identity(container) == identity)
 
     def _restore_planner(self, row: dict, manifest: ReleaseManifest, watch: dict) -> None:
         prior = ReleaseManifest.model_validate(row["planner_previous_manifest"])
@@ -305,14 +190,14 @@ class ProcessingRefresh:
     def _qualify_planner(self, row: dict, manifest: ReleaseManifest, watch: dict) -> None:
         slot = row["planner_candidate"]
         container = self._start(PLANNERS[slot], manifest.image, manifest, watch)
-        identity = self._planner_identity(container)
-        previous = self._running(
+        identity = self.host.planner_identity(container)
+        previous = self.host.running_role(
             PLANNERS[row["planner_previous"]], row["planner_previous_manifest"]["image"]
         )
         if (
             previous
             and previous != container
-            and self._planner_identity(previous)["hostname"] == identity["hostname"]
+            and self.host.planner_identity(previous)["hostname"] == identity["hostname"]
         ):
             raise ReleaseBlocked("processing_planner_identity_not_unique")
         qualified = row.get("planner_qualification", {})
@@ -321,11 +206,7 @@ class ProcessingRefresh:
         # Use the configured scheduler budget. A zero-budget tick would erase due work.
         for _ in range(10 if not qualified else 0):
             self._acquisition(manifest, watch)
-            probe = json.loads(
-                self.host._command(
-                    ["exec", container, "python", "-m", "sm_trending_products.capture_coordinator"]
-                )
-            )
+            probe = self.host.planner_probe(container)
             completed = probe.get("last_completed_at")
             if (
                 probe.get("status") in {"planned", "not_due"}
@@ -349,9 +230,9 @@ class ProcessingRefresh:
         row["active_planner_slot"] = slot
         self._persist(row)
         retire = "green" if slot == "blue" else "blue"
-        if old := self._container(PLANNERS[retire]):
+        if old := self.host.role_container(PLANNERS[retire]):
             self._acquisition(manifest, watch)
-            self.host._command(["stop", "--time=-1", old])
+            self.host.stop_planner(PLANNERS[retire], old)
             self._acquisition(manifest, watch)
         self._ensure_planner(row, manifest, watch)
 
@@ -383,12 +264,7 @@ class ProcessingRefresh:
                 raise ReleaseBlocked("processing_refresh_pending")
             if not row or row["manifest"] != manifest.model_dump(mode="json"):
                 previous_slot = row["active_planner_slot"] if row else "blue"
-                old = self._container(PLANNERS[previous_slot])
-                if not old:
-                    raise ReleaseBlocked("processing_planner_bootstrap_required")
-                image, running, _ = self.host._identity(old)
-                if not running:
-                    raise ReleaseBlocked("processing_planner_unavailable")
+                image = self.host.planner_image(PLANNERS[previous_slot])
                 previous_release = self._previous_release(row, image, watch)
                 slot = (
                     previous_slot
@@ -436,7 +312,8 @@ class ProcessingRefresh:
                         row["completed_roles"].append(service)
                     self._persist(row)
                 if any(
-                    not self._running(service, manifest.image) for service in PROCESSING_SERVICES
+                    not self.host.running_role(service, manifest.image)
+                    for service in PROCESSING_SERVICES
                 ):
                     raise ReleaseBlocked("processing_container_unavailable")
                 self._ensure_planner(row, manifest, watch)

@@ -10,7 +10,6 @@ import pytest
 from sm_trending_products import release_cli
 from sm_trending_products.release_control import ReleaseBlocked
 from sm_trending_products.release_host import ComposeReleaseHost
-from sm_trending_products.release_processing import ProcessingRefresh
 from sm_trending_products.resource_cpu_state import CpuPolicy, write_cpu_policy
 
 
@@ -211,11 +210,9 @@ def test_pending_processing_refuses_future_legacy_collection_with_economy_pins(
         return json.dumps({"services": {service: {"environment": environment}}})
 
     monkeypatch.setattr(ComposeReleaseHost, "_command", config)
-    refresh = object.__new__(ProcessingRefresh)
-    refresh.host = cpu_host
     if safe:
-        refresh._admit_role(service)
+        cpu_host.admit_role(service)
     else:
         with pytest.raises(ReleaseBlocked, match="cpu_legacy_collection_active"):
-            refresh._admit_role(service)
+            cpu_host.admit_role(service)
     assert len(commands) == 1  # Configuration only; no container creation or source changes.

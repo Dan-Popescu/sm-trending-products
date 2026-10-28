@@ -286,10 +286,10 @@ def test_cold_role_admission_uses_actual_host_compose_limits(processing, monkeyp
     monkeypatch.setattr(HostCapacity, "admit", lambda self: admitted.append(self.budget))
     if not limits:
         with pytest.raises(ReleaseBlocked, match="processing_role_limits_unavailable"):
-            refresh._admit_role("dagster-daemon")
+            refresh.host.admit_role("dagster-daemon")
         assert not admitted
     else:
-        refresh._admit_role("dagster-daemon")
+        refresh.host.admit_role("dagster-daemon")
         assert admitted[0].candidate_cpus == 2
         assert admitted[0].candidate_memory_bytes == 4 * GIB
         assert admitted[0].memory_reserve_bytes == capacity.budget.memory_reserve_bytes

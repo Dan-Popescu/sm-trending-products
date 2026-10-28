@@ -9,8 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from sm_trending_products import resource_cpu
-from sm_trending_products.release_capacity import CapacityBudget
+from sm_trending_products import release_capacity as capacity_module
+from sm_trending_products.release_capacity import CapacityBudget, HostCapacity
 from sm_trending_products.release_control import ReleaseBlocked
 from sm_trending_products.release_host import ComposeReleaseHost
 from sm_trending_products.resource_cpu import CpuModeController
@@ -248,6 +248,29 @@ def test_guard_restores_standard_but_does_not_interfere_with_release_draining(co
     assert controller.fixture.rows == controller.fixture.original
 
 
+def measured_capacity(controller, monkeypatch, allocated_cpus):
+    """Use real CPU admission over controlled host measurements."""
+    from dataclasses import replace
+
+    state = {"allocated_cpus": allocated_cpus}
+    capacity = HostCapacity(
+        controller.host.lock_directory,
+        controller.host.lock_directory,
+        CapacityBudget(cpu_reserve=0.25),
+    )
+
+    def allocations(self):
+        if state.get("unavailable"):
+            raise OSError("capacity read unavailable after the interrupted increase")
+        return {"allocated_cpus": state["allocated_cpus"]}
+
+    monkeypatch.setattr(HostCapacity, "_allocations", allocations)
+    monkeypatch.setattr(capacity_module, "_host_limits", lambda: {"cpus": 4})
+    controller.host = replace(controller.host, capacity=capacity)
+    controller.fixture.host = controller.host
+    return state
+
+
 @pytest.mark.parametrize("kind", ["unknown", "duplicate", "quota", "cpuset", "unlimited", "pid"])
 def test_ambiguous_or_incompatible_inventories_are_rejected(controller, kind):
     row = next(iter(controller.fixture.rows.values()))
@@ -269,16 +292,9 @@ def test_ambiguous_or_incompatible_inventories_are_rejected(controller, kind):
 
 
 def test_increased_cpu_requires_fresh_aggregate_headroom(controller, monkeypatch):
-    from dataclasses import replace
 
     controller.switch("economy")
-    capacity = SimpleNamespace(
-        _allocations=lambda: {"allocated_cpus": 3.75},
-        budget=CapacityBudget(cpu_reserve=0.25),
-    )
-    controller.host = replace(controller.host, capacity=capacity)
-    controller.fixture.host = controller.host
-    monkeypatch.setattr(resource_cpu, "_host_limits", lambda: {"cpus": 4})
+    measured_capacity(controller, monkeypatch, 3.75)
     calls = controller.fixture.calls
     with pytest.raises(ReleaseBlocked, match="cpu_headroom_insufficient"):
         controller.switch("standard")
@@ -553,15 +569,8 @@ def test_native_capture_guard_uses_current_pending_windows_and_a_bounded_budget(
 
 
 def test_lowering_cpu_is_allowed_when_host_has_no_spare_capacity(controller, monkeypatch):
-    from dataclasses import replace
 
-    capacity = SimpleNamespace(
-        _allocations=lambda: {"allocated_cpus": 4.0},
-        budget=CapacityBudget(cpu_reserve=0.25),
-    )
-    controller.host = replace(controller.host, capacity=capacity)
-    controller.fixture.host = controller.host
-    monkeypatch.setattr(resource_cpu, "_host_limits", lambda: {"cpus": 4})
+    measured_capacity(controller, monkeypatch, 4.0)
     assert controller.switch("economy")["mode"] == "economy"
     calls = controller.fixture.calls
     with pytest.raises(ReleaseBlocked, match="cpu_headroom_insufficient"):
@@ -571,27 +580,16 @@ def test_lowering_cpu_is_allowed_when_host_has_no_spare_capacity(controller, mon
 
 
 def test_recovering_an_interrupted_cpu_increase_needs_no_fresh_headroom(controller, monkeypatch):
-    from dataclasses import replace
 
     controller.switch("economy")
     expected = copy.deepcopy(controller.fixture.rows)
-    capacity = SimpleNamespace(
-        _allocations=lambda: {"allocated_cpus": 3.0},
-        budget=CapacityBudget(cpu_reserve=0.25),
-    )
-    controller.host = replace(controller.host, capacity=capacity)
-    controller.fixture.host = controller.host
-    monkeypatch.setattr(resource_cpu, "_host_limits", lambda: {"cpus": 4})
+    capacity = measured_capacity(controller, monkeypatch, 3.0)
     controller.fixture.crash_update = controller.fixture.calls + 1
     with pytest.raises(KeyboardInterrupt):
         controller.switch("standard")
     assert cpu_transition_pending(controller.host.lock_directory, "fixture")
 
-    def unavailable():
-        raise OSError("capacity read unavailable after the interrupted increase")
-
-    capacity._allocations = unavailable
-    monkeypatch.setattr(resource_cpu, "_host_limits", unavailable)
+    capacity["unavailable"] = True
     assert controller.reconcile()["recovered"]
     assert controller.fixture.rows == expected
     assert controller.status()["mode"] == "economy"
@@ -600,16 +598,9 @@ def test_recovering_an_interrupted_cpu_increase_needs_no_fresh_headroom(controll
 def test_mixed_changes_admit_each_positive_delta_without_offsetting_reductions(
     controller, monkeypatch
 ):
-    from dataclasses import replace
 
-    capacity = SimpleNamespace(
-        _allocations=lambda: {"allocated_cpus": 3.75},
-        budget=CapacityBudget(cpu_reserve=0.25),
-    )
-    controller.host = replace(controller.host, capacity=capacity)
-    controller.fixture.host = controller.host
-    monkeypatch.setattr(resource_cpu, "_host_limits", lambda: {"cpus": 4})
-    current = controller._inventory()
+    measured_capacity(controller, monkeypatch, 3.75)
+    current = controller.host.cpu_inventory()
     quotas = controller._quotas(current)
     quotas["dagster-daemon"] += 100_000_000
     quotas["dagster-webserver"] -= 100_000_000
@@ -714,30 +705,23 @@ def test_legacy_standard_recovery_finishes_only_the_authorized_remaining_increas
 def test_legacy_standard_recovery_keeps_higher_partial_quotas_when_headroom_is_unavailable(
     controller, monkeypatch
 ):
-    from dataclasses import replace
 
     controller.switch("economy")
     for row in controller.fixture.rows.values():
         if row[2] in {"dagster-daemon", "dagster-webserver"}:
             row[10] = False
             row[6] += 1
-    capacity = SimpleNamespace(
-        _allocations=lambda: {"allocated_cpus": 3.0},
-        budget=CapacityBudget(cpu_reserve=0.25),
-    )
-    controller.host = replace(controller.host, capacity=capacity)
-    controller.fixture.host = controller.host
-    monkeypatch.setattr(resource_cpu, "_host_limits", lambda: {"cpus": 4})
+    capacity = measured_capacity(controller, monkeypatch, 3.0)
     controller.fixture.crash_update = controller.fixture.calls + 1
     with pytest.raises(KeyboardInterrupt):
         controller.switch("standard")
     partially_increased = copy.deepcopy(controller.fixture.rows)
-    capacity._allocations = lambda: {"allocated_cpus": 4.0}
+    capacity["allocated_cpus"] = 4.0
     with pytest.raises(ReleaseBlocked, match="cpu_headroom_insufficient"):
         controller.reconcile()
     assert controller.fixture.rows == partially_increased
     assert cpu_transition_pending(controller.host.lock_directory, "fixture")
-    capacity._allocations = lambda: {"allocated_cpus": 3.0}
+    capacity["allocated_cpus"] = 3.0
     assert controller.reconcile()["mode"] == "standard"
 
 

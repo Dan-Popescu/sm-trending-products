@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-import json
-import math
-import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-from .contracts import digest
-from .release_capacity import _host_limits
 from .release_control import ReleaseBlocked, ReleaseManifest
 from .resource_cpu_state import (
     CPU_VARIABLES,
@@ -18,7 +13,6 @@ from .resource_cpu_state import (
     CpuPolicy,
     CpuTransition,
     Mode,
-    independent_environment,
     load_cpu_policy,
     mode_quotas,
     write_cpu_policy,
@@ -27,63 +21,6 @@ from .resource_cpu_state import (
 if TYPE_CHECKING:
     from .catalog import Catalog
     from .release_host import ComposeReleaseHost
-
-PROTECTED_SERVICES = {
-    "worker",
-    "worker-green",
-    "capture-planner",
-    "capture-planner-green",
-    "normalizer",
-    "postgres",
-    "objectstore",
-}
-# Resource fields are projected explicitly: logging credentials and environment never enter output.
-RESOURCE_FIELDS = (
-    "Memory",
-    "MemorySwap",
-    "MemoryReservation",
-    "MemorySwappiness",
-    "OomKillDisable",
-    "NanoCpus",
-    "CpuQuota",
-    "CpuPeriod",
-    "CpuShares",
-    "CpuRealtimePeriod",
-    "CpuRealtimeRuntime",
-    "CpusetCpus",
-    "CpusetMems",
-    "PidsLimit",
-    "BlkioWeight",
-)
-# Inspect one boolean only, never Config.Env. Duplicate/case-variant keys are ambiguous
-# because Python settings are case-insensitive; refuse them even if one value is true.
-INDEPENDENT_FORMAT = (
-    "{{ $independent := false }}{{ $seen := false }}{{ range .Config.Env }}"
-    '{{ if eq (lower (index (split . "=") 0)) "acquisition_enabled" }}'
-    "{{ if $seen }}{{ $independent = false }}"
-    '{{ else }}{{ $independent = eq . "ACQUISITION_ENABLED=true" }}{{ end }}'
-    "{{ $seen = true }}{{ end }}{{ end }}{{json $independent}}"
-)
-INSPECT_FORMAT = (
-    "\t".join(
-        "{{json " + field + "}}"
-        for field in (
-            ".Id",
-            '(index .Config.Labels "com.docker.compose.project")',
-            '(index .Config.Labels "com.docker.compose.service")',
-            '(index .Config.Labels "com.docker.compose.oneoff")',
-            ".Config.Image",
-            ".State.Running",
-            ".State.Pid",
-            ".State.StartedAt",
-            ".RestartCount",
-        )
-    )
-    + "\t{"
-    + ",".join('"' + key + '":{{json .HostConfig.' + key + "}}" for key in RESOURCE_FIELDS)
-    + "}\t"
-    + INDEPENDENT_FORMAT
-)
 
 
 class CpuModeController:
@@ -102,94 +39,6 @@ class CpuModeController:
                 key: value / 10**9 for key, value in (policy.quotas.items() if policy else ())
             },
         }
-
-    def _running_identifiers(self) -> list[str]:
-        identifiers = self.host._command(
-            [
-                "ps",
-                "--quiet",
-                "--no-trunc",
-                "--filter",
-                f"label=com.docker.compose.project={self.host.project}",
-            ]
-        ).split()
-        if len(identifiers) > 32 or any(
-            not re.fullmatch(r"[a-f0-9]{64}", value) for value in identifiers
-        ):
-            raise ReleaseBlocked("cpu_inventory_unavailable")
-        return identifiers
-
-    def _inventory(self) -> tuple[CpuContainer, ...]:
-        identifiers = self._running_identifiers()
-        if not identifiers:
-            if self._running_identifiers():
-                raise ReleaseBlocked("cpu_inventory_invalid")
-            raise ReleaseBlocked("cpu_inventory_incomplete")
-        try:
-            body = self.host._command(["inspect", "--format", INSPECT_FORMAT, *identifiers])
-            if len(body) > 128 * 1024:
-                raise ValueError("CPU inventory too large")
-            rows = body.splitlines()
-            result = []
-            for line in rows:
-                (
-                    identifier,
-                    project,
-                    service,
-                    oneoff,
-                    image,
-                    running,
-                    pid,
-                    started,
-                    restarts,
-                    resources,
-                    independent,
-                ) = [json.loads(value) for value in line.split("\t")]
-                if (
-                    identifier not in identifiers
-                    or project != self.host.project
-                    or service not in PROTECTED_SERVICES | CPU_VARIABLES.keys()
-                    or oneoff not in {"False", "false", None}
-                    or running is not True
-                    or not resources["Memory"] > 0
-                    or not resources["NanoCpus"] > 0
-                    or resources.get("CpuQuota", 0) != 0
-                    or resources.get("CpuPeriod", 0) != 0
-                    or resources.get("CpusetCpus", "")
-                ):
-                    raise ValueError("Unqualified CPU inventory")
-                config = dict(resources)
-                nanocpus = config.pop("NanoCpus")
-                result.append(
-                    CpuContainer(
-                        identifier=identifier,
-                        service=service,
-                        pid=pid,
-                        started_at=started,
-                        restarts=restarts,
-                        image=image,
-                        resource_sha256=digest(config),
-                        nanocpus=nanocpus,
-                        independent_acquisition=independent,
-                    )
-                )
-            services = [row.service for row in result]
-            if {row.identifier for row in result} != set(identifiers) or len(set(services)) != len(
-                services
-            ):
-                raise ValueError("Ambiguous CPU inventory")
-            after = self._running_identifiers()
-            if sorted(after) != sorted(identifiers):
-                raise ValueError("CPU inventory changed")
-            if (
-                not set(CPU_VARIABLES) <= set(services)
-                or "postgres" not in services
-                or not {"worker", "worker-green"} & set(services)
-            ):
-                raise ReleaseBlocked("cpu_inventory_incomplete")
-            return tuple(sorted(result, key=lambda row: row.service))
-        except (ValueError, KeyError, TypeError):
-            raise ReleaseBlocked("cpu_inventory_invalid") from None
 
     def _idle_release(self) -> None:
         if self.catalog.one(
@@ -252,50 +101,11 @@ class CpuModeController:
         increase = sum(
             max(0, quotas[row.service] - row.nanocpus) for row in current if row.service in quotas
         )
-        if increase == 0:
-            return  # Reducing verified live quotas needs no additional host capacity.
-        if self.host.capacity is None:
-            return  # Explicit controlled-test host, matching the existing release adapter.
-        try:
-            allocated = self.host.capacity._allocations()["allocated_cpus"]
-            required = allocated + increase / 10**9 + self.host.capacity.budget.cpu_reserve
-            limit = _host_limits()["cpus"]
-            if (
-                not all(math.isfinite(value) for value in (required, limit))
-                or limit <= 0
-                or required > limit
-            ):
-                raise ReleaseBlocked("cpu_headroom_insufficient")
-        except (OSError, ValueError, KeyError, TypeError):
-            raise ReleaseBlocked("cpu_capacity_unavailable") from None
-
-    def _qualify_pins(self, quotas: dict[str, int], *, require_independent: bool) -> None:
-        # The adapter permits prospective pins only for this read-only config command.
-        try:
-            configured = json.loads(
-                self.host._command(
-                    [
-                        *self.host._compose(),
-                        "config",
-                        "--format",
-                        "json",
-                    ],
-                    cpu_overrides=quotas,
-                )
-            )["services"]
-            values = {key: round(float(configured[key]["cpus"]) * 10**9) for key in quotas}
-            if values != quotas:
-                raise ValueError("Compose ignores CPU pins")
-            if require_independent and not all(
-                independent_environment(configured[service].get("environment"))
-                for service in INDEPENDENT_SERVICES
-            ):
-                raise ValueError("Independent acquisition is required for CPU reduction")
-        except (KeyError, ValueError, TypeError, OverflowError):
-            raise ReleaseBlocked("cpu_compose_pins_unsupported") from None
+        if increase and self.host.capacity is not None:
+            self.host.capacity.admit_cpu_increase(increase)
 
     def _verify(self, original: tuple[CpuContainer, ...], quotas: dict[str, int]) -> None:
-        current = self._inventory()
+        current = self.host.cpu_inventory()
         expected = tuple(
             row.model_copy(update={"nanocpus": quotas.get(row.service, row.nanocpus)})
             for row in original
@@ -321,15 +131,7 @@ class CpuModeController:
             if row.service not in quotas or quotas[row.service] == expected[row.service]:
                 continue
             self._verify(original, expected)
-            self.host._command(
-                [
-                    "update",
-                    "--cpus",
-                    format(quotas[row.service] / 10**9, ".9f"),
-                    row.identifier,
-                ],
-                timeout=10,
-            )
+            self.host.update_cpu_quota(row, quotas[row.service])
             expected[row.service] = quotas[row.service]
             self._verify(original, expected)
         self._verify(original, quotas)
@@ -337,7 +139,7 @@ class CpuModeController:
     def _recover(self, policy: CpuPolicy) -> None:
         assert policy.pending is not None
         original = policy.pending.containers
-        current = self._inventory()
+        current = self.host.cpu_inventory()
         allowed = self._quotas(original)
         actual = self._quotas(current)
         if any(actual[key] not in {allowed[key], policy.pending.quotas[key]} for key in allowed):
@@ -374,23 +176,11 @@ class CpuModeController:
             if policy and policy.pending:
                 raise ReleaseBlocked("cpu_recovery_required")
             self._idle_release()
-            containers = self._inventory()
+            containers = self.host.cpu_inventory()
             actual = self._quotas(containers)
             if policy is None:
                 try:
-                    configured = json.loads(
-                        self.host._command(
-                            [
-                                *self.host._compose(),
-                                "config",
-                                "--format",
-                                "json",
-                            ]
-                        )
-                    )["services"]
-                    baseline = {
-                        key: round(float(configured[key]["cpus"]) * 10**9) for key in CPU_VARIABLES
-                    }
+                    baseline = self.host.configured_cpu_quotas()
                     if baseline != actual:
                         raise ValueError("Live CPU differs from configured baseline")
                 except (KeyError, ValueError, TypeError):
@@ -407,7 +197,7 @@ class CpuModeController:
             quotas = mode_quotas(policy.baseline, cast(Mode, mode))
             if mode == "economy" and not self._independent(containers):
                 raise ReleaseBlocked("cpu_legacy_collection_active")
-            self._qualify_pins(quotas, require_independent=mode == "economy")
+            self.host.qualify_cpu_pins(quotas, require_independent=mode == "economy")
             self._admit(containers, quotas)
             if mode == "economy" and not self._healthy():
                 raise ReleaseBlocked("cpu_capture_unhealthy")
@@ -468,14 +258,14 @@ class CpuModeController:
                     return None  # Deliberate release draining is not a new capture failure.
                 raise
             try:
-                containers = self._inventory()
+                containers = self.host.cpu_inventory()
             except ReleaseBlocked as error:
                 if str(error) == "cpu_inventory_incomplete":
                     return None  # Let ordinary role repair restore missing/stopped services.
                 raise
             if self._independent(containers):
                 try:
-                    self._qualify_pins(policy.quotas, require_independent=True)
+                    self.host.qualify_cpu_pins(policy.quotas, require_independent=True)
                 except ReleaseBlocked as error:
                     if str(error) != "cpu_compose_pins_unsupported":
                         raise
