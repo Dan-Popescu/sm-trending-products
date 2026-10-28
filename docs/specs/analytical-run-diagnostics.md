@@ -1,8 +1,8 @@
 # Analytical execution diagnostics
 
 Status: owner approved on 2026-10-28. Delivery: #156.
-Baseline: main `3202ba4a6ea242816b61e0af804c6a6c97a07d68`
-(includes #155 and #157, integrated during implementation).
+Baseline: main `8cd2c2c6f36fee04de0e37ae92ad2a9bdd2b383f`
+(includes the latest research-module integrations, merged during implementation).
 
 ## Contract
 

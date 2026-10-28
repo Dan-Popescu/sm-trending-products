@@ -397,7 +397,7 @@ def test_live_freeze_admission_uses_its_original_clock_before_diagnostic_io(
         assert pipeline.analytical_runs(False)[0]["state"] == "failed"
 
 
-def test_explicit_init_is_repeatable_and_optional_diagnostic_init_failure_preserves_capture(
+def test_explicit_init_is_repeatable_and_optional_diagnostic_failure_keeps_setup_usable(
     pipeline,
 ):
     original = pipeline.initialize()

@@ -68,7 +68,7 @@ dependency. Source invalidation and backup object inventories keep their existin
 authoritative boundaries. Inspection uses only SQL and preserves namespace scope.
 
 The durable source revision discussed in the earlier reassessment remains deferred:
-main #155/#157 add analytical explanations, not independently restartable distributed
+the current research modules add analytical explanations, not independently restartable distributed
 partitions. That execution model still requires an explicit source/metadata
 revision, retention lifetime and replay contract before implementation.
 

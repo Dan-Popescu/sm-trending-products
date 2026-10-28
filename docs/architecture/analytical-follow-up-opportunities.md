@@ -6,7 +6,7 @@ This assessment records the original proposals and their delivery status below.
 
 ## Recommended next measurement: one diagnostic record per analytical run
 
-Implemented in #156 on the latest main including #155 and #157. Public assessments and
+Implemented in #156 on the latest main, including the subsequent research-module integrations. Public assessments and
 frozen decisions now have bounded, independently attributed operational attempts.
 See the [operator guide](../operations/analytical-run-diagnostics.md) and
 [ADR0020](../adr/0020-operational-analytical-run-diagnostics.md) for semantics,
