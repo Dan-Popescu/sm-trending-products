@@ -17,6 +17,7 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 
 from .contracts import canonical, now
+from .module_schema import initialize_module
 
 if TYPE_CHECKING:
     from .analysis_batches import WindowMetadataBudget
@@ -24,6 +25,29 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _active: ContextVar[tuple[_Attempt, ...]] = ContextVar("analytical_attempts", default=())
+
+
+_MIGRATIONS = {
+    1: """
+CREATE TABLE analytical_run_diagnostics (
+    attempt_id text PRIMARY KEY CHECK(attempt_id ~ '^[0-9a-f]{32}$'),
+    operation text NOT NULL CHECK(operation IN ('assessment','freeze')),
+    synthetic boolean NOT NULL,
+    cutoff timestamptz,
+    started_at timestamptz NOT NULL,
+    finished_at timestamptz,
+    state text NOT NULL CHECK(state IN ('running','succeeded','failed')),
+    result_id varchar(128),
+    error_type varchar(128),
+    summary jsonb NOT NULL CHECK(octet_length(summary::text)<=32768),
+    CHECK((state='running')=(finished_at IS NULL)),
+    CHECK(state<>'succeeded' OR (cutoff IS NOT NULL AND result_id IS NOT NULL)),
+    CHECK((state='failed')=(error_type IS NOT NULL))
+);
+CREATE INDEX analytical_run_diagnostics_recent
+    ON analytical_run_diagnostics(synthetic,started_at DESC,attempt_id DESC);
+"""
+}
 
 
 @dataclass
@@ -105,6 +129,15 @@ def phase(history: History, name: str) -> Iterator[None]:
 class AnalyticalDiagnostics:
     def __init__(self, history: History):
         self.history = history
+
+    def initialize(self) -> None:
+        """Optional telemetry must not advance or block the capture schema."""
+        try:
+            initialize_module(self.history.catalog, "analytical_diagnostics", _MIGRATIONS)
+        except Exception as error:
+            logger.warning(
+                "Analytical diagnostics initialization unavailable (%s)", type(error).__name__
+            )
 
     def _save(self, run: _Attempt) -> None:
         """Best effort: a telemetry failure cannot change analytical behavior."""

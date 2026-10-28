@@ -395,3 +395,21 @@ def test_live_freeze_admission_uses_its_original_clock_before_diagnostic_io(
         with pytest.raises(ValueError, match="future dated"):
             pipeline.freeze(cutoff)
         assert pipeline.analytical_runs(False)[0]["state"] == "failed"
+
+
+def test_explicit_init_is_repeatable_and_optional_diagnostic_init_failure_preserves_capture(
+    pipeline,
+):
+    original = pipeline.initialize()
+    assert pipeline.initialize() == original
+    pipeline.catalog.execute(
+        "ALTER TABLE application_module_migrations RENAME TO unavailable_module_registry"
+    )
+    try:
+        assert pipeline.initialize() == original
+    finally:
+        pipeline.catalog.execute(
+            "ALTER TABLE unavailable_module_registry RENAME TO application_module_migrations"
+        )
+    pipeline.assess(now(), True)
+    assert pipeline.analytical_runs(True)[0]["state"] == "succeeded"

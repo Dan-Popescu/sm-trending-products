@@ -38,6 +38,11 @@ closure or acquire evidence locks.
 
 ## Inspection and acceptance
 
+Initialize through the existing application-module migration mechanism during
+explicit `Pipeline.initialize`. Do not advance capture `schema_migrations` or
+change signed-release compatibility for disposable telemetry. Diagnostic schema
+initialization is best effort too; inspection never creates or migrates tables.
+
 Expose namespace-scoped bounded list/detail through Pipeline and a noninteractive
 JSON CLI with examples and immediate invalid-limit errors. Return no other
 namespace's attempt on a selected lookup. Diagnostics must be discoverable without

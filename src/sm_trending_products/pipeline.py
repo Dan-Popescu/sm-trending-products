@@ -143,6 +143,7 @@ class Pipeline:
 
     def initialize(self, create_bucket: bool = False) -> dict:
         self.catalog.initialize()
+        AnalyticalDiagnostics(self.history).initialize()
         self.history.initialize(create_bucket)
         return {"ok": True, "schema_version": 1, "live_access": "unverified_until_probe"}
 

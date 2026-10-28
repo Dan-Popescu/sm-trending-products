@@ -7,6 +7,12 @@ and product trend explanations, are outside this first diagnostic scope.
 
 ## Read recent or selected attempts
 
+The normal explicit `sm-trends init` initializes this application module without
+advancing the capture schema or changing signed-release compatibility. Module
+initialization failures emit a warning and preserve ordinary capture setup.
+Inspection does not initialize tables; retry explicit initialization after fixing
+an unavailable module. Existing captures and analytical results remain authoritative.
+
 Use the normal configured application connection. These commands read only SQL;
 they do not load evidence or contact S3:
 

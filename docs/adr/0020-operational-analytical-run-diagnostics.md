@@ -55,7 +55,14 @@ overhead and any throughput benefit remain unmeasured. Failed writes can make
 diagnostics incomplete, which is preferable to making telemetry an analytical
 availability dependency. No periodic heartbeat or recovery controller is added.
 
-SQL041 adds only the disposable `analytical_run_diagnostics` table. It has no evidence foreign keys and no copied observations or product
+The existing application-module migration mechanism creates the disposable
+`analytical_run_diagnostics` table during explicit `Pipeline.initialize`. It never
+advances the capture migration ledger or the signed releases' schema boundary.
+Initialization failures warn without blocking capture initialization. Inspection
+never creates tables. This preserves rolling-release and rollback compatibility
+for telemetry that is independently disposable.
+
+The table has no evidence foreign keys and no copied observations or product
 identifiers. Its result ID is an operational label, not a required object-store
 dependency. Source invalidation and backup object inventories keep their existing
 authoritative boundaries. Inspection uses only SQL and preserves namespace scope.
