@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from psycopg.types.json import Jsonb
 
+from .analytical_diagnostics import AnalyticalDiagnostics, phase
 from .analytics import AssessmentIdentity
 from .assessment_eligibility import AssessmentEligibility
 from .assessment_service import AssessmentService
@@ -214,25 +215,27 @@ class EvaluationService:
         )
         normalized = prepared.rows
         counts, input_scopes = prepared.observation_counts, prepared.input_scopes
-        snapshot = freeze_decision(
-            [],
-            products,
-            metadata["links"],
-            cutoff,
-            config,
-            synthetic=synthetic,
-            policy=policy,
-            families=metadata["families"],
-            capabilities=metadata["capabilities"],
-            precomputed_assessments=normalized,
-            observation_counts=counts,
-            evidence_refs_by_entity={},
-        )
+        with phase(self.history, "calculation"):
+            snapshot = freeze_decision(
+                [],
+                products,
+                metadata["links"],
+                cutoff,
+                config,
+                synthetic=synthetic,
+                policy=policy,
+                families=metadata["families"],
+                capabilities=metadata["capabilities"],
+                precomputed_assessments=normalized,
+                observation_counts=counts,
+                evidence_refs_by_entity={},
+            )
         snapshot["schema_version"] = "2"
-        snapshot["evidence_refs"] = self.provenance.combine(
-            [row["evidence_refs"] for row in snapshot["universe"]], synthetic
-        )
-        snapshot["input_provenance"] = self.provenance.combine(input_scopes, synthetic)
+        with phase(self.history, "provenance"):
+            snapshot["evidence_refs"] = self.provenance.combine(
+                [row["evidence_refs"] for row in snapshot["universe"]], synthetic
+            )
+            snapshot["input_provenance"] = self.provenance.combine(input_scopes, synthetic)
         snapshot["coverage"]["observations"] = sum(
             row["coverage"]["observations"] for row in snapshot["universe"]
         )
@@ -563,30 +566,47 @@ class EvaluationService:
         *,
         policy: AssessmentPolicy | None = None,
     ) -> dict:
-        cutoff = utc(as_of)
-        if not synthetic and cutoff < now() - timedelta(minutes=5):
-            raise ValueError("A live forward decision cannot be retrospectively backdated")
-        if not synthetic and cutoff > now() + timedelta(seconds=30):
-            raise ValueError("A live forward decision cannot be future dated")
-        configuration = EvaluationConfig.for_creation(config)
-        configuration.validate_creation()
-        payload, datasets = self._prepare_decision(
-            self._evaluation_inputs(cutoff, synthetic),
-            cutoff,
-            synthetic,
-            configuration,
-            policy=policy,
-        )
-        return {
-            "evaluation_id": self._save_evaluation(
-                payload,
-                "forward",
-                synthetic,
+        cutoff = as_of
+
+        def admit() -> None:
+            nonlocal cutoff
+            with (
+                phase(self.history, "input_selection"),
+                self.catalog.evidence_transaction(synthetic),
+            ):
+                pass
+            # Keep the original guard -> live clocks -> telemetry I/O order.
+            cutoff = utc(as_of)
+            if not synthetic and cutoff < now() - timedelta(minutes=5):
+                raise ValueError("A live forward decision cannot be retrospectively backdated")
+            if not synthetic and cutoff > now() + timedelta(seconds=30):
+                raise ValueError("A live forward decision cannot be future dated")
+
+        with AnalyticalDiagnostics(self.history).attempt(
+            "freeze", cutoff, synthetic, admission=admit
+        ) as diagnostic:
+            diagnostic.cutoff = cutoff
+            configuration = EvaluationConfig.for_creation(config)
+            configuration.validate_creation()
+            with phase(self.history, "input_selection"):
+                metadata = self._evaluation_inputs(cutoff, synthetic)
+            payload, datasets = self._prepare_decision(
+                metadata,
                 cutoff,
-                dataset_ids=sorted(datasets),
-            ),
-            "result": payload,
-        }
+                synthetic,
+                configuration,
+                policy=policy,
+            )
+            with phase(self.history, "publication"):
+                evaluation_id = self._save_evaluation(
+                    payload,
+                    "forward",
+                    synthetic,
+                    cutoff,
+                    dataset_ids=sorted(datasets),
+                )
+            diagnostic.result_id = evaluation_id
+            return {"evaluation_id": evaluation_id, "result": payload}
 
     def _maturation_payload(
         self,

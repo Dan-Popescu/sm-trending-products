@@ -15,6 +15,7 @@ from psycopg import Connection, sql
 from psycopg.errors import LockNotAvailable, QueryCanceled
 from psycopg.types.json import Jsonb
 
+from .analytical_diagnostics import storage
 from .cache import cache_object_lock
 from .contracts import Observation, canonical, digest
 
@@ -1028,7 +1029,7 @@ class Maintenance:
             try:
                 if budget:
                     budget.request()
-                self.history.metrics["get_requests"] += 1
+                storage(self.history, "get_requests", 1)
                 versioning = self.history.client.get_bucket_versioning(Bucket=self.history.bucket)
                 versioned = versioning.get("Status") in {"Enabled", "Suspended"}
             except _BudgetExhausted as error:

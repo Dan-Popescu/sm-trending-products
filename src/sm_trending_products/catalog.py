@@ -622,6 +622,9 @@ class Catalog:
             "WHERE r.object_key=w.descriptor->>'key') ORDER BY w.product_id",
             (budget.max_objects, product_ids),
         ).fetchall()
+        budget.declines["optional_coverage_object_budget"] += sum(
+            row["metadata_bytes"] is None for row in headers
+        )
         admitted = [
             row["product_id"]
             for row in headers

@@ -84,14 +84,26 @@ def test_damaged_restored_state_is_detected(pipeline, statement):
 @pytest.mark.parametrize("action", (seed, lambda application: verify(application, {})))
 def test_live_product_refused_before_optional_tables_or_objects(pipeline, action):
     pipeline.create_product("live", "Real product", synthetic=False)
+    modules = pipeline.catalog.all(
+        "SELECT * FROM application_module_migrations ORDER BY module,version"
+    )
+    tables = pipeline.catalog.all(
+        "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename"
+    )
+    storage = pipeline.history.metrics.copy()
     with pytest.raises(ValueError, match="refuses live"):
         action(pipeline)
     assert (
-        pipeline.catalog.one("SELECT to_regclass('application_module_migrations') AS relation")[
-            "relation"
-        ]
-        is None
+        pipeline.catalog.all("SELECT * FROM application_module_migrations ORDER BY module,version")
+        == modules
     )
+    assert (
+        pipeline.catalog.all(
+            "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename"
+        )
+        == tables
+    )
+    assert pipeline.history.metrics == storage
 
 
 def test_receipt_checksum_is_validated_before_constructing_application(tmp_path, monkeypatch):

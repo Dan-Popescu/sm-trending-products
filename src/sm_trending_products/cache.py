@@ -23,6 +23,7 @@ from uuid import uuid4
 from psycopg.errors import DeadlockDetected, LockNotAvailable, QueryCanceled
 
 from ._cache_accounting import _Charge, accounting
+from .analytical_diagnostics import storage
 
 if TYPE_CHECKING:
     from .history import History
@@ -288,7 +289,7 @@ class _Cache:
                     # stayed unchanged throughout verification and afterwards.
                     if not refresh and before == after == _identity(target):
                         self.verified_identity = after
-                self.history.metrics["cache_hits"] += 1
+                storage(self.history, "cache_hits", 1)
                 return local, target, handle
             with self.global_lock():
                 if _regular(local) and local.stat().st_ino == target.stat().st_ino:
@@ -419,7 +420,7 @@ class _Cache:
                     reservation.flush()
                     with _open(temporary):
                         pass
-                self.history.metrics["get_requests"] += 1
+                storage(self.history, "get_requests", 1)
                 response = self.history.client.get_object(Bucket=self.history.bucket, Key=key)
                 hasher, size = hashlib.sha256(), 0
                 with _open(temporary) as output:
@@ -435,7 +436,7 @@ class _Cache:
                         stream.close()
                     output.flush()
                     os.fsync(output.fileno())
-                self.history.metrics["download_bytes"] += size
+                storage(self.history, "download_bytes", size)
                 if declared is not None and size != declared:
                     raise ValueError("Object size differs from its completed manifest")
                 if hasher.hexdigest() != expected:
@@ -537,7 +538,7 @@ class _ReadSession:
         if entry is not None:
             if entry.expected == expected and entry.declared == declared and self._unchanged(entry):
                 self.entries.move_to_end(key)
-                self.history.metrics["cache_hits"] += 1
+                storage(self.history, "cache_hits", 1)
             else:
                 self._forget(key)
                 entry = None

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .contracts import Product, ProductLink
 
@@ -33,14 +33,17 @@ class WindowMetadataBudget:
     max_bytes: int
     objects: int = 0
     bytes: int = 0
+    declines: Counter[str] = field(default_factory=Counter)
 
     def admit(self, objects: int, encoded_bytes: int, *, optional: bool = False) -> bool:
         if self.objects + objects > self.max_objects:
             if optional:
+                self.declines["optional_metadata_object_budget"] += 1
                 return False
             raise MetadataBudgetExceeded("object", self.max_objects)
         if self.bytes + encoded_bytes > self.max_bytes:
             if optional:
+                self.declines["optional_metadata_byte_budget"] += 1
                 return False
             raise MetadataBudgetExceeded("byte", self.max_bytes)
         self.objects += objects

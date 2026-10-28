@@ -23,6 +23,7 @@ from botocore.exceptions import ClientError
 from psycopg.types.json import Jsonb
 
 from .analysis_batches import RowBudgetExceeded
+from .analytical_diagnostics import phase, record, storage
 from .cache import cached_path, evict_cache, file_digest, pin_cached, read_session
 from .catalog import Catalog
 from .compaction_encoding import encode_compaction
@@ -89,7 +90,7 @@ class History:
         )
 
         def sent(**_kwargs):
-            self.metrics["http_attempts"] += 1
+            storage(self, "http_attempts", 1)
 
         client.meta.events.register("before-send.s3", sent)
         return client
@@ -145,7 +146,7 @@ class History:
 
     def _put(self, key: str, body: bytes, *, content_type: str) -> dict:
         checksum = hashlib.sha256(body).hexdigest()
-        self.metrics["put_requests"] += 1
+        storage(self, "put_requests", 1)
         try:
             self.client.put_object(
                 Bucket=self.bucket,
@@ -155,11 +156,11 @@ class History:
                 Metadata={"sha256": checksum},
                 IfNoneMatch="*",
             )
-            self.metrics["upload_bytes"] += len(body)
+            storage(self, "upload_bytes", len(body))
         except ClientError as error:
             if error.response["Error"]["Code"] not in ("PreconditionFailed", "412"):
                 raise
-            self.metrics["head_requests"] += 1
+            storage(self, "head_requests", 1)
             existing = self.client.head_object(Bucket=self.bucket, Key=key)
             if existing.get("Metadata", {}).get("sha256") != checksum:
                 raise ValueError("Immutable object collision") from None
@@ -405,7 +406,7 @@ class History:
         first = next(iterator, None)
         if first is None:
             return []
-        with self.catalog.evidence_transaction(first.get("synthetic")):
+        with phase(self, "payload_read"), self.catalog.evidence_transaction(first.get("synthetic")):
             return self._read(
                 chain((first,), iterator),
                 as_of=as_of,
@@ -442,6 +443,7 @@ class History:
             for obj in dataset["manifest"]["normalized"]:
                 if entity_keys is not None and not entity_keys.intersection(obj["entity_keys"]):
                     continue
+                record(self, "work", "source_objects_read")
                 with pin_cached(self, obj) as path:
                     query = pl.scan_parquet(path).filter(
                         pl.col("available_at").str.to_datetime(time_zone="UTC") <= utc(as_of)
@@ -475,18 +477,24 @@ class History:
                     # Push the hard materialization bound into the native query.
                     # Pins retain the verified inode during concurrent cache eviction.
                     frame = query.head(row_budget + 1).collect(engine="streaming")
+                    record(self, "work", "source_rows_materialized", frame.height)
                     if frame.height > row_budget:
                         raise RowBudgetExceeded(row_budget)
-                    for row in frame.iter_rows(named=True):
-                        obs = self._decode(row)
-                        prior = result.get(obs.observation_id)
-                        if prior and self._payload(prior) != self._payload(obs):
-                            raise ValueError(
-                                "Conflicting payloads under one observation identifier"
-                            )
-                        result.setdefault(obs.observation_id, obs)
-                        if len(result) > row_budget:
-                            raise RowBudgetExceeded(row_budget)
+                    decoded = 0
+                    try:
+                        for row in frame.iter_rows(named=True):
+                            obs = self._decode(row)
+                            decoded += 1
+                            prior = result.get(obs.observation_id)
+                            if prior and self._payload(prior) != self._payload(obs):
+                                raise ValueError(
+                                    "Conflicting payloads under one observation identifier"
+                                )
+                            result.setdefault(obs.observation_id, obs)
+                            if len(result) > row_budget:
+                                raise RowBudgetExceeded(row_budget)
+                    finally:
+                        record(self, "work", "source_rows_decoded", decoded)
         return sorted(result.values(), key=lambda obs: (obs.observed_at, obs.observation_id))
 
     def raw(self, dataset: dict) -> dict:
@@ -639,13 +647,13 @@ class History:
 
     def _verify_remote_object(self, obj: dict) -> None:
         # Bypass cache: verify the backup/remote object itself with bounded memory.
-        self.metrics["get_requests"] += 1
+        storage(self, "get_requests", 1)
         response = self.client.get_object(Bucket=self.bucket, Key=obj["key"])
         hasher = hashlib.sha256()
         with response["Body"] as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 hasher.update(chunk)
-                self.metrics["download_bytes"] += len(chunk)
+                storage(self, "download_bytes", len(chunk))
         if hasher.hexdigest() != obj["sha256"]:
             raise ValueError("checksum_mismatch")
 

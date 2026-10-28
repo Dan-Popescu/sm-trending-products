@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from .analysis_batches import MetadataBudgetExceeded, RowBudgetExceeded
+from .analytical_diagnostics import analysis, phase, record
 from .analytics import AssessmentIdentity, assess
 from .assessment_eligibility import AssessmentEligibility
 from .contracts import AssessmentPolicy, ProductLink
@@ -45,9 +46,16 @@ class EvidenceWindows:
             return
         try:
             windows = self._projection.load_windows(self.history, scopes, cutoff, policy)
-        except (RowBudgetExceeded, MetadataBudgetExceeded):
+        except (RowBudgetExceeded, MetadataBudgetExceeded) as error:
+            reason = (
+                "row_budget"
+                if isinstance(error, RowBudgetExceeded)
+                else f"metadata_{error.resource}_budget"
+            )
+            record(self.history, "reasons", reason)
             if len(scopes) == 1:
                 raise
+            record(self.history, "work", "partition_splits")
             middle = len(scopes) // 2
             yield from self._windows(scopes[:middle], cutoff, policy)
             yield from self._windows(scopes[middle:], cutoff, policy)
@@ -77,9 +85,12 @@ class EvidenceWindows:
         counts: Counter[str] = Counter()
         hits = rebuilds = delta_reads = 0
         with self.history.read_session():
-            reusable = self._projection.read_many(scopes, cutoff, policy)
-            self.history.analysis_metrics["projection_hits"] += len(reusable.rows)
-            self.history.analysis_metrics["projection_misses"] += len(scopes) - len(reusable.rows)
+            with phase(self.history, "projection_read"):
+                reusable = self._projection.read_many(scopes, cutoff, policy)
+            for reason in reusable.reasons.values():
+                record(self.history, "reasons", "feature_" + reason)
+            analysis(self.history, "projection_hits", len(reusable.rows))
+            analysis(self.history, "projection_misses", len(scopes) - len(reusable.rows))
             for scope in scopes:
                 product_id = scope.product.product_id
                 if product_id in reusable.rows:
@@ -94,58 +105,66 @@ class EvidenceWindows:
                     "full": "full_windows",
                     "duplicate_rebuild": "duplicate_rebuild_windows",
                 }[window.mode]
-                self.history.analysis_metrics[mode_counter] += 1
+                analysis(self.history, mode_counter, 1)
                 product_id = scope.product.product_id
-                observations = (
-                    eligibility.select(
-                        window.observations, cutoff=cutoff, synthetic=synthetic, since=since
+                with phase(self.history, "calculation"):
+                    observations = (
+                        eligibility.select(
+                            window.observations, cutoff=cutoff, synthetic=synthetic, since=since
+                        )
+                        if eligibility is not None
+                        else window.observations
                     )
-                    if eligibility is not None
-                    else window.observations
-                )
-                product_counts = Counter(
-                    key for key, _at in {(row.entity_key, row.observed_at) for row in observations}
-                )
-                counts.update(product_counts)
-                anchors: dict[str, datetime | None] = {}
-                raw = assess(
-                    observations,
-                    [scope.product],
-                    links,
-                    cutoff,
-                    synthetic,
-                    policy,
-                    normalize=False,
-                    identity=identity,
-                    age_anchors=anchors,
-                )
-                row = self.provenance.compact(raw, observations, synthetic)[0]
-                # Retain even market/capability-excluded facts for both window
-                # retirement and the ordinary result's complete input lineage.
-                input_root = self.provenance.audit(window.observations, synthetic)
-                feature_root = row["evidence_refs"] or input_root
-                audit_key = feature_root["root"]["key"] if feature_root else None
-                self._projection.store(
-                    scope,
-                    cutoff,
-                    policy,
-                    window.frontier,
-                    row,
-                    window.observations,
-                    age_anchor=anchors.get(product_id),
-                    audit_root=audit_key,
-                    input_provenance=input_root,
-                    observation_counts=product_counts,
-                )
-                if input_root:
-                    self._projection.store_window(
-                        self.history,
+                    product_counts = Counter(
+                        key
+                        for key, _at in {(row.entity_key, row.observed_at) for row in observations}
+                    )
+                    counts.update(product_counts)
+                    anchors: dict[str, datetime | None] = {}
+                    raw = assess(
+                        observations,
+                        [scope.product],
+                        links,
+                        cutoff,
+                        synthetic,
+                        policy,
+                        normalize=False,
+                        identity=identity,
+                        age_anchors=anchors,
+                    )
+                with phase(self.history, "provenance"):
+                    row = self.provenance.compact(raw, observations, synthetic)[0]
+                    # Retain even market/capability-excluded facts for both window
+                    # retirement and the ordinary result's complete input lineage.
+                    input_root = self.provenance.audit(window.observations, synthetic)
+                    feature_root = row["evidence_refs"] or input_root
+                    audit_key = feature_root["root"]["key"] if feature_root else None
+                with phase(self.history, "projection_write"):
+                    saved_feature = self._projection.store(
                         scope,
                         cutoff,
                         policy,
-                        window,
-                        audit_root=input_root["root"]["key"],
+                        window.frontier,
+                        row,
+                        window.observations,
+                        age_anchor=anchors.get(product_id),
+                        audit_root=audit_key,
+                        input_provenance=input_root,
+                        observation_counts=product_counts,
                     )
+                    if not saved_feature:
+                        record(self.history, "reasons", "feature_write_declined")
+                    if input_root:
+                        saved_window = self._projection.store_window(
+                            self.history,
+                            scope,
+                            cutoff,
+                            policy,
+                            window,
+                            audit_root=input_root["root"]["key"],
+                        )
+                        if not saved_window:
+                            record(self.history, "reasons", "raw_write_declined")
                 rows.append(row)
                 input_scopes.append(input_root)
                 rebuilds += 1

@@ -119,6 +119,9 @@ def test_installed_brief_command_matches_public_module_and_never_initializes(
     pipeline, monkeypatch, capsys
 ):
     _, cutoff = seed(pipeline, gaps=1)
+    modules = pipeline.catalog.all(
+        "SELECT * FROM application_module_migrations ORDER BY module,version"
+    )
     monkeypatch.setenv("S3_BUCKET", pipeline.settings.s3_bucket)
     monkeypatch.setenv("S3_ENDPOINT_URL", pipeline.settings.s3_endpoint_url)
     expected = pipeline.decision_brief().describe("trend", "FR", cutoff, True)
@@ -142,15 +145,16 @@ def test_installed_brief_command_matches_public_module_and_never_initializes(
     assert report == expected
     assert report["sections"]["themes"]["status"] == "not_initialized"
     assert (
-        pipeline.catalog.one("SELECT to_regclass('application_module_migrations') AS relation")[
-            "relation"
-        ]
-        is None
+        pipeline.catalog.all("SELECT * FROM application_module_migrations ORDER BY module,version")
+        == modules
     )
 
 
 def test_private_research_navigation_runs_only_requested_brief_and_clears_it(pipeline, monkeypatch):
     _, cutoff = seed(pipeline, gaps=1)
+    modules = pipeline.catalog.all(
+        "SELECT * FROM application_module_migrations ORDER BY module,version"
+    )
     monkeypatch.setenv("S3_BUCKET", pipeline.settings.s3_bucket)
     monkeypatch.setenv("S3_ENDPOINT_URL", pipeline.settings.s3_endpoint_url)
     source = """
@@ -187,10 +191,8 @@ with Pipeline.from_env() as pipeline:
         ).run(timeout=30)
         assert not app.exception, view
     assert (
-        pipeline.catalog.one("SELECT to_regclass('application_module_migrations') AS relation")[
-            "relation"
-        ]
-        is None
+        pipeline.catalog.all("SELECT * FROM application_module_migrations ORDER BY module,version")
+        == modules
     )
 
 
