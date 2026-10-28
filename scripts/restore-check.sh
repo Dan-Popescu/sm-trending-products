@@ -140,5 +140,18 @@ with Pipeline.from_env() as application:
     assert report["status"] == "verified", report
     assert report["controlled_http_requests"] == 0
     print(canonical(report))'
+  # This independent receipt belongs only to the CI fixture qualification; it
+  # neither changes sealed backup metadata nor expands production fingerprints.
+  if [[ -n "${RESEARCH_RECOVERY_RECEIPT:-}" ]]; then
+    [[ -f "$RESEARCH_RECOVERY_RECEIPT" && -n "${RESEARCH_RECOVERY_SHA256:-}" ]] || {
+      echo 'Synthetic research qualification requires its receipt and checksum.' >&2
+      exit 2
+    }
+    docker run --rm --user "$(id -u):$(id -g)" --network "$restore_network" \
+      "${restore_environment[@]}" \
+      --mount "type=bind,source=$RESEARCH_RECOVERY_RECEIPT,target=/research-fixture.json,readonly" \
+      "$pipeline_image" python scripts/research_recovery_fixture.py verify \
+      --receipt /research-fixture.json --expected-sha256 "$RESEARCH_RECOVERY_SHA256"
+  fi
 fi
 echo 'Isolated restore verified. No production destination was written.'
