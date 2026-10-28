@@ -21,8 +21,10 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from psycopg.types.json import Jsonb
 
 from sm_trending_products.capture_contracts import CapturePolicy
+from sm_trending_products.catalog import Catalog
 from sm_trending_products.pipeline import Pipeline
 from sm_trending_products.release_control import (
     DeploymentController,
@@ -31,6 +33,7 @@ from sm_trending_products.release_control import (
 )
 from sm_trending_products.release_evidence import CatalogCaptureVerifier
 from sm_trending_products.release_host import CatalogWorkerGate, ComposeReleaseHost
+from sm_trending_products.resource_cpu import CpuModeController
 from sm_trending_products.settings import Settings
 
 pytestmark = pytest.mark.integration
@@ -188,7 +191,7 @@ class OneShotSource:
 
 
 class Campaign:
-    def __init__(self, directory, manifest):
+    def __init__(self, directory, manifest, *, cpu_roles=False):
         self.directory, self.manifest = directory, manifest
         self.project = "continuity-" + uuid4().hex[:12]
         self.source = OneShotSource()
@@ -263,8 +266,27 @@ class Campaign:
                 "restart": "unless-stopped",
                 "stop_grace_period": "2m",
                 "mem_limit": "512m",
-                "cpus": 1,
+                "cpus": 0.5 if cpu_roles else 1,
             }
+        if cpu_roles:
+            services["postgres"].update(cpus=0.25, mem_limit="512m")
+            services["objectstore"].update(cpus=0.25, mem_limit="256m")
+            for service, variable, default in (
+                ("dagster-daemon", "DAGSTER_DAEMON_CPUS", "0.5"),
+                ("dagster-webserver", "DAGSTER_WEBSERVER_CPUS", "0.25"),
+                ("dashboard", "DASHBOARD_CPUS", "0.25"),
+            ):
+                services[service] = {
+                    # The existing CI registry image has a small Alpine runtime.
+                    # Avoid three dependency-heavy app copies on VFS hosts.
+                    "image": "registry:2.8.3",
+                    # Real containers qualify live quota changes and process
+                    # continuity; this fixture does not measure Dagster throughput.
+                    "command": ["/bin/sleep", "86400"],
+                    "cpus": "${" + variable + ":-" + default + "}",
+                    "mem_limit": "256m",
+                    "init": True,
+                }
         self.host.compose_file.write_text(
             json.dumps({"services": services, "volumes": {"spool": {}, "cache": {}}})
         )
@@ -511,14 +533,16 @@ class Campaign:
 
 
 @pytest.fixture
-def campaign(tmp_path, monkeypatch):
+def campaign(tmp_path, monkeypatch, request):
     path = os.environ.get("CONTINUITY_DOCKER_MANIFEST")
     if not path:
         pytest.skip("Set CONTINUITY_DOCKER_MANIFEST for the isolated two-image Docker campaign")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "fixture-access")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fixture-secret")
     monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
-    value = Campaign(tmp_path, json.loads(Path(path).read_text()))
+    value = Campaign(
+        tmp_path, json.loads(Path(path).read_text()), cpu_roles=getattr(request, "param", False)
+    )
     try:
         value.start()
         yield value
@@ -681,4 +705,195 @@ def test_compose_restart_retains_pause_and_fences_previous_generation(campaign):
     campaign.record(
         "compose-restart-generation-fence",
         {"old_generation": old["generation"], "new_generation": current["generation"]},
+    )
+
+
+def cpu_runtime_snapshot(campaign):
+    """Read only process identities and resource settings of this owned project."""
+    containers = campaign.compose("ps", "--quiet", "--all").split()
+    snapshot = {}
+    for row in json.loads(docker("inspect", *containers)):
+        service = row["Config"]["Labels"]["com.docker.compose.service"]
+        snapshot[service] = {
+            "container_id": row["Id"],
+            "pid": row["State"]["Pid"],
+            "started_at": row["State"]["StartedAt"],
+            "restart_count": row["RestartCount"],
+            "running": row["State"]["Running"],
+            "resources": row["HostConfig"],
+        }
+    return snapshot
+
+
+def prepare_cpu_mode(campaign):
+    campaign.compose(
+        "up", "--detach", "--no-build", "dagster-daemon", "dagster-webserver", "dashboard"
+    )
+    with campaign.pipeline.catalog.transaction() as connection:
+        connection.execute(
+            "INSERT INTO deployment_targets(target,active_manifest,active_proof,active_slot,"
+            "active_worker_id,synthetic) VALUES(%s,%s,%s,'blue','fixture-blue',true)",
+            (
+                campaign.project,
+                Jsonb(campaign.blue.manifest.model_dump(mode="json")),
+                Jsonb(campaign.blue.proof),
+            ),
+        )
+    return CpuModeController(campaign.host, campaign.pipeline.catalog)
+
+
+def assert_cpu_mode_continuity(before, after, analytical_quotas):
+    assert set(before) == set(after)
+    for service, initial in before.items():
+        expected = {**initial, "resources": dict(initial["resources"])}
+        if service in analytical_quotas:
+            expected["resources"]["NanoCpus"] = analytical_quotas[service]
+        assert after[service] == expected
+
+
+@pytest.mark.parametrize("campaign", [True], indirect=True)
+def test_live_cpu_modes_preserve_inflight_capture_and_processing_pins(campaign):
+    cpu = prepare_cpu_mode(campaign)
+    before = cpu_runtime_snapshot(campaign)
+    worker = campaign.worker("fixture-blue", "running")
+    standard = {
+        "dagster-daemon": 500_000_000,
+        "dagster-webserver": 250_000_000,
+        "dashboard": 250_000_000,
+    }
+    economy = {key: value // 2 for key, value in standard.items()}
+    preview = cpu.switch("economy", dry_run=True)
+    assert preview["status"] == "preview"
+    assert cpu_runtime_snapshot(campaign) == before
+    assert not (campaign.host.lock_directory / "cpu-mode.json").exists()
+
+    held = campaign.enqueue("held")
+    assert campaign.source.entered.wait(15)
+    assert cpu.switch("economy")["mode"] == "economy"
+    assert_cpu_mode_continuity(before, cpu_runtime_snapshot(campaign), economy)
+    assert not campaign.source.release.is_set()
+    assert cpu.switch("standard")["mode"] == "standard"
+    assert_cpu_mode_continuity(before, cpu_runtime_snapshot(campaign), standard)
+    assert not campaign.source.release.is_set()
+    assert campaign.worker("fixture-blue", "running")["generation"] == worker["generation"]
+
+    campaign.source.release.set()
+    campaign.done(held)
+    campaign.done(campaign.enqueue("after-live-cpu-switch"))
+    assert campaign.source.requests == {"held": 1, "after-live-cpu-switch": 1}
+
+    # A later deliberate replayable-role recreation must inherit the committed
+    # economy pins. It is separate from, and never performed by, the hot switch.
+    assert cpu.switch("economy")["mode"] == "economy"
+    dashboard = cpu_runtime_snapshot(campaign)["dashboard"]["container_id"]
+    campaign.compose("up", "--detach", "--no-deps", "--no-build", "--force-recreate", "dashboard")
+    recreated = cpu_runtime_snapshot(campaign)
+    assert recreated["dashboard"]["container_id"] != dashboard
+    assert recreated["dashboard"]["resources"]["NanoCpus"] == economy["dashboard"]
+    assert recreated["worker"] == before["worker"]
+    assert recreated["postgres"] == before["postgres"]
+    assert CpuModeController(campaign.host, campaign.pipeline.catalog).status()["mode"] == "economy"
+    assert cpu.switch("standard")["mode"] == "standard"
+    campaign.done(campaign.enqueue("after-persisted-cpu-recreation"))
+    campaign.record(
+        "hot-cpu-inflight-capture-and-persistence",
+        {
+            "capture_container_unchanged": True,
+            "capture_generation": worker["generation"],
+            "standard_nanocpus": standard,
+            "economy_nanocpus": economy,
+            "analytical_workload": "idle Alpine containers; quota/continuity qualification only",
+        },
+    )
+
+
+def crash_cpu_controller_after_update(configuration):
+    """Kill the real host process after Docker applies its first live quota."""
+
+    class InterruptedHost(ComposeReleaseHost):
+        def _command(self, arguments, **kwargs):
+            result = super()._command(arguments, **kwargs)
+            if arguments[0] == "update":
+                os.kill(os.getpid(), signal.SIGKILL)
+            return result
+
+    body = json.loads(Path(configuration).read_text())
+    host = InterruptedHost(
+        **{
+            **body["host"],
+            **{
+                key: Path(body["host"][key])
+                for key in ("compose_file", "env_file", "lock_directory")
+            },
+        }
+    )
+    catalog = Catalog(body["database_url"])
+    try:
+        CpuModeController(host, catalog).switch("economy")
+    finally:
+        catalog.close()
+    raise AssertionError("CPU crash boundary was not reached")
+
+
+@pytest.mark.parametrize("campaign", [True], indirect=True)
+def test_live_cpu_partial_update_recovers_after_host_process_death(campaign):
+    cpu = prepare_cpu_mode(campaign)
+    before = cpu_runtime_snapshot(campaign)
+    worker = campaign.worker("fixture-blue", "running")
+    configuration = campaign.directory / "cpu-crash-fixture.json"
+    configuration.write_text(
+        json.dumps(
+            {
+                "database_url": campaign.pipeline.settings.database_url.get_secret_value(),
+                "host": {
+                    key: str(value) if isinstance(value, Path) else value
+                    for key, value in vars(campaign.host).items()
+                },
+            }
+        )
+    )
+    configuration.chmod(0o600)
+    held = campaign.enqueue("held")
+    assert campaign.source.entered.wait(15)
+    try:
+        crashed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys;from test_docker_release_campaign import "
+                "crash_cpu_controller_after_update;"
+                "crash_cpu_controller_after_update(sys.argv[1])",
+                str(configuration),
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        assert crashed.returncode == -signal.SIGKILL
+        assert cpu.status()["status"] == "recovery_required"
+        partial = cpu_runtime_snapshot(campaign)
+        changed = {
+            service: row["resources"]["NanoCpus"]
+            for service, row in partial.items()
+            if row["resources"]["NanoCpus"] != before[service]["resources"]["NanoCpus"]
+        }
+        assert len(changed) == 1
+        assert set(changed) <= {"dagster-daemon", "dagster-webserver", "dashboard"}
+        assert_cpu_mode_continuity(before, partial, changed)
+        recovered = CpuModeController(campaign.host, campaign.pipeline.catalog).reconcile()
+        assert recovered["recovered"] is True and recovered["mode"] == "standard"
+        assert cpu_runtime_snapshot(campaign) == before
+        assert campaign.worker("fixture-blue", "running")["generation"] == worker["generation"]
+    finally:
+        cpu.reconcile()
+        campaign.source.release.set()
+    campaign.done(held)
+    campaign.done(campaign.enqueue("after-cpu-controller-crash"))
+    campaign.record(
+        "hot-cpu-controller-crash-recovery",
+        {
+            "capture_container_unchanged": True,
+            "capture_generation": worker["generation"],
+            "partial_analytical_updates": len(changed),
+            "recovered_mode": recovered["mode"],
+        },
     )

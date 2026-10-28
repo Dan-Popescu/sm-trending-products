@@ -225,6 +225,20 @@ class HostRuntime:
             raise ReleaseBlocked("deployment_bootstrap_required")
         return row
 
+    def cpu_modes(self):
+        from .resource_cpu import CpuModeController
+
+        return CpuModeController(
+            self.host(self.active()),
+            self.catalog,
+            freshness_seconds=self.config.freshness_seconds,
+        )
+
+    def reconcile_cpu(self) -> dict | None:
+        if not os.path.lexists(self.config.state_directory / "cpu-mode.json"):
+            return None
+        return self.cpu_modes().reconcile()
+
     def host(self, active: dict, run: dict | None = None) -> ComposeReleaseHost:
         slots = {
             "blue": active["active_manifest"]["image"],
@@ -334,6 +348,9 @@ class HostRuntime:
         return row
 
     def apply(self, release_id: str) -> dict:
+        reconciled = self.reconcile_cpu()
+        if reconciled is not None:
+            return reconciled
         row = self.run(release_id)
         action = self.authorization.verify(row)
         if action in {"abort", "rollback"}:
@@ -361,6 +378,9 @@ class HostRuntime:
         return result
 
     def rollback(self, release_id: str) -> dict:
+        reconciled = self.reconcile_cpu()
+        if reconciled is not None:
+            return reconciled
         row = self.run(release_id)
         self.authorization.verify(row)
         execution = self.authorization.execution(row)
@@ -434,9 +454,17 @@ class HostRuntime:
         previous: VerifiedRelease | None = None,
         supersede: bool = False,
     ) -> dict:
+        reconciled = self.reconcile_cpu()
+        if reconciled is not None:
+            return reconciled
         return self.processing_refresh().apply(release, previous=previous, supersede=supersede)
 
     def pull(self) -> dict:
+        # Resource recovery and the capture guard precede network access and
+        # every deployment resume, including accepted offline handovers.
+        reconciled = self.reconcile_cpu()
+        if reconciled is not None:
+            return reconciled
         self.authorization.recover_accepted_request()
         override = self.authorization.rollback_state()
         if override and not override["completed"]:
@@ -561,10 +589,28 @@ class HostRuntime:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog=(
+            "Examples: python -m sm_trending_products.release_cli cpu-mode "
+            "--config /etc/sm-trends/release-controller.json --mode economy --dry-run; "
+            "replace --dry-run with nothing to apply live. Use cpu-status to inspect "
+            "or cpu-recover to resume an interrupted switch."
+        ),
+    )
     parser.add_argument(
         "command",
-        choices=("pull", "apply", "status", "bootstrap", "rollback", "refresh-processing"),
+        choices=(
+            "pull",
+            "apply",
+            "status",
+            "bootstrap",
+            "rollback",
+            "refresh-processing",
+            "cpu-mode",
+            "cpu-status",
+            "cpu-recover",
+        ),
     )
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--release-id")
@@ -573,8 +619,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--worker-id")
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--bundle", type=Path)
+    parser.add_argument("--mode", choices=("standard", "economy"), help="CPU profile for cpu-mode")
+    parser.add_argument("--dry-run", action="store_true", help="Preview cpu-mode without mutations")
     parser.add_argument("--controlled-test", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if args.command == "cpu-mode" and args.mode is None:
+        parser.error(
+            "cpu-mode requires --mode economy or --mode standard; add --dry-run to preview"
+        )
+    if (args.mode is not None or args.dry_run) and args.command != "cpu-mode":
+        parser.error("--mode and --dry-run apply only to cpu-mode")
     try:
         config = load_config(args.config, controlled_test=args.controlled_test)
         catalog = Catalog(
@@ -584,7 +638,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         try:
             runtime = HostRuntime(config, catalog, controlled_test=args.controlled_test)
-            if args.command == "bootstrap":
+            if args.command == "cpu-mode":
+                result = runtime.cpu_modes().switch(args.mode, dry_run=args.dry_run)
+            elif args.command == "cpu-status":
+                result = runtime.cpu_modes().status()
+            elif args.command == "cpu-recover":
+                result = runtime.reconcile_cpu() or runtime.cpu_modes().status()
+            elif args.command == "bootstrap":
                 if not args.revision or not args.worker_id:
                     parser.error("bootstrap requires --revision and --worker-id")
                 result = runtime.bootstrap(
