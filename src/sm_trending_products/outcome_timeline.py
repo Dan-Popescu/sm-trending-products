@@ -9,6 +9,7 @@ from decimal import Decimal, DecimalException, InvalidOperation
 from typing import Any
 
 from .contracts import Measurement, Observation, observation_period
+from .measurement_semantics import CounterPeriodContract, counter_period
 
 
 def _metric(row: Observation, target: str) -> Measurement | None:
@@ -18,13 +19,6 @@ def _metric(row: Observation, target: str) -> Measurement | None:
 
 def _period(row: Observation) -> tuple[datetime, datetime] | None:
     return observation_period(row)
-
-
-def _counter_period(row: Observation, target: str) -> str | None:
-    if target == "attention":
-        return str(row.attributes.get("view_count_period", "lifetime"))
-    period = row.attributes.get("units_sold_period", row.attributes.get("sold_period"))
-    return str(period) if period is not None else None
 
 
 def _realized_amount(
@@ -208,9 +202,11 @@ class EntityTimeline:
         currency: str | None = None,
         *,
         required_cost_components: tuple[str, ...] | None = None,
+        counter_period_contract: CounterPeriodContract | None = None,
     ):
         self.target, self.currency = target, currency
         self.required_cost_components = required_cost_components
+        self.counter_period_contract = counter_period_contract
         self.rows = list(rows)
         cumulative: list[tuple[Observation, Measurement]] = []
         periods: dict[tuple[datetime, datetime], tuple[Observation, Measurement | None]] = {}
@@ -352,7 +348,10 @@ class EntityTimeline:
         if first_after.observed_at > last.observed_at:
             return {"status": "censored", "reason": "insufficient_boundary_history"}
         boundaries = first, first_after, last, last_after
-        periods = {_counter_period(row, self.target) for row in boundaries}
+        metric = "view_count" if self.target == "attention" else "units_sold"
+        periods = {
+            counter_period(row, metric, contract=self.counter_period_contract) for row in boundaries
+        }
         if None in periods or len(periods) != 1:
             return {"status": "censored", "reason": "unknown_or_changed_counter_period"}
         metrics = [self.measurements[index] for index in positions]

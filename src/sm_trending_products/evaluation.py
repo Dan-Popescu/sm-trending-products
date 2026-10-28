@@ -29,6 +29,7 @@ from .contracts import (
     utc,
 )
 from .identity_rules import resolve_links
+from .measurement_semantics import DOCUMENTED_COUNTER_CONTRACT, CounterPeriodContract
 from .outcome_timeline import EntityTimeline, _period
 
 
@@ -78,6 +79,22 @@ class EvaluationConfig(Contract):
     outcome_entity_scope: Literal["frozen_links"] = "frozen_links"
     horizon_anchor: Literal["decision"] = "decision"
     profit_contract: ProfitContract | None = None
+    counter_period_contract: CounterPeriodContract | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @classmethod
+    def for_creation(cls, values: dict[str, Any] | None = None) -> EvaluationConfig:
+        """Choose current rules for new persisted decisions, never for old reads."""
+        configuration = cls.model_validate(values or {})
+        if (
+            "counter_period_contract" in configuration.model_fields_set
+            and configuration.counter_period_contract is None
+        ):
+            raise ValueError("New persisted decisions require a counter_period_contract")
+        return configuration.model_copy(
+            update={"counter_period_contract": DOCUMENTED_COUNTER_CONTRACT}
+        )
 
     @model_validator(mode="after")
     def validate_configuration(self) -> EvaluationConfig:
@@ -168,6 +185,7 @@ def _entity_timeline(
             if config.target == "profit" and config.profit_contract is not None
             else None
         ),
+        counter_period_contract=config.counter_period_contract,
     )
 
 

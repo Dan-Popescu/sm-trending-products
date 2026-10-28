@@ -257,7 +257,7 @@ def test_prepared_history_adequacy_matches_raw_decisions_with_metadata_revisions
         [Product.model_validate(row) for row in pipeline.products(synthetic=True)],
         [ProductLink.model_validate(row) for row in pipeline.links(cutoff, synthetic=True)],
         cutoff,
-        EvaluationConfig.model_validate(config),
+        EvaluationConfig.for_creation(config),
         synthetic=True,
     )
     assert snapshot_semantics(pipeline, persisted) == snapshot_semantics(pipeline, direct)
@@ -401,7 +401,7 @@ def test_direct_and_persisted_decisions_use_the_same_declared_history_window(
     pipeline.review_link("windowed", "fixture_import:video:windowed")
     observations, _ = pipeline.history.observations(cutoff, True)
     assert len(observations) == 3
-    config = EvaluationConfig(minimum_history_observations=minimum_history)
+    config = EvaluationConfig.for_creation({"minimum_history_observations": minimum_history})
     policy = AssessmentPolicy(version=f"history-{lookback_days}-v1", lookback_days=lookback_days)
     direct = freeze_decision(
         observations,

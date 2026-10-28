@@ -272,7 +272,7 @@ class EvaluationService:
         policy: AssessmentPolicy | None = None,
     ) -> dict:
         cutoff = utc(as_of)
-        configuration = EvaluationConfig.model_validate(config or {})
+        configuration = EvaluationConfig.for_creation(config)
         configuration.validate_creation()
         dates = sorted({utc(timestamp) for timestamp in decision_times})
         if any(timestamp > cutoff for timestamp in dates):
@@ -427,7 +427,7 @@ class EvaluationService:
             raise ValueError("A live forward decision cannot be retrospectively backdated")
         if not synthetic and cutoff > now() + timedelta(seconds=30):
             raise ValueError("A live forward decision cannot be future dated")
-        configuration = EvaluationConfig.model_validate(config or {})
+        configuration = EvaluationConfig.for_creation(config)
         configuration.validate_creation()
         payload, datasets = self._prepare_decision(
             self._evaluation_inputs(cutoff, synthetic),
