@@ -13,10 +13,12 @@ from .release_capacity import _host_limits
 from .release_control import ReleaseBlocked, ReleaseManifest
 from .resource_cpu_state import (
     CPU_VARIABLES,
+    INDEPENDENT_SERVICES,
     CpuContainer,
     CpuPolicy,
     CpuTransition,
     Mode,
+    independent_environment,
     load_cpu_policy,
     mode_quotas,
     write_cpu_policy,
@@ -53,6 +55,15 @@ RESOURCE_FIELDS = (
     "PidsLimit",
     "BlkioWeight",
 )
+# Inspect one boolean only, never Config.Env. Duplicate/case-variant keys are ambiguous
+# because Python settings are case-insensitive; refuse them even if one value is true.
+INDEPENDENT_FORMAT = (
+    "{{ $independent := false }}{{ $seen := false }}{{ range .Config.Env }}"
+    '{{ if eq (lower (index (split . "=") 0)) "acquisition_enabled" }}'
+    "{{ if $seen }}{{ $independent = false }}"
+    '{{ else }}{{ $independent = eq . "ACQUISITION_ENABLED=true" }}{{ end }}'
+    "{{ $seen = true }}{{ end }}{{ end }}{{json $independent}}"
+)
 INSPECT_FORMAT = (
     "\t".join(
         "{{json " + field + "}}"
@@ -70,7 +81,8 @@ INSPECT_FORMAT = (
     )
     + "\t{"
     + ",".join('"' + key + '":{{json .HostConfig.' + key + "}}" for key in RESOURCE_FIELDS)
-    + "}"
+    + "}\t"
+    + INDEPENDENT_FORMAT
 )
 
 
@@ -123,6 +135,7 @@ class CpuModeController:
                     started,
                     restarts,
                     resources,
+                    independent,
                 ) = [json.loads(value) for value in line.split("\t")]
                 if (
                     identifier not in identifiers
@@ -149,6 +162,7 @@ class CpuModeController:
                         image=image,
                         resource_sha256=digest(config),
                         nanocpus=nanocpus,
+                        independent_acquisition=independent,
                     )
                 )
             services = [row.service for row in result]
@@ -253,7 +267,7 @@ class CpuModeController:
         except (OSError, ValueError, KeyError, TypeError):
             raise ReleaseBlocked("cpu_capacity_unavailable") from None
 
-    def _qualify_pins(self, quotas: dict[str, int]) -> None:
+    def _qualify_pins(self, quotas: dict[str, int], *, require_independent: bool) -> None:
         # The adapter permits prospective pins only for this read-only config command.
         try:
             configured = json.loads(
@@ -270,6 +284,11 @@ class CpuModeController:
             values = {key: round(float(configured[key]["cpus"]) * 10**9) for key in quotas}
             if values != quotas:
                 raise ValueError("Compose ignores CPU pins")
+            if require_independent and not all(
+                independent_environment(configured[service].get("environment"))
+                for service in INDEPENDENT_SERVICES
+            ):
+                raise ValueError("Independent acquisition is required for CPU reduction")
         except (KeyError, ValueError, TypeError, OverflowError):
             raise ReleaseBlocked("cpu_compose_pins_unsupported") from None
 
@@ -282,7 +301,19 @@ class CpuModeController:
         if current != expected:
             raise ReleaseBlocked("cpu_runtime_changed")
 
+    @staticmethod
+    def _independent(containers: tuple[CpuContainer, ...]) -> bool:
+        return all(
+            row.independent_acquisition for row in containers if row.service in INDEPENDENT_SERVICES
+        )
+
     def _apply(self, original: tuple[CpuContainer, ...], quotas: dict[str, int]) -> None:
+        if not self._independent(original) and any(
+            quotas.get(row.service, row.nanocpus) < row.nanocpus
+            for row in original
+            if row.service in INDEPENDENT_SERVICES
+        ):
+            raise ReleaseBlocked("cpu_legacy_collection_active")
         expected = self._quotas(original)
         for row in original:
             if row.service not in quotas or quotas[row.service] == expected[row.service]:
@@ -301,7 +332,7 @@ class CpuModeController:
             self._verify(original, expected)
         self._verify(original, quotas)
 
-    def _restore(self, policy: CpuPolicy) -> None:
+    def _recover(self, policy: CpuPolicy) -> None:
         assert policy.pending is not None
         original = policy.pending.containers
         current = self._inventory()
@@ -310,6 +341,25 @@ class CpuModeController:
         if any(actual[key] not in {allowed[key], policy.pending.quotas[key]} for key in allowed):
             raise ReleaseBlocked("cpu_recovery_runtime_changed")
         self._verify(original, actual)
+        # A later legacy-role recreation can require restoration of larger standard quotas.
+        # If that authorized increase was interrupted, rolling back would throttle collection.
+        # Finish only its remaining increases instead; insufficient headroom retains the intent.
+        if (
+            policy.pending.mode == "standard"
+            and not self._independent(current)
+            and any(
+                policy.quotas[row.service] < row.nanocpus
+                for row in current
+                if row.service in INDEPENDENT_SERVICES
+            )
+        ):
+            policy = policy.model_copy(
+                update={
+                    "mode": "standard",
+                    "quotas": policy.pending.quotas,
+                    "activated_at": datetime.now(UTC),
+                }
+            )
         self._admit(current, policy.quotas)
         self._apply(current, policy.quotas)
         write_cpu_policy(self.host.lock_directory, policy.model_copy(update={"pending": None}))
@@ -353,7 +403,9 @@ class CpuModeController:
             if actual != policy.quotas:
                 raise ReleaseBlocked("cpu_runtime_drift")
             quotas = mode_quotas(policy.baseline, cast(Mode, mode))
-            self._qualify_pins(quotas)
+            if mode == "economy" and not self._independent(containers):
+                raise ReleaseBlocked("cpu_legacy_collection_active")
+            self._qualify_pins(quotas, require_independent=mode == "economy")
             self._admit(containers, quotas)
             if mode == "economy" and not self._healthy():
                 raise ReleaseBlocked("cpu_capture_unhealthy")
@@ -386,9 +438,12 @@ class CpuModeController:
                 write_cpu_policy(self.host.lock_directory, committed)
             except Exception:
                 try:
-                    self._restore(pending)
+                    self._recover(pending)
                 except Exception:
                     raise ReleaseBlocked("cpu_recovery_required") from None
+                recovered = self.status()
+                if recovered["mode"] == mode:
+                    return {**recovered, "recovered": True}
                 raise ReleaseBlocked("cpu_update_rolled_back") from None
             return self.status()
 
@@ -400,7 +455,7 @@ class CpuModeController:
             policy = load_cpu_policy(self.host.lock_directory, self.host.project)
             assert policy is not None
             if policy.pending:
-                self._restore(policy)
+                self._recover(policy)
                 return {**self.status(), "recovered": True}
             if policy.mode != "economy":
                 return None
@@ -410,7 +465,14 @@ class CpuModeController:
                 if str(error) in {"cpu_release_in_progress", "cpu_processing_in_progress"}:
                     return None  # Deliberate release draining is not a new capture failure.
                 raise
-            if self._healthy():
-                return None
+            if self._independent(self._inventory()):
+                try:
+                    self._qualify_pins(policy.quotas, require_independent=True)
+                except ReleaseBlocked as error:
+                    if str(error) != "cpu_compose_pins_unsupported":
+                        raise
+                else:
+                    if self._healthy():
+                        return None
         result = self.switch("standard")
         return {**result, "reason": "cpu_capture_guard_restored_standard"}

@@ -19,6 +19,21 @@ CPU_VARIABLES = {
     "dagster-webserver": "DAGSTER_WEBSERVER_CPUS",
     "dashboard": "DASHBOARD_CPUS",
 }
+INDEPENDENT_SERVICES = frozenset({"dagster-daemon", "dagster-webserver"})
+
+
+def independent_environment(environment: object) -> bool:
+    """Require one canonical flag; case-insensitive settings make aliases ambiguous."""
+    if not isinstance(environment, dict):
+        return False
+    keys = [
+        key
+        for key in environment
+        if isinstance(key, str) and key.casefold() == "acquisition_enabled"
+    ]
+    return keys == ["ACQUISITION_ENABLED"] and environment[keys[0]] == "true"
+
+
 Mode = Literal["standard", "economy"]
 Quota = Annotated[int, Field(strict=True, ge=1, le=1024 * 10**9)]
 
@@ -52,6 +67,7 @@ class CpuContainer(Contract):
     image: str
     resource_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     nanocpus: int = Field(gt=0, strict=True)
+    independent_acquisition: bool = Field(strict=True)
 
 
 class CpuTransition(Contract):

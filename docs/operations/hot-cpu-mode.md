@@ -5,6 +5,12 @@ Dagster daemon, Dagster webserver and dashboard CPU ceilings change. Collection,
 capture planning, normalization and PostgreSQL retain their resources. Memory,
 threads, source quotas, schedules and stored evidence are unchanged.
 
+Economy requires `ACQUISITION_ENABLED=true` in the running Dagster daemon and
+webserver and their effective future Compose configuration. Missing/false values
+are refused because legacy Dagster jobs could still perform source collection.
+Returning to standard remains possible; the guard requests that return if this
+precondition changes while economy is active.
+
 With the [4-vCPU pilot profile](../../deploy/production-4cpu.env.example):
 
 | Role | Standard CPU ceiling | Economy CPU ceiling |
@@ -81,6 +87,9 @@ reviewed host configuration procedure.
 Intent is synchronized before the first Docker update. A command failure may
 have applied, so rollback inspects actual quotas. A controller killed mid-switch
 leaves intent for a fresh controller to restore the previous committed mode.
+If that restoration would lower CPU for legacy Dagster collection, recovery
+instead completes the already requested standard increase after checking current
+headroom. Insufficient capacity preserves the partial higher limits and intent.
 Deployment mutations wait for that recovery. An identity or protected-resource
 change blocks automated restoration rather than updating an unexamined runtime.
 

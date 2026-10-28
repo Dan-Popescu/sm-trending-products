@@ -283,6 +283,7 @@ class Campaign:
                     # Real containers qualify live quota changes and process
                     # continuity; this fixture does not measure Dagster throughput.
                     "command": ["/bin/sleep", "86400"],
+                    "environment": {"ACQUISITION_ENABLED": "true"},
                     "cpus": "${" + variable + ":-" + default + "}",
                     "mem_limit": "256m",
                     "init": True,

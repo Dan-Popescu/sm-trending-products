@@ -21,6 +21,13 @@ subject to a 0.25-CPU daemon floor and 0.1-CPU web/dashboard floors, never raisi
 a ceiling above its standard value. No arbitrary quota or global CPU cap is
 accepted by this mode.
 
+Before reducing a Dagster role's CPU, verify that its running container and
+effective future Compose configuration both explicitly enable independent
+acquisition. A protected capture worker alone cannot rule out concurrent legacy
+Dagster collection. Inspect only the relevant nonsecret setting. Refuse economy
+with a missing or false setting; preserve increases back to standard. The timer
+also checks this precondition while economy is active.
+
 ## Safety and recovery
 
 - Use the existing host release lock. Refuse an unfinished deployment or
@@ -47,6 +54,9 @@ accepted by this mode.
   committed profile. Roll back a failed or uncertain transition; retain recovery
   intent if rollback cannot safely finish. On process death, reconcile that
   intent before allowing subsequent deployment mutations.
+  If rolling back a standard increase would reduce CPU for legacy Dagster
+  collection, complete that already authorized standard increase instead,
+  subject to fresh capacity. Otherwise retain the safe partial state and intent.
 - Persist only allowlisted CPU settings under the controller's existing private
   writable state directory. They override inherited interpolation variables for
   subsequent managed service creation. Never copy application credentials into

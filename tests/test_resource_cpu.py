@@ -30,6 +30,10 @@ class Inventory:
         self.fail_update = None
         self.crash_update = None
         self.calls = 0
+        self.compose_environment = {
+            service: {"ACQUISITION_ENABLED": "true"}
+            for service in ("dagster-daemon", "dagster-webserver")
+        }
         services = ["worker", "postgres", "normalizer", *CPU_VARIABLES]
         values = [750_000_000, 500_000_000, 500_000_000, 500_000_000, 250_000_000, 250_000_000]
         for number, (service, cpus) in enumerate(zip(services, values, strict=True), start=1):
@@ -53,6 +57,7 @@ class Inventory:
                     "MemorySwap": 2 * 1024**3,
                     "PidsLimit": 128,
                 },
+                True,
             ]
         self.original = copy.deepcopy(self.rows)
 
@@ -77,7 +82,8 @@ class Inventory:
                         row[2]: {
                             "cpus": float(pins[CPU_VARIABLES[row[2]]])
                             if row[2] in CPU_VARIABLES and pins
-                            else row[9]["NanoCpus"] / 10**9
+                            else row[9]["NanoCpus"] / 10**9,
+                            "environment": self.compose_environment.get(row[2], {}),
                         }
                         for row in self.original.values()
                     }
@@ -611,3 +617,125 @@ def test_mixed_changes_admit_each_positive_delta_without_offsetting_reductions(
     with pytest.raises(ReleaseBlocked, match="cpu_headroom_insufficient"):
         controller._admit(current, quotas)
     assert controller.fixture.calls == 0
+
+
+@pytest.mark.parametrize("service", ["dagster-daemon", "dagster-webserver"])
+@pytest.mark.parametrize("independent", [False, None, "missing"])
+def test_live_legacy_collection_is_refused_even_when_future_compose_enables_independence(
+    controller, service, independent
+):
+    row = next(row for row in controller.fixture.rows.values() if row[2] == service)
+    if independent == "missing":
+        row.pop()
+    else:
+        row[10] = independent
+    assert controller.fixture.compose_environment[service]["ACQUISITION_ENABLED"] == "true"
+    with pytest.raises(ReleaseBlocked, match="cpu_inventory_invalid|cpu_legacy_collection_active"):
+        controller.switch("economy")
+    assert controller.fixture.calls == 0
+    assert not (controller.host.lock_directory / "cpu-mode.json").exists()
+
+
+@pytest.mark.parametrize("service", ["dagster-daemon", "dagster-webserver"])
+@pytest.mark.parametrize("independent", ["false", "missing", True, "duplicate"])
+def test_future_compose_legacy_collection_is_refused_even_when_live_roles_are_independent(
+    controller, service, independent
+):
+    if independent == "missing":
+        controller.fixture.compose_environment[service].pop("ACQUISITION_ENABLED")
+    elif independent == "duplicate":
+        controller.fixture.compose_environment[service]["acquisition_enabled"] = "false"
+    else:
+        controller.fixture.compose_environment[service]["ACQUISITION_ENABLED"] = independent
+    with pytest.raises(ReleaseBlocked, match="cpu_compose_pins_unsupported"):
+        controller.switch("economy")
+    assert controller.fixture.calls == 0
+    assert not (controller.host.lock_directory / "cpu-mode.json").exists()
+
+
+@pytest.mark.parametrize("live_legacy", [False, True])
+def test_standard_restoration_remains_available_after_collection_configuration_changes(
+    controller, live_legacy
+):
+    controller.switch("economy")
+    if live_legacy:
+        # A later recreation is outside a CPU transition; restoring larger quotas is safe.
+        for row in controller.fixture.rows.values():
+            if row[2] in {"dagster-daemon", "dagster-webserver"}:
+                row[10] = False
+                row[6] += 1
+    else:
+        controller.fixture.compose_environment["dagster-daemon"]["ACQUISITION_ENABLED"] = "false"
+    result = controller.reconcile()
+    assert result["mode"] == "standard"
+    assert result["reason"] == "cpu_capture_guard_restored_standard"
+    for row in controller.fixture.rows.values():
+        assert row[9]["NanoCpus"] == controller.fixture.original[row[0]][9]["NanoCpus"]
+
+
+def test_standard_mode_does_not_require_independent_acquisition_when_it_reduces_nothing(controller):
+    for row in controller.fixture.rows.values():
+        if row[2] in {"dagster-daemon", "dagster-webserver"}:
+            row[10] = False
+            controller.fixture.compose_environment[row[2]]["ACQUISITION_ENABLED"] = "false"
+    assert controller.switch("standard")["mode"] == "standard"
+    assert controller.fixture.calls == 0
+
+
+@pytest.mark.parametrize("failure", ["crash", "uncertain_error"])
+def test_legacy_standard_recovery_finishes_only_the_authorized_remaining_increases(
+    controller, failure
+):
+    controller.switch("economy")
+    economy = copy.deepcopy(controller.fixture.rows)
+    for row in controller.fixture.rows.values():
+        if row[2] in {"dagster-daemon", "dagster-webserver"}:
+            row[10] = False
+            row[6] += 1
+            controller.fixture.compose_environment[row[2]]["ACQUISITION_ENABLED"] = "false"
+    initial_updates = controller.fixture.calls
+    if failure == "crash":
+        controller.fixture.crash_update = initial_updates + 1
+        with pytest.raises(KeyboardInterrupt):
+            controller.switch("standard")
+        result = controller.reconcile()
+    else:
+        controller.fixture.fail_update = initial_updates + 1
+        result = controller.switch("standard")
+    assert result["recovered"] and result["mode"] == "standard"
+    assert not cpu_transition_pending(controller.host.lock_directory, "fixture")
+    updates = [command for command in controller.fixture.commands if command[0] == "update"]
+    for command in updates[initial_updates:]:
+        assert float(command[2]) * 10**9 >= economy[command[-1]][9]["NanoCpus"]
+    for row in controller.fixture.rows.values():
+        assert row[9]["NanoCpus"] == controller.fixture.original[row[0]][9]["NanoCpus"]
+
+
+def test_legacy_standard_recovery_keeps_higher_partial_quotas_when_headroom_is_unavailable(
+    controller, monkeypatch
+):
+    from dataclasses import replace
+
+    controller.switch("economy")
+    for row in controller.fixture.rows.values():
+        if row[2] in {"dagster-daemon", "dagster-webserver"}:
+            row[10] = False
+            row[6] += 1
+    capacity = SimpleNamespace(
+        _allocations=lambda: {"allocated_cpus": 3.0},
+        budget=CapacityBudget(cpu_reserve=0.25),
+    )
+    controller.host = replace(controller.host, capacity=capacity)
+    controller.fixture.host = controller.host
+    monkeypatch.setattr(resource_cpu, "_host_limits", lambda: {"cpus": 4})
+    controller.fixture.crash_update = controller.fixture.calls + 1
+    with pytest.raises(KeyboardInterrupt):
+        controller.switch("standard")
+    partially_increased = copy.deepcopy(controller.fixture.rows)
+    capacity._allocations = lambda: {"allocated_cpus": 4.0}
+    with pytest.raises(ReleaseBlocked, match="cpu_headroom_insufficient"):
+        controller.reconcile()
+    assert controller.fixture.rows == partially_increased
+    assert cpu_transition_pending(controller.host.lock_directory, "fixture")
+    capacity._allocations = lambda: {"allocated_cpus": 3.0}
+    assert controller.reconcile()["mode"] == "standard"

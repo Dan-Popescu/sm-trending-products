@@ -7,6 +7,9 @@ Use Docker's live CPU quota update rather than recreating services. Only the
 Dagster daemon/webserver and dashboard are eligible. Keeping capture, planning,
 normalization and PostgreSQL limits unchanged is the primary continuity boundary;
 the watchdog is a conservative supplementary check, not a coverage guarantee.
+Live Dagster containers and future Compose settings must explicitly enable
+independent acquisition before CPU reduction; otherwise Dagster could still run
+legacy collection. Standard increases remain available to recover that state.
 
 The host-private CPU journal and validated Compose pins live in the existing
 writable controller state directory. This respects the systemd sandbox and avoids
@@ -14,6 +17,8 @@ rewriting credential-bearing runtime.env. Ordinary application images retain no
 Docker access. The journal synchronizes intent before mutation and restores the
 previous committed profile after an interrupted transition. Unknown runtime
 identities block recovery rather than broadening the update target.
+When the previous profile would lower CPU for a legacy Dagster collector,
+complete the already authorized standard increase after fresh admission instead.
 
 Resource changes share the release host lock and refuse unfinished handovers.
 Pending resource intent blocks release mutations until reconciled. A committed

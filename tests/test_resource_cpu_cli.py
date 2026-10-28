@@ -10,6 +10,7 @@ import pytest
 from sm_trending_products import release_cli
 from sm_trending_products.release_control import ReleaseBlocked
 from sm_trending_products.release_host import ComposeReleaseHost
+from sm_trending_products.release_processing import ProcessingRefresh
 from sm_trending_products.resource_cpu_state import CpuPolicy, write_cpu_policy
 
 
@@ -107,11 +108,10 @@ def test_cpu_recovery_precedes_deployment_and_outbound_access(monkeypatch):
             operation()
 
 
-def test_persisted_cpu_pins_override_inherited_variables_and_preview_is_read_only(
-    tmp_path, monkeypatch
-):
+@pytest.fixture
+def cpu_host(tmp_path):
     image = "ghcr.io/example/pipeline@sha256:" + "a" * 64
-    host = ComposeReleaseHost(
+    return ComposeReleaseHost(
         "fixture",
         tmp_path / "compose.yaml",
         tmp_path / "runtime.env",
@@ -119,6 +119,12 @@ def test_persisted_cpu_pins_override_inherited_variables_and_preview_is_read_onl
         {"blue": image, "green": image},
         {"blue": "blue", "green": "green"},
     )
+
+
+def test_persisted_cpu_pins_override_inherited_variables_and_preview_is_read_only(
+    tmp_path, monkeypatch, cpu_host
+):
+    host = cpu_host
     baseline = {
         "dagster-daemon": 500_000_000,
         "dagster-webserver": 250_000_000,
@@ -158,7 +164,7 @@ def test_persisted_cpu_pins_override_inherited_variables_and_preview_is_read_onl
         "sm_trending_products.resource_cpu_state.cpu_transition_pending", lambda *a: True
     )
     for arguments in (
-        ["pull", image],
+        ["pull", host.slot_images["blue"]],
         ["stop", "container"],
         [*host._compose(), "up", "--detach", "dashboard"],
     ):
@@ -167,3 +173,49 @@ def test_persisted_cpu_pins_override_inherited_variables_and_preview_is_read_onl
     assert len(captured) == 2
     host._command(["inspect", "container"])
     assert len(captured) == 3  # Recovery can still inspect runtime state.
+
+
+@pytest.mark.parametrize("service", ["dagster-daemon", "dagster-webserver"])
+@pytest.mark.parametrize(
+    "environment,safe",
+    [
+        ({}, False),
+        ({"ACQUISITION_ENABLED": "false"}, False),
+        ({"ACQUISITION_ENABLED": "true", "acquisition_enabled": "false"}, False),
+        ({"ACQUISITION_ENABLED": "true"}, True),
+    ],
+)
+def test_pending_processing_refuses_future_legacy_collection_with_economy_pins(
+    cpu_host, monkeypatch, service, environment, safe
+):
+    baseline = {
+        "dagster-daemon": 500_000_000,
+        "dagster-webserver": 250_000_000,
+        "dashboard": 250_000_000,
+    }
+    write_cpu_policy(
+        cpu_host.lock_directory,
+        CpuPolicy(
+            target=cpu_host.project,
+            mode="economy",
+            baseline=baseline,
+            quotas={key: value // 2 for key, value in baseline.items()},
+            activated_at=datetime.now(UTC),
+        ),
+    )
+    commands = []
+
+    def config(host, arguments, **kwargs):
+        commands.append(arguments)
+        assert arguments == [*host._compose(), "config", "--format", "json", service]
+        return json.dumps({"services": {service: {"environment": environment}}})
+
+    monkeypatch.setattr(ComposeReleaseHost, "_command", config)
+    refresh = object.__new__(ProcessingRefresh)
+    refresh.host = cpu_host
+    if safe:
+        refresh._admit_role(service)
+    else:
+        with pytest.raises(ReleaseBlocked, match="cpu_legacy_collection_active"):
+            refresh._admit_role(service)
+    assert len(commands) == 1  # Configuration only; no container creation or source changes.
