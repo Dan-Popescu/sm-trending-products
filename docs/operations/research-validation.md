@@ -138,10 +138,13 @@ If the module is unavailable, these stages are null with an explicit reason.
 Optional seeded sampling chooses only from discovered in-market products outside
 the policy selection, under a maximum of 25. It freezes their existing reviewed
 links and measures attention using the ordinary outcome kernel. The audit records
-sample size, population and inclusion probability in the sample report's
-methodology. Missing links, boundaries or outcomes remain censored. Sampling does
-not collect new source data, spend money or create a commercial test; it is not an
-estimate of counterfactual launch profit.
+sample size, population, seed, without-replacement method and inclusion probability
+in `selection_audit.measurement_sample.methodology`, alongside its outcome report.
+This complete sampling contract is retained in the persisted decision snapshot
+and survives a fresh attempt read. An empty population has sample size zero and
+unknown inclusion probability. Missing links, boundaries or outcomes remain
+censored. Sampling does not collect new source data, spend money or create a
+commercial test; it is not an estimate of counterfactual launch profit.
 
 ## Replay, retirement and capacity
 

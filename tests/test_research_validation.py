@@ -283,6 +283,85 @@ def test_missing_outcomes_and_excluded_samples_remain_unknown(pipeline):
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("requested,actual,probability", [(1, 1, 0.5), (5, 2, 1.0)])
+def test_saved_excluded_sample_retains_its_sampling_contract(
+    pipeline, requested, actual, probability
+):
+    service, _, identifier, base, _ = seed(
+        pipeline, outcomes=False, measurement_sample_size=requested, seed=17
+    )
+    result = service.run(
+        identifier,
+        "development",
+        "attention",
+        "saved-sample",
+        synthetic=True,
+        as_of=base + timedelta(days=1, hours=2),
+    )
+    assert result["state"] == "completed", result
+    # Reopen the public service and resolve persisted sharded records. An in-memory
+    # sample snapshot is insufficient evidence for an independently readable audit.
+    reopened = ResearchValidation(pipeline.catalog, pipeline.history, pipeline.identity)
+    saved = reopened.attempt(result["attempt_id"], synthetic=True)
+    snapshot = backtest_snapshots(pipeline, saved["result"])[0]
+    audit = snapshot["selection_audit"]
+    assert audit["declared_product_count"] == 3
+    assert audit["counts"]["discovered"] == 3 and audit["counts"]["selected"] == 1
+    sample = audit["measurement_sample"]
+    methodology = sample["methodology"]
+    assert methodology["sampling_population"] == 2
+    assert methodology["sample_size"] == actual == len(sample["product_ids"])
+    assert methodology["inclusion_probability"] == probability
+    assert methodology["sampling_seed"] == 17
+    assert methodology["sampling_method"] == "seeded_digest_order_without_replacement"
+    assert methodology["measurement_only"] is True and methodology["profit_claim"] is False
+    assert all(methodology[key] == value for key, value in snapshot["methodology"].items())
+    assert set(sample["product_ids"]) <= {"empty", "thin"}
+    method = sample["report"]["scenarios"][0]["methods"]["policy"]
+    assert method["precision_at_k"] is None
+    assert method["status_counts"] == {"censored": actual}
+    assert {row["status"] for row in record_values(pipeline, method["outcomes"])} == {"censored"}
+    assert reopened.attempt(result["attempt_id"], True) == saved
+
+
+@pytest.mark.integration
+def test_saved_empty_sample_has_unknown_probability_and_failed_attempt_has_no_result(pipeline):
+    service, _, identifier, base, _ = seed(pipeline, measurement_sample_size=2, seed=23)
+    failed = service.run(
+        identifier,
+        "test",
+        "attention",
+        "unlocked-sample",
+        synthetic=True,
+        as_of=base + timedelta(days=3),
+    )
+    assert failed["state"] == "failed"
+    assert failed["error_code"] == "heldout_requires_prior_selected_policy_lock"
+    assert "result" not in failed and failed["evaluation_id"] is None
+    service.lock(identifier, "attention", "select-policy", True, as_of=base)
+    complete = service.run(
+        identifier,
+        "test",
+        "attention",
+        "empty-sample",
+        synthetic=True,
+        as_of=base + timedelta(days=3),
+    )
+    assert complete["state"] == "completed", complete
+    reopened = ResearchValidation(pipeline.catalog, pipeline.history, pipeline.identity)
+    saved = reopened.attempt(complete["attempt_id"], True)
+    sample = backtest_snapshots(pipeline, saved["result"])[0]["selection_audit"][
+        "measurement_sample"
+    ]
+    assert sample["product_ids"] == []
+    assert sample["methodology"]["sampling_population"] == 0
+    assert sample["methodology"]["sample_size"] == 0
+    assert sample["methodology"]["inclusion_probability"] is None
+    assert sample["methodology"]["sampling_seed"] == 23
+    assert reopened.attempt(failed["attempt_id"], True) == failed
+
+
+@pytest.mark.integration
 def test_retired_evidence_cannot_be_exposed_through_saved_attempt_or_replay(pipeline):
     service, _, identifier, base, datasets = seed(pipeline)
     args = (identifier, "development", "attention", "dev")
