@@ -39,6 +39,8 @@ class DashboardPipeline(Protocol):
 
     def trend_insights(self) -> Any: ...
 
+    def product_matcher(self) -> Any: ...
+
     def products(
         self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
     ) -> list[Row]: ...
@@ -775,6 +777,10 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
                 render_trends(pipeline.trend_insights(), products, as_of, synthetic)
         else:
             _catalog(pipeline, products, as_of, synthetic)
+            if st.checkbox("Explain multilingual product matches", value=False):
+                from sm_trending_products.matching_dashboard import render_matching
+
+                render_matching(pipeline.product_matcher(), products, as_of, synthetic)
     elif view == "Launch preparation":
         from sm_trending_products.commerce_dashboard import render_launches
 
