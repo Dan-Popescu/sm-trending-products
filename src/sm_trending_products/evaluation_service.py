@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Sequence
+from copy import deepcopy
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -35,7 +36,7 @@ from .evaluation import (
     summarize_backtest,
 )
 from .history import History
-from .identity import Identity
+from .identity import LINK_FIELDS, Identity
 from .provenance import Provenance
 
 
@@ -44,8 +45,12 @@ class EvaluationService:
         self.catalog, self.history, self.identity = catalog, history, identity
         self.provenance = Provenance(catalog, history)
 
-    def _evaluation_inputs(self, as_of: datetime, synthetic: bool) -> dict[str, Any]:
+    def _evaluation_inputs(
+        self, as_of: datetime, synthetic: bool, product_ids: Sequence[str] | None = None
+    ) -> dict[str, Any]:
         """Read compact catalog histories, never the entire observation lake."""
+        if product_ids is not None:
+            return self._scoped_inputs(as_of, synthetic, product_ids)
         caps = self.catalog.all(
             "SELECT source,account_id,capability,state,available_at,details "
             "FROM source_capabilities WHERE available_at<=%s ORDER BY available_at,id",
@@ -71,6 +76,68 @@ class EvaluationService:
                 for item in self.identity.family_history(as_of, synthetic=synthetic)
             ],
             "capabilities": [Capability.model_validate(item) for item in caps],
+        }
+
+    def _scoped_inputs(
+        self, as_of: datetime, synthetic: bool, product_ids: Sequence[str]
+    ) -> dict[str, Any]:
+        """Bound research metadata while retaining all competing entity owners."""
+        products = self.catalog.all(
+            "SELECT * FROM products WHERE product_id=ANY(%s) AND synthetic=%s "
+            "AND created_at<=%s ORDER BY product_id",
+            (list(product_ids), synthetic, as_of),
+        )
+        keys = self.catalog.all(
+            "SELECT DISTINCT entity_key FROM product_links WHERE product_id=ANY(%s) "
+            "AND available_at<=%s ORDER BY entity_key LIMIT 10001",
+            (list(product_ids), as_of),
+        )
+        if len(keys) > 10000:
+            raise ValueError("Research entity budget exceeded")
+        link_fields = ",".join(f"l.{field}" for field in LINK_FIELDS.split(","))
+        links = self.catalog.all(
+            f"SELECT {link_fields} FROM product_links l JOIN products p USING(product_id) "
+            "WHERE l.entity_key=ANY(%s) AND p.synthetic=%s AND p.created_at<=%s "
+            "AND l.available_at<=%s ORDER BY l.available_at,l.id LIMIT 50001",
+            ([row["entity_key"] for row in keys], synthetic, as_of, as_of),
+        )
+        families = self.catalog.all(
+            "SELECT product_id,family_id,available_at FROM family_memberships "
+            "WHERE product_id=ANY(%s) "
+            "AND available_at<=%s ORDER BY available_at,id LIMIT 10001",
+            (list(product_ids), as_of),
+        )
+        caps = self.catalog.all(
+            "SELECT source,account_id,capability,state,available_at,details "
+            "FROM source_capabilities WHERE available_at<=%s ORDER BY available_at,id "
+            "LIMIT 10001",
+            (as_of,),
+        )
+        if len(links) > 50000 or len(families) > 10000 or len(caps) > 10000:
+            raise ValueError("Research metadata budget exceeded")
+        sources = {row["entity_key"].split(":", 1)[0] for row in keys}
+        unscoped = sorted(sources.difference(row["source"] for row in caps))
+        if unscoped:
+            # A future declaration establishes control, never an earlier grant.
+            # Preserve one actual declaration for each otherwise unseen source.
+            caps.extend(
+                self.catalog.all(
+                    "SELECT c.* FROM unnest(%s::text[]) AS selected(source) "
+                    "CROSS JOIN LATERAL (SELECT source,account_id,capability,state,"
+                    "available_at,details FROM source_capabilities WHERE source=selected.source "
+                    "ORDER BY account_id,capability,available_at DESC,id DESC LIMIT 1) c",
+                    (unscoped,),
+                )
+            )
+        if len(caps) > 10000:
+            raise ValueError("Research capability budget exceeded")
+        return {
+            "products": [Product.model_validate(row) for row in products],
+            "links": [ProductLink.model_validate(row) for row in links],
+            "families": [FamilyMembership.model_validate(row) for row in families],
+            "capabilities": [Capability.model_validate(row) for row in caps],
+            "declared_product_ids": tuple(product_ids),
+            "controlled_sources": sorted(sources.intersection(row["source"] for row in caps)),
         }
 
     def _read_scope(
@@ -110,6 +177,8 @@ class EvaluationService:
         synthetic: bool,
         config: EvaluationConfig,
         policy: AssessmentPolicy | None = None,
+        *,
+        selection_audit: bool = False,
     ) -> tuple[dict[str, Any], set[str]]:
         policy = policy or AssessmentPolicy()
         cutoff = utc(as_of)
@@ -167,6 +236,22 @@ class EvaluationService:
         snapshot["coverage"]["observations"] = sum(
             row["coverage"]["observations"] for row in snapshot["universe"]
         )
+        if selection_audit:
+            from .research_validation._audit import selection_funnel
+
+            snapshot["selection_audit"] = selection_funnel(
+                self.catalog,
+                metadata["products"],
+                links,
+                normalized,
+                counts,
+                snapshot,
+                config,
+                cutoff,
+                synthetic,
+                declared_product_ids=metadata.get("declared_product_ids"),
+            )
+            snapshot["controlled_sources"] = metadata.get("controlled_sources", [])
         snapshot.pop("snapshot_id")
         snapshot["snapshot_id"] = digest(snapshot)
         return snapshot, set()
@@ -251,13 +336,73 @@ class EvaluationService:
         *,
         policy: AssessmentPolicy | None = None,
     ) -> dict:
+        return self._backtest(decision_times, as_of, synthetic, config, policy=policy)
+
+    def scoped_backtest(
+        self,
+        decision_times: list[datetime],
+        as_of: datetime,
+        synthetic: bool = False,
+        config: dict | None = None,
+        *,
+        policy: AssessmentPolicy | None = None,
+        product_ids: Sequence[str],
+        measurement_sample_size: int = 0,
+        seed: int = 42,
+    ) -> dict:
+        """Execute the ordinary kernel on an explicit bounded research population.
+
+        Scope alone does not establish preregistration: ResearchValidation owns
+        protocol locks. Existing unrestricted backtests keep their exact contract.
+        """
+        if (
+            type(synthetic) is not bool
+            or isinstance(product_ids, str | bytes)
+            or not 1 <= len(product_ids) <= 500
+            or len(set(product_ids)) != len(product_ids)
+            or any(not isinstance(value, str) or not value.strip() for value in product_ids)
+            or not 1 <= len(decision_times) <= 64
+            or type(measurement_sample_size) is not int
+            or not 0 <= measurement_sample_size <= 25
+            or type(seed) is not int
+        ):
+            raise ValueError("Invalid bounded research scope")
+        configuration = EvaluationConfig.for_creation(config)
+        if measurement_sample_size and configuration.target != "attention":
+            raise ValueError("Measurement-only sampling requires the attention target")
+        policy = AssessmentPolicy.model_validate(
+            (policy or AssessmentPolicy()).model_dump(mode="json")
+        )
+        return self._backtest(
+            decision_times,
+            as_of,
+            synthetic,
+            config,
+            policy=policy,
+            product_ids=tuple(product_ids),
+            measurement_sample_size=measurement_sample_size,
+            seed=seed,
+        )
+
+    def _backtest(
+        self,
+        decision_times: list[datetime],
+        as_of: datetime,
+        synthetic: bool,
+        config: dict | None,
+        *,
+        policy: AssessmentPolicy | None,
+        product_ids: Sequence[str] | None = None,
+        measurement_sample_size: int = 0,
+        seed: int = 42,
+    ) -> dict:
         cutoff = utc(as_of)
         configuration = EvaluationConfig.for_creation(config)
         configuration.validate_creation()
         dates = sorted({utc(timestamp) for timestamp in decision_times})
         if any(timestamp > cutoff for timestamp in dates):
             raise ValueError("A backtest cannot contain a future decision")
-        metadata = self._evaluation_inputs(cutoff, synthetic)
+        metadata = self._evaluation_inputs(cutoff, synthetic, product_ids)
         snapshots, reports = [], []
         snapshot_headers: dict[str, Any] = {}
         report_headers: dict[str, Any] = {}
@@ -268,7 +413,22 @@ class EvaluationService:
                 synthetic,
                 configuration,
                 policy=policy,
+                selection_audit=product_ids is not None,
             )
+            if product_ids is not None and measurement_sample_size:
+                from .research_validation._audit import measurement_snapshot
+
+                sample = measurement_snapshot(snapshot, metadata, measurement_sample_size, seed)
+                sampled_report, _ = self._maturation_payload(sample, cutoff, dependencies)
+                # This additive audit never changes policy/baseline selections.
+                snapshot = deepcopy(snapshot)
+                snapshot["selection_audit"]["measurement_sample"] = {
+                    "product_ids": sample["selected"],
+                    "measurement_only": True,
+                    "report": self._report_header(sampled_report, synthetic),
+                }
+                snapshot.pop("snapshot_id")
+                snapshot["snapshot_id"] = digest(snapshot)
             report, outcome_dependencies = self._maturation_payload(snapshot, cutoff, dependencies)
             # Aggregation needs only selection/family/status fields. Full product
             # universes and outcomes are immutable paged records, never retained
