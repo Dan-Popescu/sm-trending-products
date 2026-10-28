@@ -1,0 +1,137 @@
+# Private product decision brief
+
+`DecisionBrief(catalog, history, provenance).describe(product_id, target_country,
+as_of, synthetic=False, ...)` builds one report on request. It does not save a
+second analytical history or launch a commercial action. CLI and the private
+dashboard call this same interface.
+
+The target country is explicit and does not establish the audience's location or
+local demand. A product with a different declared target market keeps that fact
+visible. The brief never relabels its attention evidence as country-specific
+views. Real and synthetic products cannot cross workspaces. Products, source
+evidence, ownership, category revisions and supplied texts must be available at
+the chosen cutoff. Retirement overrides historical access.
+
+## Sections and exact selections
+
+`sections` contains `trends`, `competition`, `comparables`, `themes`, `variants`
+and `economics`. Each has `status`, a safe `reason` and its authoritative module
+`report`, or null when unavailable. An uninitialized module is explicitly
+`not_initialized`; a missing selection is `not_requested`. Reading a brief never
+initializes optional SQL or replaces an unavailable result with an empty success.
+
+- Trends use the opt-in disjoint-period diagnostics for 24, 72 and 168 hours.
+  Their complete original report, identity version, observation references,
+  measured periods, missingness and contributor-removal checks remain inspectable.
+- Competition uses one selected product's bounded 30-day history and the explicit
+  target-country filter. `source` and `query_scope` can narrow it further. A target
+  filter does not supply missing observed geography, distribution or coverage.
+  Incomparable scope remains unavailable inside the report.
+- Comparables require `taxonomy_id`; `category_id` optionally narrows the panel.
+  The compact panel is computed once. The brief includes its selected-product
+  row, taxonomy revision, panel coverage and original `panel_report_id`, plus
+  a new report ID for that projection. A missing selected row stays explicit.
+  Scores retain the underlying assessment's limited comparison scope.
+- Themes use eligible supplied text and a reviewed `content_taxonomy`, defaulting
+  to the versioned EN/FR taxonomy. Review after the cutoff makes that taxonomy
+  unavailable. Quotations retain offsets and provenance; seller persuasion is
+  not measured buyer intent. Partial scans and unsupported languages stay gaps.
+- Variants require an explicit `matching_profile`. The bounded matching report
+  separates linked and unlinked candidates. A conflicting candidate is a review
+  concern, not proof that the canonical product has that variant or is unsuitable.
+  Matching uses eligible current metadata rather than reconstructed old metadata.
+- Economics require all of `dossier_id`, `expected_revision` and
+  `scenario_profile`. The selected dossier must belong to this exact product,
+  workspace and target country. A stale revision fails; a current revision saved
+  after the brief cutoff is unavailable. There is no search of the first dossier
+  page or implicit choice of supplier, country or cost profile. Exact source
+  facts, quote readiness, scenario/profile hash, decimal breakpoints and cash
+  assumptions remain in the report. Evaluation time is current, separately
+  visible from the evidence cutoff; an expired quote cannot regain readiness
+  through a historical brief.
+
+`selection` retains the complete supplied scenario, matching and content-taxonomy
+configurations and their hashes even when an optional report is unavailable.
+Distinct assumptions therefore cannot collapse to the same brief identity merely
+because commercial tables were not initialized. Configuration copies are bounded
+operator assumptions, not additional collected source history.
+
+## Navigation and useful next facts
+
+`support`, `contrary` and `missing` contain explicit codes and report references.
+`next_useful_facts` gives at most eight deduplicated dimension-level actions,
+ordered for reviewing commercial assumptions, identity, trend evidence,
+comparables, text, competition, purchases and audience geography. This fixed
+review order is transparent; it is not a learned value-of-information estimate.
+
+`status_policy.version="review-navigation-v1"` defines three navigation states:
+
+- `watch`: no positive lower-bound measured growth in the observed windows.
+- `investigate`: positive observed growth, without a currently ready selected
+  dossier whose complete supplied scenarios meet its declared profit target.
+- `ready_to_review`: both of those facts are present. This means an operator can
+  inspect a prepared case. Missing cash timing, absent audience data, concentration,
+  contrary evidence and commercial uncertainty still apply. It neither approves
+  a launch nor identifies a proven winner.
+
+All states retain null predictive probability, `launch_authorized=false`, and
+explicit missing real purchases/product-market-fit evidence. Defining a future
+commercial test is a recommendation to obtain evidence, not its execution.
+
+## Work and storage bounds
+
+Defaults are at most 50,000 history rows per component report, 1,000 compact
+cohort products, 100 supplied texts, 100 matching candidates and 20 matching
+results. Hard maxima are 100,000, 10,000 and 200 for the first three budgets.
+History's configured batch cap may lower the effective row admission. Trend
+diagnostics reuse one longest-history read; offer/advertising competition uses
+its own bounded selected-product read. No raw-history read runs once per peer.
+
+A namespace and retention read fence spans composition, so retirement cannot
+remove one component midway and leave its earlier quoted text in another.
+The existing default four-connection catalog pool accommodates the bounded
+module calls; the brief itself holds one connection during composition. Reads
+are sequential, without an additional background worker. No source payload or
+derived report is retained in the service or dashboard session. Every refresh
+rechecks guards. A saved exported JSON is a point-in-time artifact, not an access
+token: its references must pass current guards before retrieving source content.
+
+Native acceptance and source-withdrawal scenarios are in
+`tests/test_decision_brief.py`.
+
+## Operator entry points
+
+`sm-trends research --help` discovers the optional commands without opening a
+database or object store. Each command owns its configuration-free help and
+bounded input validation. For example:
+
+```bash
+sm-trends research brief --product-id LAMP --target-country FR
+sm-trends research brief --product-id LAMP --target-country FR \
+  --dossier-id LAMP-FR --expected-revision 3 --scenarios /private/scenarios.json
+sm-trends research validation --help
+sm-trends research cohorts --help
+sm-trends research economics --help
+sm-trends research competition --help
+sm-trends research content --help
+sm-trends research select-texts --help
+```
+
+Use `--synthetic` to select the isolated simulated workspace. A historical cutoff
+can be supplied with `--as-of`; it never restores withdrawn content. JSON files
+must be regular files containing objects no larger than 128 KiB. The dossier ID,
+expected revision and scenarios are supplied together. Category selection requires
+the taxonomy ID. Invalid arguments and configuration failures return safe JSON
+errors without repeating supplied secrets. Inspection neither initializes a module
+nor runs a source request.
+
+The private dashboard's **Decision research** view exposes the same modules. Select
+a report, provide its explicit inputs and click its action button. Navigation
+alone does not start analysis or initialize optional tables. The decision brief
+uses the explicit target country and optional exact dossier selection. Displayed
+reports are sanitized against current credentials and cleared on every new
+interaction; no source quotes or derived reports are kept in session state.
+
+`Pipeline` supplies lazy factories for these optional modules. No factory adds a
+permanent worker, source request or scheduled full-universe calculation. Cohort
+and economic CLI operations construct SQL-only services and do not require S3.

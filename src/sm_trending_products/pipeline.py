@@ -120,6 +120,41 @@ class Pipeline:
 
         return TrendInsights(self.catalog, self.history)
 
+    def research_validation(self):
+        from .research_validation import ResearchValidation
+
+        return ResearchValidation(self.catalog, self.history, self.identity)
+
+    def cohort_insights(self):
+        from .product_cohorts import CohortInsights
+
+        return CohortInsights(self.catalog)
+
+    def economic_insights(self):
+        from .commercial_sensitivity import EconomicInsights
+
+        return EconomicInsights(self.launch_service())
+
+    def competition_insights(self):
+        from .competition_insights import CompetitionInsights
+
+        return CompetitionInsights(self.catalog, self.history)
+
+    def content_insights(self):
+        from .content_insights import ContentInsights
+
+        return ContentInsights(self.catalog, self.provenance)
+
+    def text_selection(self):
+        from .text_selection import TextSelection
+
+        return TextSelection(self.catalog, self.provenance)
+
+    def decision_brief(self):
+        from .decision_brief import DecisionBrief
+
+        return DecisionBrief(self.catalog, self.history, self.provenance)
+
     def product_matcher(self):
         from .matching import ProductMatcher
 

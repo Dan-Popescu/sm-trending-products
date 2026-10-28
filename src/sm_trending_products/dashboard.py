@@ -1,7 +1,7 @@
 """Private operator review over published results and bounded evidence queries.
 
-The dashboard never collects from TikTok or runs analytical scans. Deployment binds
-it to loopback; reach it through an authenticated SSH tunnel or a private proxy.
+The dashboard reads published results and runs explicitly requested, bounded
+research. Deployment binds it to loopback; use an authenticated tunnel or proxy.
 """
 
 from __future__ import annotations
@@ -46,6 +46,8 @@ class DashboardPipeline(Protocol):
     def commerce_orders(self) -> Any: ...
 
     def commercial_learning(self) -> Any: ...
+
+    def decision_brief(self) -> Any: ...
 
     def products(
         self, synthetic: bool = False, *, limit: int = 200, offset: int = 0
@@ -739,6 +741,7 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
                 "Catalog",
                 "Launch preparation",
                 "Transcript insights",
+                "Decision research",
                 "Commerce operations",
                 "Collection plan",
                 "Datasets and evaluations",
@@ -766,7 +769,7 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
         st.success(notice)
     # Read results on every interaction, but only for the selected view. No result
     # cache can retain pre-mutation identity or source-capability state.
-    if view in {"Opportunities", "Catalog", "Transcript insights"}:
+    if view in {"Opportunities", "Catalog", "Transcript insights", "Decision research"}:
         product_page = st.number_input(
             "Product page", min_value=1, value=1, step=1, key="product_page"
         )
@@ -777,7 +780,11 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
             ),
             [],
         )
-        if view == "Transcript insights":
+        if view == "Decision research":
+            from sm_trending_products.research_dashboard import render_research
+
+            render_research(pipeline, products, as_of, synthetic)
+        elif view == "Transcript insights":
             from sm_trending_products.transcript_dashboard import render_transcripts
 
             render_transcripts(pipeline.transcript_insights(), products, synthetic)
