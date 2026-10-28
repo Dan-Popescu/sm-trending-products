@@ -22,6 +22,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--version", action="version", version="sm-trends 0.1.0")
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("commerce", help="Prepare private launch dossiers (commerce --help)")
+    commands.add_parser("trend-insights", help="Explain multi-day growth (trend-insights --help)")
 
     def command(name: str, help_text: str, *, synthetic: bool = False):
         child = commands.add_parser(name, help=help_text, description=help_text)
@@ -270,6 +271,10 @@ def read_json(path: Path | None, default=None):
 
 def main(argv: list[str] | None = None) -> int:
     effective = sys.argv[1:] if argv is None else argv
+    if effective and effective[0] == "trend-insights":
+        from .trend_cli import main as trend_main
+
+        return trend_main(effective[1:])
     if effective and effective[0] == "commerce":
         from .commerce_cli import main as commerce_main
 

@@ -13,9 +13,9 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal, DecimalException, InvalidOperation
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, SerializerFunctionWrapHandler, model_serializer, model_validator
 
 from .contracts import (
     AssessmentPolicy,
@@ -62,6 +62,9 @@ class EvaluationConfig(Contract):
     top_k: int = Field(default=10, ge=1, le=10000)
     horizon_days: tuple[int, ...] = (3, 7, 14)
     launch_delay_days: tuple[int, ...] = (2, 10)
+    launch_delay_hours: tuple[Annotated[int, Field(strict=True, ge=0, le=8760)], ...] | None = (
+        Field(default=None, min_length=1, max_length=24)
+    )
     market: str | None = None
     currency: str | None = None
     seed: int = 42
@@ -86,6 +89,15 @@ class EvaluationConfig(Contract):
             raise ValueError("Outcome horizons must be unique")
         if len(set(self.launch_delay_days)) != len(self.launch_delay_days):
             raise ValueError("Launch delays must be unique")
+        if self.launch_delay_hours is not None:
+            if "launch_delay_days" in self.model_fields_set:
+                raise ValueError("Choose launch_delay_hours or launch_delay_days, not both")
+            if (
+                not self.launch_delay_hours
+                or any(hour < 0 for hour in self.launch_delay_hours)
+                or len(set(self.launch_delay_hours)) != len(self.launch_delay_hours)
+            ):
+                raise ValueError("Hourly launch delays must be nonempty, nonnegative and unique")
         if not math.isfinite(self.threshold):
             raise ValueError("Outcome threshold must be finite")
         if self.target == "profit" and not self.currency:
@@ -94,6 +106,28 @@ class EvaluationConfig(Contract):
             if value is not None:
                 utc(value)
         return self
+
+    @model_serializer(mode="wrap")
+    def serialized_configuration(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        result = handler(self)
+        # The opt-in representation never adds a null field to legacy snapshots.
+        result.pop(
+            "launch_delay_hours" if self.launch_delay_hours is None else "launch_delay_days", None
+        )
+        return result
+
+    @property
+    def delay_field(self) -> str:
+        return "launch_delay_days" if self.launch_delay_hours is None else "launch_delay_hours"
+
+    @property
+    def launch_delays(self) -> tuple[int, ...]:
+        return (
+            self.launch_delay_days if self.launch_delay_hours is None else self.launch_delay_hours
+        )
+
+    def delay_duration(self, value: int) -> timedelta:
+        return timedelta(days=value) if self.launch_delay_hours is None else timedelta(hours=value)
 
     def validate_creation(self) -> None:
         """Require explicit new financial definitions without rejecting old snapshots."""
@@ -741,8 +775,8 @@ def mature_decision(
     measured: list[dict[str, dict[str, Any]]] = []
     for horizon in config.horizon_days:
         end = decision_time + timedelta(days=horizon)
-        for delay in config.launch_delay_days:
-            start = decision_time + timedelta(days=delay)
+        for delay in config.launch_delays:
+            start = decision_time + config.delay_duration(delay)
             state = (
                 "not_actionable"
                 if start >= end
@@ -757,7 +791,7 @@ def mature_decision(
             scenarios.append(
                 {
                     "horizon_days": horizon,
-                    "launch_delay_days": delay,
+                    config.delay_field: delay,
                     "window_start": start.isoformat(),
                     "window_end": end.isoformat(),
                     "status": state,
@@ -868,7 +902,7 @@ def mature_decision(
             "scenarios": [
                 {
                     "horizon_days": row["horizon_days"],
-                    "launch_delay_days": row["launch_delay_days"],
+                    config.delay_field: row[config.delay_field],
                     **row["methods"]["policy"]["lead_time"],
                 }
                 for row in scenarios
@@ -939,21 +973,28 @@ def summarize_backtest(
         for row in snapshot["universe"]
         if row["product_id"] in snapshot["selected"]
     ]
-    groups: dict[tuple[int, int, str], list[dict[str, Any]]] = defaultdict(list)
+    groups: dict[tuple[int, str, int, str], list[dict[str, Any]]] = defaultdict(list)
     for report in reports:
         for scenario in report["scenarios"]:
             for method, method_result in scenario["methods"].items():
-                groups[(scenario["horizon_days"], scenario["launch_delay_days"], method)].extend(
+                delay_field = (
+                    "launch_delay_hours"
+                    if "launch_delay_hours" in scenario
+                    else "launch_delay_days"
+                )
+                groups[
+                    (scenario["horizon_days"], delay_field, scenario[delay_field], method)
+                ].extend(
                     method_result["outcomes"],
                 )
     comparisons = [
         {
             "horizon_days": horizon,
-            "launch_delay_days": delay,
+            delay_field: delay,
             "method": method,
             **_summarize(outcomes),
         }
-        for (horizon, delay, method), outcomes in sorted(groups.items())
+        for (horizon, delay_field, delay, method), outcomes in sorted(groups.items())
     ]
     measured_financial_outcomes = (
         sum(
