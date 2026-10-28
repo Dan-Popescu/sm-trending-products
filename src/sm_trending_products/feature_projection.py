@@ -20,7 +20,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from psycopg.types.json import Jsonb
 
-from .analysis_batches import RowBudgetExceeded
+from .analysis_batches import RowBudgetExceeded, WindowMetadataBudget
 from .cache import (
     discard_retired_local,
     local_cache_descriptor,
@@ -427,70 +427,48 @@ class FeatureProjection:
         synthetic = scopes[0].product.synthetic
         if any(scope.product.synthetic != synthetic for scope in scopes):
             raise ValueError("Window partitions must share their namespace")
+        budget = WindowMetadataBudget(
+            history.settings.analysis_max_objects_per_batch,
+            history.settings.analysis_max_metadata_bytes_per_batch,
+        )
         owners: dict[str, str] = {}
         for scope in scopes:
+            budget.admit(0, len(canonical(scope.product.model_dump(mode="json")).encode()) + 512)
             for key in scope.entity_keys:
                 if key in owners:
                     raise ValueError("Window partitions require exclusive entity ownership")
+                budget.admit(0, len(key.encode()) + len(scope.product.product_id.encode()) + 512)
                 owners[key] = scope.product.product_id
         cutoff = utc(cutoff)
         since = cutoff - timedelta(days=policy.lookback_days)
         limit = history.settings.analysis_max_rows_per_batch
-        with self.catalog.transaction() as connection:
-            self.catalog.guard_retention(connection)
-            for namespace in {scope.product.synthetic for scope in scopes}:
-                self.catalog.guard_namespace(connection, namespace)
+        with self.catalog.window_snapshot(synthetic) as connection:
             frontiers = self._frontiers(connection, scopes)
-            manifests = list(
-                self.catalog.iter_manifests(
-                    synthetic=synthetic,
-                    as_of=cutoff,
-                    since=since,
-                    until=cutoff,
-                    entity_keys=set(owners),
-                )
+            current = self.catalog.select_window_objects(
+                connection, owners, cutoff, since, synthetic, budget
             )
-            requested = {
-                (manifest["dataset_id"], obj["key"])
-                for manifest in manifests
-                for obj in manifest["manifest"]["normalized"]
-            }
-            current = (
-                connection.execute(
-                    "SELECT object_id,dataset_id,object_key,descriptor FROM normalized_objects "
-                    "WHERE dataset_id=ANY(%s) AND object_key=ANY(%s)",
-                    (sorted({key[0] for key in requested}), sorted({key[1] for key in requested})),
-                ).fetchall()
-                if requested
-                else []
+            datasets: dict[str, dict[str, Any]] = {}
+            for selected_object in current:
+                dataset_id = selected_object["dataset_id"]
+                if dataset_id not in datasets:
+                    datasets[dataset_id] = {
+                        **selected_object["dataset"],
+                        "manifest": {"dataset_id": dataset_id, "normalized": []},
+                    }
+                datasets[dataset_id]["manifest"]["normalized"].append(selected_object["descriptor"])
+            manifests = list(datasets.values())
+            by_pair = {(row["dataset_id"], row["object_key"]): row for row in current}
+            records = self.catalog.select_window_state(
+                connection, [scope.product.product_id for scope in scopes], budget
             )
-            by_pair = {
-                (row["dataset_id"], row["object_key"]): row
-                for row in current
-                if (row["dataset_id"], row["object_key"]) in requested
-            }
-            records = connection.execute(
-                "SELECT w.* FROM feature_product_windows w JOIN derived_publications p "
-                "ON p.object_key=w.audit_root WHERE w.product_id=ANY(%s) AND w.state='ready' "
-                "AND p.state='committed' AND NOT EXISTS(SELECT 1 FROM retention_objects r "
-                "WHERE r.object_key=w.descriptor->>'key')",
-                ([scope.product.product_id for scope in scopes],),
-            ).fetchall()
             by_product = {record["product_id"]: record for record in records}
+            by_id = {row["object_id"]: row for row in current}
             prior_ids = sorted(
                 {identifier for record in records for identifier in record["covered_object_ids"]}
+                - by_id.keys()
             )
-            prior = (
-                connection.execute(
-                    "SELECT o.object_id,o.descriptor,d.state,d.compacted_into "
-                    "FROM normalized_objects o JOIN datasets d USING(dataset_id) "
-                    "WHERE o.object_id=ANY(%s)",
-                    (prior_ids,),
-                ).fetchall()
-                if prior_ids
-                else []
-            )
-            by_id = {row["object_id"]: row for row in prior}
+            prior = self.catalog.select_prior_window_objects(connection, prior_ids, budget)
+            by_id.update((row["object_id"], row) for row in prior)
             # Object metadata is partitioned once; no payload is decoded here.
             pairs_by_product: dict[str, set[tuple[str, str]]] = {
                 scope.product.product_id: set() for scope in scopes
@@ -704,6 +682,17 @@ class FeatureProjection:
         """Stage ownership before local admission; all cached inputs require an audit root."""
         cutoff = utc(cutoff)
         if not window.object_ids or not window.frontier.fully_visible(cutoff):
+            return False
+        if len(window.object_ids) > history.settings.analysis_max_objects_per_batch:
+            return False
+        metadata_bytes = (
+            len(canonical(window.object_ids).encode())
+            + 144 * len(window.object_ids)
+            + len(audit_root.encode())
+            + len(scope.product.product_id.encode())
+            + 1024
+        )
+        if metadata_bytes > history.settings.analysis_max_metadata_bytes_per_batch:
             return False
         body = _encode_window(
             window.observations, min(MAX_WINDOW_BYTES, history.settings.cache_max_bytes)

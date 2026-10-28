@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass
 
 from .contracts import Product, ProductLink
 
@@ -14,6 +15,37 @@ class RowBudgetExceeded(ValueError):
     def __init__(self, limit: int):
         self.limit = limit
         super().__init__(f"Analysis partition exceeds row budget ({limit}); narrow the input range")
+
+
+class MetadataBudgetExceeded(ValueError):
+    """Required Evidence metadata cannot fit an admitted product partition."""
+
+    def __init__(self, resource: str, limit: int):
+        self.resource, self.limit = resource, limit
+        super().__init__(f"Analysis partition exceeds metadata {resource} budget ({limit})")
+
+
+@dataclass
+class WindowMetadataBudget:
+    """Admit encoded Evidence metadata plus conservative working-set overhead."""
+
+    max_objects: int
+    max_bytes: int
+    objects: int = 0
+    bytes: int = 0
+
+    def admit(self, objects: int, encoded_bytes: int, *, optional: bool = False) -> bool:
+        if self.objects + objects > self.max_objects:
+            if optional:
+                return False
+            raise MetadataBudgetExceeded("object", self.max_objects)
+        if self.bytes + encoded_bytes > self.max_bytes:
+            if optional:
+                return False
+            raise MetadataBudgetExceeded("byte", self.max_bytes)
+        self.objects += objects
+        self.bytes += encoded_bytes
+        return True
 
 
 def bounded_product_batches[T](

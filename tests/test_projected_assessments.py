@@ -8,11 +8,11 @@ from analytical_results import assessment_key, snapshot_semantics
 from test_feature_projection import video
 from test_feature_windows import count_source_pins, rolling_case
 
-import sm_trending_products.assessment_service as service_module
+import sm_trending_products.evidence_windows as service_module
 from sm_trending_products.analysis_batches import RowBudgetExceeded
 from sm_trending_products.analytics import assess
 from sm_trending_products.cache import _Cache
-from sm_trending_products.contracts import AssessmentPolicy, Capability, now
+from sm_trending_products.contracts import AssessmentPolicy, Capability, Product, ProductLink, now
 from sm_trending_products.evaluation import EvaluationConfig, freeze_decision
 from sm_trending_products.maintenance import Maintenance
 from sm_trending_products.pipeline import Pipeline
@@ -197,10 +197,8 @@ def test_one_hundred_products_share_cold_evicted_and_new_source_file_parses(pipe
     updated = pipeline.assess(later, True)
     delta_seconds = perf_counter() - started
     assert len(pins) == 1
-    products = [
-        service_module.Product.model_validate(row) for row in pipeline._all_products(True, later)
-    ]
-    links = [service_module.ProductLink.model_validate(row) for row in pipeline.links(later, True)]
+    products = [Product.model_validate(row) for row in pipeline._all_products(True, later)]
+    links = [ProductLink.model_validate(row) for row in pipeline.links(later, True)]
     assert snapshot_semantics(pipeline, {"rows": updated["rows"]})["rows"] == assess(
         observations, products, links, later, True
     )

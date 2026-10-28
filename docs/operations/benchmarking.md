@@ -43,6 +43,27 @@ Move independent collectors or analytical containers to additional hosts when me
 
 No numerical operating envelope or recurring cost is claimed until the corresponding benchmark has run on the actual target configuration.
 
+## Assessment window admission
+
+Published assessments and frozen decisions use `ANALYSIS_PRODUCT_BATCH_SIZE`
+(default 100), `ANALYSIS_MAX_ROWS_PER_BATCH` (1,000,000),
+`ANALYSIS_MAX_OBJECTS_PER_BATCH` (10,000) and
+`ANALYSIS_MAX_METADATA_BYTES_PER_BATCH` (16,777,216). Compose forwards these settings
+to application services. Required source metadata is admitted before raw-window
+payload reads; the byte budget includes encoded metadata and conservative
+representation charges, not only descriptor JSON. Oversized optional local state
+declines reuse. Required overflow splits the partition; an oversized product alone
+fails explicitly instead of truncating history or publishing a partial assessment.
+
+Use measured product skew, object counts, descriptor sizes and cache behavior when
+tuning. Compaction or a narrower analytical scope may be preferable to increasing
+limits. Splitting can repeat shared reads across partitions. These limits do not
+cap PostgreSQL planning/native memory, total process RSS, the global product cohort
+or every History consumer. Existing SQL statement/lock timeouts still apply.
+See [ADR0019](../adr/0019-bounded-evidence-window-preparation.md) for snapshot and
+ownership tradeoffs and the [follow-up assessment](../architecture/analytical-follow-up-opportunities.md)
+for proposed run diagnostics and the conditions for a future durable run revision.
+
 ## Controlled parallel workload without source credentials
 
 Install the development dependencies and build the collector first. With an
