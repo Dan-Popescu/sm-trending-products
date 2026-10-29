@@ -47,6 +47,13 @@ def _status(text: str, start: int, end: int) -> str:
 
 
 def classify(text: str, language: str | None, taxonomy: ContentTaxonomy) -> dict:
+    return _classify_with_fold(text, language, taxonomy)[0]
+
+
+def _classify_with_fold(
+    text: str, language: str | None, taxonomy: ContentTaxonomy
+) -> tuple[dict, str | None]:
+    """Share the full supported-text fold with script hashing, without retaining offsets."""
     language = (language or "unknown").split("-", 1)[0]
     coverage = {
         rule.theme_id: "not_scanned"
@@ -55,12 +62,15 @@ def classify(text: str, language: str | None, taxonomy: ContentTaxonomy) -> dict
         for rule in taxonomy.themes
     }
     if all(value == "unsupported_language" for value in coverage.values()):
-        return {
-            "status": "unsupported_language",
-            "mentions": [],
-            "truncated": False,
-            "theme_coverage": coverage,
-        }
+        return (
+            {
+                "status": "unsupported_language",
+                "mentions": [],
+                "truncated": False,
+                "theme_coverage": coverage,
+            },
+            None,
+        )
     folded, offsets = _fold_with_offsets(text)
     mentions: list[dict] = []
     for rule in taxonomy.themes:
@@ -74,12 +84,15 @@ def classify(text: str, language: str | None, taxonomy: ContentTaxonomy) -> dict
             for match in re.finditer(pattern, folded):
                 if len(mentions) == MAX_MENTIONS_PER_TEXT:
                     coverage[rule.theme_id] = "partial"
-                    return {
-                        "status": "mentions",
-                        "mentions": mentions,
-                        "truncated": True,
-                        "theme_coverage": coverage,
-                    }
+                    return (
+                        {
+                            "status": "mentions",
+                            "mentions": mentions,
+                            "truncated": True,
+                            "theme_coverage": coverage,
+                        },
+                        folded,
+                    )
                 start, end = offsets[match.start()], offsets[match.end() - 1] + 1
                 mentions.append(
                     {
@@ -97,12 +110,15 @@ def classify(text: str, language: str | None, taxonomy: ContentTaxonomy) -> dict
     mentions = list(
         {(m["theme_id"], m["category"], m["start"], m["end"]): m for m in mentions}.values()
     )
-    return {
-        "status": "mentions" if mentions else "no_mention",
-        "mentions": mentions,
-        "truncated": False,
-        "theme_coverage": coverage,
-    }
+    return (
+        {
+            "status": "mentions" if mentions else "no_mention",
+            "mentions": mentions,
+            "truncated": False,
+            "theme_coverage": coverage,
+        },
+        folded,
+    )
 
 
 class ContentInsights:
@@ -149,7 +165,7 @@ class ContentInsights:
                 "context_reference": context.get("reference"),
                 "context_known_at": context.get("known_at"),
             }
-            result = classify(item["text"], item["language"], taxonomy)
+            result, folded = _classify_with_fold(item["text"], item["language"], taxonomy)
             record = (
                 {
                     key: item[key]
@@ -166,7 +182,8 @@ class ContentInsights:
                 | result
             )
             texts.append(record)
-            folded = _fold_with_offsets(item["text"])[0]
+            if folded is None:  # Unsupported classification did not need a text scan.
+                folded = _fold_with_offsets(item["text"])[0]
             script_key = hashlib.sha256(" ".join(re.findall(r"\w+", folded)).encode()).hexdigest()
             scripts[script_key].append(item["content_key"])
             for mention in result["mentions"]:
