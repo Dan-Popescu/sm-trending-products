@@ -198,7 +198,7 @@ class ContentProgression:
         # can depend on an older dataset absent from the measured-video refs.
         # Acquire this only after hydration, and reuse it for the metric query.
         with self.catalog.evidence_transaction(synthetic) as connection:
-            fresh = self.texts.eligible_texts(
+            fresh = self.texts.eligible_text_ids(
                 product_id, synthetic=synthetic, as_of=cutoff, limit=max_texts
             )
             if fresh["next_cursor"] or not {t["transcript_id"] for t in texts}.issubset(

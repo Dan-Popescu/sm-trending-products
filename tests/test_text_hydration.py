@@ -136,6 +136,42 @@ def test_hydrated_pages_match_legacy_context_selection_and_unavailable_scan_budg
     assert reviewed["context"]["creator_id"] == "reviewed-creator"
 
 
+def test_eligibility_only_pages_preserve_row_cursor_denials_without_analysis_or_payload(
+    pipeline, monkeypatch
+):
+    service, value = selected(pipeline)
+    for index in range(3):
+        import_selected(service, value.model_copy(update={"text": f"Text {index}"}))
+    _, withdrawn = selected(pipeline, entity="withdrawn")
+    retired = import_selected(service, withdrawn)
+    pipeline.catalog.invalidate_dataset(withdrawn.dataset_id, "source_removed")
+    pipeline.catalog.resume_invalidations(max_batches=100, max_seconds=10, synthetic=True)
+    cutoff, cursor = now(), None
+    scanned, unavailable = 0, []
+
+    def no_payload(*args, **kwargs):
+        raise AssertionError("Eligibility does not hydrate transcripts")
+
+    monkeypatch.setattr(pipeline.provenance, "selected_records", no_payload)
+    while True:
+        inputs = {"synthetic": True, "as_of": cutoff, "limit": 2, "after": cursor}
+        expected = service.eligible_texts("p", **inputs)
+        with count_reads(monkeypatch, pipeline) as work:
+            actual = service.eligible_text_ids("p", **inputs)
+        assert work["analysis_sql"] == 0
+        assert actual == expected | {
+            "items": [{"transcript_id": item["transcript_id"]} for item in expected["items"]]
+        }
+        scanned += actual["scanned"]
+        unavailable.extend(actual["unavailable"])
+        cursor = actual["next_cursor"]
+        if cursor is None:
+            break
+    assert scanned == 4
+    assert unavailable == [{"transcript_id": retired, "reason": "enrichment_source_unavailable"}]
+    assert pipeline.catalog.all("SELECT * FROM enrichment_daily_budgets") == []
+
+
 def test_hydration_excludes_future_text_context_and_wrong_workspace(pipeline):
     service, value = selected(pipeline)
     cutoff = now()
