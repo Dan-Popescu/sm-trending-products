@@ -156,6 +156,11 @@ class Pipeline:
 
         return DecisionBrief(self.catalog, self.history, self.provenance)
 
+    def decision_changes(self):
+        from .decision_changes import DecisionChanges
+
+        return DecisionChanges(self.catalog, self.history, self.provenance)
+
     def product_matcher(self):
         from .matching import ProductMatcher
 
