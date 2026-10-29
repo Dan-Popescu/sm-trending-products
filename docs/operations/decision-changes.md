@@ -72,6 +72,12 @@ comparison. Ratios are copied from the kernel, never calculated from changed
 report hashes or aggregate-window subtraction. Truncated baseline references
 cannot prove comparability. Newly observed videos stay distinct from continuing
 growth; source publication dates never establish earlier system availability.
+Evidence-flag additions and removals retain their window context: resolving a
+24-hour coverage gap is visible even while the same gap code remains for 72 and
+168 hours. Changed counts and report references alone do not replace that scoped
+flag. When a pace comparison is unavailable, its explanation uses the window
+matching the selected cutoff separation; a chronology explanation is used only
+when no requested kernel window matches.
 
 Economic facts and assumption-profile changes remain separate. Current quote
 readiness includes its actual evaluation time and is never reconstructed at the

@@ -10,7 +10,7 @@ from test_evaluation_integration import record
 from sm_trending_products.catalog import InvalidationPending
 from sm_trending_products.content_insights import DEFAULT_TAXONOMY
 from sm_trending_products.content_progression import ContentProgression
-from sm_trending_products.contracts import now
+from sm_trending_products.contracts import digest, now
 from sm_trending_products.enrichment import TranscriptContext, TranscriptInput, TranscriptInsights
 from sm_trending_products.trend_insights import TrendInsights
 
@@ -27,6 +27,8 @@ def seed(
     early=True,
     jitter=False,
     distribution="public",
+    roles=None,
+    contexts=None,
 ):
     service = TranscriptInsights(pipeline.catalog, pipeline.provenance)
     service.initialize()
@@ -43,6 +45,8 @@ def seed(
             row["attributes"] = {"distribution_context": distribution}
             if creators:
                 row["attributes"]["creator_id"] = f"c{index}"
+            if roles is not None:
+                row["attributes"]["creator_role"] = roles[index]
             rows.append(row)
         dataset = pipeline.import_records(rows, synthetic=True)[0]
         pipeline.review_link("patterns", f"fixture_import:video:{index}")
@@ -56,7 +60,9 @@ def seed(
             source_kind=kinds[index] if kinds else "human_transcript",
             language=languages[index] if languages else "en",
             permission_reference="synthetic:authorized",
-            context=None
+            context=contexts[index]
+            if contexts is not None
+            else None
             if early
             else TranscriptContext(reference="later-import", known_at=base + timedelta(hours=13)),
         )
@@ -76,6 +82,131 @@ def describe(pipeline, cutoff, **kwargs):
 
 def theme(report, theme_id="time"):
     return next(item for item in report["themes"] if item["theme_id"] == theme_id)
+
+
+def role_contexts(role):
+    return [
+        TranscriptContext(
+            reference=f"reviewed-creator-{index}",
+            known_at=now(),
+            creator_id=f"c{index}",
+            creator_role=role,
+        )
+        for index in range(4)
+    ]
+
+
+def assert_complete_role_texts(report, values):
+    assert report["version"] == "quoted-content-progression-v1"
+    assert report["distinct_text_count"] == len(report["texts"]) == 4
+    for text in report["texts"]:
+        original = next(value.text for value in values if value.entity_key == text["entity_key"])
+        assert all(m["quote"] == original[m["start"] : m["end"]] for m in text["mentions"])
+    assert report["report_id"] == digest(
+        {key: value for key, value in report.items() if key != "report_id"}
+    )
+
+
+def test_unknown_attested_role_does_not_pool_known_sellers_with_buyers(pipeline):
+    _, values, _, cutoff = seed(
+        pipeline, roles=["seller", "seller", "buyer", "buyer"], contexts=role_contexts("unknown")
+    )
+    result = describe(pipeline, cutoff)
+    assert_complete_role_texts(result, values)
+    strata = {group["creator_role"]: group for group in theme(result)["strata"]}
+    assert set(strata) == {"seller", "buyer"}
+    assert result["comparison_status"] == "unavailable" and result["eligible_video_count"] == 4
+    assert strata["seller"]["present"]["video_count"] == 2
+    assert strata["seller"]["absent"]["video_count"] == 0
+    assert strata["seller"]["present"]["observed_growth_lower"] == 36
+    assert strata["buyer"]["present"]["video_count"] == 0
+    assert strata["buyer"]["absent"]["video_count"] == 2
+    assert strata["buyer"]["absent"]["observed_growth_lower"] == 84
+    assert all(
+        group["status"] == "unavailable" and group["difference_in_mean_rate_lower"] is None
+        for group in strata.values()
+    )
+    assert {outcome["creator_role"] for outcome in result["outcomes"]} == {"seller", "buyer"}
+    assert describe(pipeline, cutoff)["report_id"] == result["report_id"]
+
+
+@pytest.mark.parametrize(
+    "video_role,text_role,expected",
+    [
+        ("seller", "unknown", "seller"),
+        ("seller", "seller", "seller"),
+        ("unknown", "buyer", "buyer"),
+        ("unknown", "unknown", "unknown"),
+    ],
+)
+def test_compatible_known_and_unknown_roles_keep_measured_facts(
+    pipeline, video_role, text_role, expected
+):
+    _, values, _, cutoff = seed(pipeline, roles=[video_role] * 4, contexts=role_contexts(text_role))
+    result = describe(pipeline, cutoff)
+    assert_complete_role_texts(result, values)
+    assert result["exclusion_counts"] == {}
+    assert {outcome["creator_role"] for outcome in result["outcomes"]} == {expected}
+    group = theme(result)["strata"][0]
+    assert group["creator_role"] == expected and group["status"] == "observed_association"
+    assert group["present"]["observed_growth_lower"] == 36
+    assert group["absent"]["observed_growth_lower"] == 84
+    assert group["difference_in_mean_growth_lower"] == -24
+
+
+def test_conflicting_known_roles_are_explicit_exclusions_without_losing_quotes(pipeline):
+    _, values, _, cutoff = seed(pipeline, roles=["seller"] * 4, contexts=role_contexts("buyer"))
+    result = describe(pipeline, cutoff)
+    assert_complete_role_texts(result, values)
+    assert result["eligible_video_count"] == 0 and result["outcomes"] == []
+    assert result["comparison_status"] == "unavailable"
+    assert result["exclusion_counts"] == {"conflicting_creator_role": 4}
+    assert all(
+        item["reason"] == "conflicting_creator_role"
+        and item["video_creator_role"] == "seller"
+        and item["attested_creator_role"] == "buyer"
+        for item in result["exclusions"]
+    )
+    assert {item["transcript_id"] for item in result["exclusions"]} == {
+        text["transcript_id"] for text in result["texts"]
+    }
+
+
+def test_role_context_revision_changes_report_identity_without_changing_default_trend(pipeline):
+    service, values, _, cutoff = seed(
+        pipeline, roles=["seller"] * 4, contexts=role_contexts("unknown")
+    )
+    trend = TrendInsights(pipeline.catalog, pipeline.history).describe("patterns", cutoff, True)
+    before = describe(pipeline, cutoff)
+    revised = values[0].model_copy(
+        update={
+            "context": TranscriptContext(
+                reference="corrected-creator-role",
+                known_at=cutoff,
+                creator_id="c0",
+                creator_role="buyer",
+            )
+        }
+    )
+    imported = service.import_transcript(revised, as_of=cutoff)
+    result = describe(pipeline, cutoff)
+    assert_complete_role_texts(result, values)
+    assert result["report_id"] != before["report_id"]
+    assert result["eligible_video_count"] == 3
+    assert result["exclusion_counts"] == {"conflicting_creator_role": 1}
+    text = next(text for text in result["texts"] if text["entity_key"] == values[0].entity_key)
+    previous = next(text for text in before["texts"] if text["entity_key"] == values[0].entity_key)
+    assert text["transcript_id"] == imported["transcript_id"] != previous["transcript_id"]
+    assert text["content_key"] == previous["content_key"] and text["creator_role"] == "buyer"
+    assert (
+        service.import_transcript(revised, as_of=cutoff)["transcript_id"]
+        == imported["transcript_id"]
+    )
+    assert describe(pipeline, cutoff)["report_id"] == result["report_id"]
+    assert (
+        TrendInsights(pipeline.catalog, pipeline.history).describe("patterns", cutoff, True)
+        == trend
+    )
 
 
 def test_comparable_groups_use_complete_kernel_population_once_and_keep_all_themes(
