@@ -15,6 +15,7 @@ from typing import Any
 
 from .analytics import _counter_windows, _CounterWindow
 from .contracts import Observation, utc
+from .creator_identity import CreatorIdentity, creator_identity
 
 PREVIEW_LIMIT = 200
 Context = tuple[str, str, str]
@@ -29,7 +30,7 @@ class _Measure:
     references: set[str] = field(default_factory=set)
     signatures: set[tuple[str, str, str]] = field(default_factory=set)
     contexts: set[Context] = field(default_factory=set)
-    creators: set[str | None] = field(default_factory=set)
+    creators: set[CreatorIdentity | None] = field(default_factory=set)
     creatives: set[str | None] = field(default_factory=set)
 
     @property
@@ -66,14 +67,6 @@ def _context(row: Observation) -> Context:
         else "unknown_distribution"
     )
     return row.source, row.entity_type, distribution
-
-
-def _creator(row: Observation) -> str | None:
-    creator = _text(row.attributes.get("creator_id"))
-    if creator:
-        return f"{row.source}:creator:{creator}"
-    account = _text(row.account_id)
-    return f"{row.source}:account:{account}" if account else None
 
 
 def _period(
@@ -118,7 +111,7 @@ def _period(
                 target.references.update((before.observation_id, after.observation_id))
                 target.signatures.add((row["counter_scope"], row["counter_period"], row["unit"]))
                 target.contexts.add(context)
-                target.creators.update((_creator(before), _creator(after)))
+                target.creators.update((creator_identity(before), creator_identity(after)))
                 target.creatives.update(
                     (
                         _text(before.attributes.get("creative_fingerprint")),
@@ -208,9 +201,16 @@ def _comparison(
     }
 
 
-def _stable_identity(measure: _Measure, attribute: str) -> str | None:
+def _stable_identity(measure: _Measure, attribute: str) -> CreatorIdentity | str | None:
     values = getattr(measure, attribute)
     return next(iter(values)) if len(values) == 1 and None not in values else None
+
+
+def _identity_label(identity: CreatorIdentity | str) -> str:
+    if isinstance(identity, str):
+        return identity
+    # Retain ordinary public labels while making embedded delimiters unambiguous.
+    return ":".join(part.replace("%", "%25").replace(":", "%3A") for part in identity)
 
 
 def _growth_share(
@@ -232,7 +232,7 @@ def _growth_share(
 def _identity_report(
     previous: dict[str, _Measure], current: dict[str, _Measure], attribute: str
 ) -> dict[str, Any]:
-    groups: dict[str, set[str]] = defaultdict(set)
+    groups: dict[CreatorIdentity | str, set[str]] = defaultdict(set)
     unknown: set[str] = set()
     for key, measure in current.items():
         identity = _stable_identity(measure, attribute)
@@ -242,7 +242,10 @@ def _identity_report(
             groups[identity].add(key)
     ordered = sorted(
         groups,
-        key=lambda identity: (-sum(current[key].lower for key in groups[identity]), identity),
+        key=lambda identity: (
+            -sum(current[key].lower for key in groups[identity]),
+            _identity_label(identity),
+        ),
     )
     largest = ordered[0] if ordered else None
     retained = set(current).difference(unknown, groups[largest] if largest else set())
@@ -264,14 +267,14 @@ def _identity_report(
         "unknown_identity_growth_upper": sum(current[key].upper for key in unknown),
         "unknown_identity_growth_share_lower": unknown_share[0],
         "unknown_identity_growth_share_upper": unknown_share[1],
-        "largest_identity": largest,
+        "largest_identity": _identity_label(largest) if largest is not None else None,
         "largest_identity_growth_share_lower": largest_share[0],
         "largest_identity_growth_share_upper": largest_share[1],
         "leave_largest_out": _comparison(
             {key: previous[key] for key in sorted(retained)},
             {key: current[key] for key in sorted(retained)},
         ),
-        "identity_preview": ordered[:PREVIEW_LIMIT],
+        "identity_preview": [_identity_label(identity) for identity in ordered[:PREVIEW_LIMIT]],
         "identity_preview_truncated": len(ordered) > PREVIEW_LIMIT,
     }
 

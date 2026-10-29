@@ -20,6 +20,7 @@ from typing import Any
 import polars as pl
 
 from .contracts import AssessmentPolicy, Measurement, Observation, Product, ProductLink, digest, utc
+from .creator_identity import CreatorIdentity, creator_identity
 from .identity_rules import resolve_links
 from .measurement_semantics import counter_period
 
@@ -310,9 +311,9 @@ def _attention(
             continue
         usable.append(latest)
         refs.extend(timeline.references)
-        creator = observation.attributes.get("creator_id") or observation.account_id
-        if creator:
-            creators.add(str(creator))
+        creator = creator_identity(observation)
+        if creator is not None:
+            creators.add(creator)
         comparable_intervals += timeline.comparable_intervals
         positive_intervals += timeline.positive_intervals
         if (
@@ -337,15 +338,15 @@ def _attention(
         ), features
     growth = sum(row["growth_per_hour"] for row in usable)
     upper_growth = sum(row["growth_upper_per_hour"] for row in usable)
-    creator_growth: dict[str, float] = defaultdict(float)
+    creator_growth: dict[CreatorIdentity, float] = defaultdict(float)
     creative_growth: dict[str, float] = defaultdict(float)
     fingerprints: set[str] = set()
     fingerprinted_count = 0
     for row in usable:
         observation = latest_observations[row["entity_key"]]
-        creator = observation.attributes.get("creator_id") or observation.account_id
-        if creator:
-            creator_growth[str(creator)] += row["growth_per_hour"]
+        creator = creator_identity(observation)
+        if creator is not None:
+            creator_growth[creator] += row["growth_per_hour"]
         fingerprint = observation.attributes.get("creative_fingerprint")
         creative_key = observation.entity_key
         if fingerprint:

@@ -37,9 +37,13 @@ counter periods, counter scopes, units and resets use the existing counter kerne
   produce `concentrated_growth`; otherwise positive growth during at least 75%
   of measured capture time produces `sustained_growth`. These versioned rules
   describe the capture intervals, not the exact timing inside an interval.
-- Creator counts use explicit creator identifiers, with account identity as the
-  existing fallback. They do not establish independent human identities across
-  services. A verified creative means an explicitly supplied nonempty
+- Creator counts accept nonblank string creator identifiers, with a nonblank
+  string account identity as the fallback. Surrounding whitespace is removed;
+  malformed JSON values remain unknown unless that valid fallback exists.
+  Identifiers are grouped by source, identifier kind and value: a creator and
+  an account with the same local ID remain distinct, as do IDs from different
+  sources. These counts do not establish independent human identities, even
+  within one source. A verified creative means an explicitly supplied nonempty
   `creative_fingerprint`, consistent with the existing analytical contract.
   Copied fingerprints count once; missing fingerprints stay unknown. Separate
   growing counts exclude creators and creatives with no observed lower growth.
@@ -48,6 +52,17 @@ counter periods, counter scopes, units and resets use the existing counter kerne
   reports are recomputed on read and are not frozen historical assessments.
   Existing ranking supplies its own market/age cohort context. No category
   percentile or sales probability is inferred without reviewed comparison data.
+
+Assessment features, trend windows and optional diagnostics share that validated
+creator extraction. This corrects earlier source/kind collisions and malformed
+identifiers in newly computed results. Disposable computed features use
+`exact-product-features-v4` to reject old cached counts; raw facts retain
+`exact-raw-window-v1` and can be reused without a source payload read. Stored
+assessment publications and frozen evaluation decisions retain their original
+values and content IDs. Policy defaults and trend response schemas are unchanged;
+new result IDs change when corrected content changes. Diagnostic identity labels
+retain `source:kind:value`, with `%` and `:` inside parts escaped as `%25` and
+`%3A` so embedded delimiters cannot merge labels.
 
 ## Cost limits
 
