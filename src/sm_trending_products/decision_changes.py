@@ -7,7 +7,7 @@ history and never returns source quotations or whole report copies.
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -243,9 +243,18 @@ def _reference(section: dict) -> dict:
 
 
 def _facts(report: dict, bucket: str) -> list[dict]:
+    # Repeated brief codes describe distinct windows. References and measured
+    # quantities can change while the same scoped support/gap remains present.
     return sorted(
-        ({"dimension": row["dimension"], "code": row["code"]} for row in report[bucket]),
-        key=lambda row: (row["dimension"], row["code"]),
+        (
+            {
+                "dimension": row["dimension"],
+                "code": row["code"],
+                **({"window_hours": row["window_hours"]} if "window_hours" in row else {}),
+            }
+            for row in report[bucket]
+        ),
+        key=lambda row: (row["dimension"], row["code"], row.get("window_hours", 0)),
     )
 
 
@@ -616,13 +625,23 @@ def explain_changes(report: dict) -> list[str]:
                 "Le rythme précédent est nul ou trop incertain pour calculer un rapport."
             ),
         }
-        first = next(iter(report["trajectory"]["windows"]), None)
-        if first:
-            lines.append(
-                reasons.get(
-                    first["reason"], "La raison détaillée reste disponible dans les références."
-                )
-            )
+        separation = utc(report["as_of"]) - utc(report["previous_as_of"])
+        matching = next(
+            (
+                row
+                for row in report["trajectory"]["windows"]
+                if timedelta(hours=row["window_hours"]) == separation
+            ),
+            None,
+        )
+        reason = (
+            matching["reason"]
+            if matching
+            else "requested_cutoffs_do_not_match_adjacent_kernel_windows"
+        )
+        lines.append(
+            reasons.get(reason, "La raison détaillée reste disponible dans les références.")
+        )
     if any(row["newly_observed_entity_count"] for row in report["trajectory"]["windows"]):
         lines.append(
             "Des vidéos ont été observées pour la première fois dans la fenêtre. "

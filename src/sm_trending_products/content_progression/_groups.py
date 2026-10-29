@@ -143,7 +143,22 @@ def outcomes(
             )
             continue
         creator = creator or attested
-        role = text["creator_role"] if attested else video["creator_role"]
+        video_role = video["creator_role"]
+        attested_role = text["creator_role"] if attested else "unknown"
+        if video_role != "unknown" and attested_role != "unknown" and video_role != attested_role:
+            exclusions["conflicting_creator_role"] += 1
+            details.append(
+                {
+                    "unit": "text_context",
+                    "entity_key": entity,
+                    "transcript_id": text["transcript_id"],
+                    "reason": "conflicting_creator_role",
+                    "video_creator_role": video_role,
+                    "attested_creator_role": attested_role,
+                }
+            )
+            continue
+        role = video_role if attested_role == "unknown" else attested_role
         result.append(
             {
                 **video,

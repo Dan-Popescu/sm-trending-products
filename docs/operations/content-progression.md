@@ -105,6 +105,12 @@ unknown distribution, unknown creator identity or overlapping named creator IDs
 between present/absent groups make comparison unavailable. Creator IDs are scoped
 to their source; operator attestations and source IDs do not verify independent
 people. Age bands and measured contexts do not remove unmeasured confounding.
+An unknown supplied-text role does not erase a known video role. A known text
+role can fill an unknown video role; matching known roles remain unchanged, and
+two unknown roles stay unknown. Conflicting known roles for the same creator
+exclude that text/video context with `conflicting_creator_role`, both declared
+roles and its references visible. The supplied text and exact quotes remain in
+the report; incompatible roles are never silently pooled into an unknown stratum.
 
 For a usable comparison, each group needs at least two videos and two named
 creator IDs; every measured video needs at least half the target-window coverage;
