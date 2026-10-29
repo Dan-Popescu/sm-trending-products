@@ -639,11 +639,13 @@ def test_final_text_and_metric_checks_share_retention_fence_without_holding_hist
                 active -= 1
 
     def history(*args, **kwargs):
-        # History hydration keeps its existing guards without an extra report fence.
+        # Scoped history protects admission through payload hydration on its own
+        # connection. Progression still does not hold an extra report-wide fence.
         with pipeline.catalog.transaction() as other:
-            assert other.execute(
+            acquired = other.execute(
                 "SELECT pg_try_advisory_xact_lock(492371205) AS acquired"
             ).fetchone()["acquired"]
+            assert acquired is (kwargs.get("connection") is None)
         return read(*args, **kwargs)
 
     with ThreadPoolExecutor(max_workers=1) as executor:
