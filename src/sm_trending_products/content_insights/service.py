@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from ..catalog import Catalog
-from ..contracts import digest
+from ..contracts import digest, utc
 from ..enrichment import TranscriptInsights
 from ..enrichment.contracts import revalidate
 from ..provenance import Provenance
@@ -119,24 +119,12 @@ class ContentInsights:
         limit: int = 100,
         after: str | None = None,
     ) -> dict:
+        cutoff = utc(as_of) if as_of is not None else self.texts.resolve_cutoff(synthetic=synthetic)
         taxonomy = revalidate(ContentTaxonomy, taxonomy)
-        page = self.texts.eligible_texts(
-            product_id, synthetic=synthetic, as_of=as_of, limit=limit, after=after
-        )
-        if taxonomy.reviewed_at > page["as_of"]:
+        if taxonomy.reviewed_at > cutoff:
             raise ValueError("Content taxonomy was not reviewed at this cutoff")
-        # Deterministically retain the latest eligible context version per logical
-        # text. Observation refreshes and metadata corrections are not extra texts.
-        canonical = {}
-        for item in sorted(
-            page["items"], key=lambda item: (item["available_at"], item["transcript_id"])
-        ):
-            canonical[item["content_key"]] = item
-        selected = self.texts.read_texts(
-            product_id,
-            [item["transcript_id"] for item in canonical.values()],
-            synthetic=synthetic,
-            as_of=page["as_of"],
+        page = self.texts.read_text_page(
+            product_id, synthetic=synthetic, as_of=cutoff, limit=limit, after=after
         )
         themes: dict[str, dict[str, Any]] = {
             rule.theme_id: {
@@ -152,7 +140,7 @@ class ContentInsights:
             for rule in taxonomy.themes
         }
         texts, scripts = [], defaultdict(list)
-        for item in sorted(selected["items"], key=lambda item: item["content_key"]):
+        for item in sorted(page["items"], key=lambda item: item["content_key"]):
             context = item["context"] or {}
             attribution = {
                 "creator_id": context.get("creator_id"),
@@ -245,7 +233,7 @@ class ContentInsights:
                     "mentions": theme["mentions"],
                 }
             )
-        unavailable = page["unavailable"] + selected["unavailable"]
+        unavailable = page["unavailable"]
         unsupported = sum(item["status"] == "unsupported_language" for item in texts)
         truncated = sum(item["truncated"] for item in texts)
         response = {

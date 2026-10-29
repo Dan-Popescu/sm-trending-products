@@ -86,6 +86,13 @@ class TranscriptInsights:
             raise EnrichmentDenied("enrichment_future_live_cutoff")
         return cutoff
 
+    def resolve_cutoff(self, as_of: datetime | None = None, *, synthetic: bool = False) -> datetime:
+        """Resolve a knowledge cutoff with the same database clock as text reads."""
+        if type(synthetic) is not bool:
+            raise ValueError("Invalid text workspace")
+        with self.catalog.evidence_transaction(synthetic) as connection:
+            return self._clock(connection, as_of, synthetic)
+
     def _scope(self, connection, product, entity, dataset, synthetic, cutoff, observation):
         self.catalog.guard_namespace(connection, synthetic)
         try:
@@ -270,7 +277,11 @@ class TranscriptInsights:
             "AND available_at<=%s",
             (transcript_id, synthetic, cutoff),
         ).fetchone()
-        if not row:
+        return self._guard_transcript(connection, row, product, synthetic, cutoff)
+
+    def _guard_transcript(self, connection, row, product, synthetic, cutoff):
+        """Apply the same eligibility rule to a selected row or individual lookup."""
+        if not row or row["synthetic"] != synthetic or row["available_at"] > cutoff:
             raise EnrichmentDenied("enrichment_transcript_unavailable")
         self._scope(
             connection,
@@ -286,6 +297,52 @@ class TranscriptInsights:
         except ValueError:
             raise EnrichmentDenied("enrichment_transcript_unavailable") from None
         return row
+
+    @staticmethod
+    def _validate_text_page(product_id, synthetic, limit, after):
+        if not re.fullmatch(IDENTIFIER, product_id):
+            raise ValueError("Invalid product identifier")
+        if type(synthetic) is not bool or type(limit) is not int or not 1 <= limit <= 200:
+            raise ValueError("A text page requires a namespace and a limit between 1 and 200")
+        if after is not None and not re.fullmatch(r"[a-f0-9]{64}", after):
+            raise ValueError("Invalid transcript cursor")
+
+    @staticmethod
+    def _text_page_rows(connection, product_id, synthetic, cutoff, limit, after):
+        return connection.execute(
+            "SELECT t.* FROM enrichment_transcripts t JOIN "
+            "(SELECT DISTINCT entity_key FROM product_links WHERE product_id=%s "
+            "AND available_at<=%s) reviewed ON reviewed.entity_key=t.entity_key "
+            "WHERE t.synthetic=%s AND t.available_at<=%s "
+            "AND t.transcript_id>%s ORDER BY t.transcript_id LIMIT %s",
+            (product_id, cutoff, synthetic, cutoff, after or "", limit + 1),
+        ).fetchall()
+
+    @staticmethod
+    def _text_page(product_id, synthetic, cutoff, rows, limit, items, unavailable):
+        return {
+            "product_id": product_id,
+            "synthetic": synthetic,
+            "as_of": cutoff,
+            "items": items,
+            "unavailable": unavailable,
+            "scanned": min(len(rows), limit),
+            "next_cursor": rows[limit - 1]["transcript_id"] if len(rows) > limit else None,
+            "scope": "supplied_texts_for_confirmed_product_videos",
+        }
+
+    def _read_text(self, connection, row):
+        document = self.provenance.selected_records(
+            row["descriptor"], ["transcript"], connection=connection
+        )["transcript"]
+        return {
+            key: row[key] for key in ("transcript_id", "content_key", "entity_key", "available_at")
+        } | {
+            "text": document["text"],
+            "source_kind": document["source_kind"],
+            "language": document["language"],
+            "context": document.get("context"),
+        }
 
     @staticmethod
     def _cached_analysis(connection, synthetic, cache_key, cutoff, *, visible_at=None):
@@ -339,25 +396,13 @@ class TranscriptInsights:
         individual analysis. A cursor advances over unavailable rows as well.
         """
         require_module(self.catalog, "transcript_insights", 2)
-        if not re.fullmatch(IDENTIFIER, product_id):
-            raise ValueError("Invalid product identifier")
-        if type(synthetic) is not bool or type(limit) is not int or not 1 <= limit <= 200:
-            raise ValueError("A text page requires a namespace and a limit between 1 and 200")
-        if after is not None and not re.fullmatch(r"[a-f0-9]{64}", after):
-            raise ValueError("Invalid transcript cursor")
+        self._validate_text_page(product_id, synthetic, limit, after)
         items, unavailable = [], []
         local = LocalTranscriptAdapter.spec
         with self.catalog.evidence_transaction(synthetic) as connection:
             cutoff = self._clock(connection, as_of, synthetic)
             self.catalog.guard_namespace(connection, synthetic)
-            rows = connection.execute(
-                "SELECT t.* FROM enrichment_transcripts t JOIN "
-                "(SELECT DISTINCT entity_key FROM product_links WHERE product_id=%s "
-                "AND available_at<=%s) reviewed ON reviewed.entity_key=t.entity_key "
-                "WHERE t.synthetic=%s AND t.available_at<=%s "
-                "AND t.transcript_id>%s ORDER BY t.transcript_id LIMIT %s",
-                (product_id, cutoff, synthetic, cutoff, after or "", limit + 1),
-            ).fetchall()
+            rows = self._text_page_rows(connection, product_id, synthetic, cutoff, limit, after)
             for row in rows[:limit]:
                 try:
                     self._transcript(
@@ -422,16 +467,60 @@ class TranscriptInsights:
                         "local_provider_version": local.version,
                     }
                 )
-        return {
-            "product_id": product_id,
-            "synthetic": synthetic,
-            "as_of": cutoff,
-            "items": items,
-            "unavailable": unavailable,
-            "scanned": min(len(rows), limit),
-            "next_cursor": rows[limit - 1]["transcript_id"] if len(rows) > limit else None,
-            "scope": "supplied_texts_for_confirmed_product_videos",
-        }
+        return self._text_page(product_id, synthetic, cutoff, rows, limit, items, unavailable)
+
+    def read_text_page(
+        self,
+        product_id: str,
+        *,
+        synthetic: bool = False,
+        as_of: datetime | None = None,
+        limit: int = 100,
+        after: str | None = None,
+    ) -> dict:
+        """Hydrate the latest eligible logical texts within one bounded row page.
+
+        Selection and object reads share the source/retention fence. Unavailable
+        rows still consume the scan budget and advance the cursor. Canonical
+        context selection is page-local, as in the content report's original
+        two-step reader. No analysis state is needed or inspected here.
+        """
+        require_module(self.catalog, "transcript_insights", 2)
+        self._validate_text_page(product_id, synthetic, limit, after)
+        items, unavailable = [], []
+        with self.catalog.evidence_transaction(synthetic) as connection:
+            cutoff = self._clock(connection, as_of, synthetic)
+            self.catalog.guard_namespace(connection, synthetic)
+            rows = self._text_page_rows(connection, product_id, synthetic, cutoff, limit, after)
+            eligible = []
+            for row in rows[:limit]:
+                try:
+                    eligible.append(
+                        self._guard_transcript(connection, row, product_id, synthetic, cutoff)
+                    )
+                except EnrichmentDenied as error:
+                    unavailable.append(
+                        {"transcript_id": row["transcript_id"], "reason": str(error)}
+                    )
+            canonical = {}
+            for row in sorted(
+                eligible, key=lambda item: (item["available_at"], item["transcript_id"])
+            ):
+                canonical[row["content_key"]] = row
+            for row in canonical.values():
+                try:
+                    # Policy verification and ownership can change independently
+                    # of retirement. Refresh the individual authority immediately
+                    # before hydration rather than trusting page-selection proof.
+                    current = self._transcript(
+                        connection, row["transcript_id"], product_id, synthetic, cutoff
+                    )
+                    items.append(self._read_text(connection, current))
+                except ValueError as error:
+                    unavailable.append(
+                        {"transcript_id": row["transcript_id"], "reason": str(error)}
+                    )
+        return self._text_page(product_id, synthetic, cutoff, rows, limit, items, unavailable)
 
     def read_texts(
         self,
@@ -458,24 +547,10 @@ class TranscriptInsights:
             for transcript_id in dict.fromkeys(transcript_ids):
                 try:
                     row = self._transcript(connection, transcript_id, product_id, synthetic, cutoff)
-                    document = self.provenance.selected_records(
-                        row["descriptor"], ["transcript"], connection=connection
-                    )["transcript"]
+                    items.append(self._read_text(connection, row))
                 except ValueError as error:
                     unavailable.append({"transcript_id": transcript_id, "reason": str(error)})
                     continue
-                items.append(
-                    {
-                        "transcript_id": transcript_id,
-                        "content_key": row["content_key"],
-                        "entity_key": row["entity_key"],
-                        "available_at": row["available_at"],
-                        "text": document["text"],
-                        "source_kind": document["source_kind"],
-                        "language": document["language"],
-                        "context": document.get("context"),
-                    }
-                )
         return {
             "product_id": product_id,
             "synthetic": synthetic,
