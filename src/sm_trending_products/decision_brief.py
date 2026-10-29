@@ -11,6 +11,7 @@ from .commerce import LaunchError, LaunchService
 from .commercial_sensitivity import EconomicInsights, ScenarioProfile
 from .competition_insights import CompetitionInsights
 from .content_insights import DEFAULT_TAXONOMY, ContentInsights, ContentTaxonomy
+from .content_insights._memo import _ClassificationMemo
 from .contracts import digest, utc
 from .enrichment.contracts import revalidate
 from .history import History
@@ -54,6 +55,7 @@ class DecisionBrief:
 
     def __init__(self, catalog: Catalog, history: History, provenance: Provenance):
         self.catalog, self.history, self.provenance = catalog, history, provenance
+        self._content_memo: _ClassificationMemo | None = None
 
     def describe(
         self,
@@ -261,6 +263,7 @@ class DecisionBrief:
                 synthetic=synthetic,
                 taxonomy=taxonomy,
                 limit=limit,
+                _memo=self._content_memo,
             )
         )
 

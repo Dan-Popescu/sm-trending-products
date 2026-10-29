@@ -16,6 +16,7 @@ from .catalog import Catalog
 from .commerce import LaunchError
 from .commercial_sensitivity import ScenarioProfile
 from .content_insights import DEFAULT_TAXONOMY, ContentTaxonomy
+from .content_insights._memo import _ClassificationMemo
 from .contracts import canonical, digest, utc
 from .decision_brief import DecisionBrief, _identifier, _unavailable
 from .distribution_context import known_distribution_context
@@ -94,6 +95,10 @@ class ChangesSelection(BaseModel):
 
 
 class _ChangesBrief(DecisionBrief):
+    def __init__(self, catalog, history, provenance, content_memo: _ClassificationMemo):
+        super().__init__(catalog, history, provenance)
+        self._content_memo = content_memo
+
     def _economics(self, *args, **kwargs):
         try:
             return super()._economics(*args, **kwargs)
@@ -139,8 +144,11 @@ class DecisionChanges:
         prior = _selection(previous_selection)
         current = _selection(current_selection) if current_selection is not None else prior
         prior_args, current_args = prior.brief_arguments(), current.brief_arguments()
-        service = _ChangesBrief(self.catalog, self.history, self.provenance)
-        with self.catalog.evidence_transaction(synthetic) as connection:
+        with (
+            _ClassificationMemo() as content_memo,
+            self.catalog.evidence_transaction(synthetic) as connection,
+        ):
+            service = _ChangesBrief(self.catalog, self.history, self.provenance, content_memo)
             self.catalog.guard_retention(connection)
             before = _compact(
                 service.describe(
@@ -193,7 +201,7 @@ def _selection(value: ChangesSelection | dict | None) -> ChangesSelection:
 
 
 def _compact(brief: dict) -> dict:
-    """Drop first-read quotations before the second read, even in local memory."""
+    """Drop report quotations before the second read; the bounded pure memo remains."""
     for dimension, section in brief["sections"].items():
         report = section["report"]
         if report is None:
