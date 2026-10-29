@@ -107,6 +107,115 @@ def assert_complete_role_texts(report, values):
     )
 
 
+def add_unknown_creator_video(pipeline, service, cutoff, text, *, corrected_short_interval=False):
+    start = cutoff - timedelta(hours=12)
+    points = (
+        ((0, 100), (10, 1), (12, 160))
+        if corrected_short_interval
+        else ((0, 100), (6, 130), (12, 160))
+    )
+    rows = []
+    for hour, count in points:
+        row = record("unknown-fifth", start + timedelta(hours=hour), count)
+        row["published_at"] = (start - timedelta(hours=2)).isoformat()
+        row["attributes"] = {"distribution_context": "public"}
+        rows.append(row)
+    dataset = pipeline.import_records(rows, synthetic=True)[0]
+    pipeline.review_link("patterns", "fixture_import:video:unknown-fifth")
+    value = TranscriptInput(
+        product_id="patterns",
+        entity_key="fixture_import:video:unknown-fifth",
+        dataset_id=dataset,
+        observation_id=rows[0]["observation_id"],
+        synthetic=True,
+        text=text,
+        source_kind="human_transcript",
+        language="en",
+        permission_reference="synthetic:authorized",
+    )
+    service.import_transcript(value, as_of=start)
+    return value
+
+
+@pytest.mark.parametrize(
+    "text,classification,short",
+    [
+        ("Not save time.", "negated_or_ambiguous", False),
+        ("Could it save time?", "negated_or_ambiguous", False),
+        ("save time. " * 25, "incomplete_scan", False),
+        ("Not save time.", "negated_or_ambiguous", True),
+    ],
+)
+def test_excluded_unknown_creator_does_not_block_known_arms_or_contaminate_measurement_gates(
+    pipeline, text, classification, short
+):
+    service, values, _, cutoff = seed(pipeline)
+    before = describe(pipeline, cutoff)
+    extra = add_unknown_creator_video(
+        pipeline, service, cutoff, text, corrected_short_interval=short
+    )
+    result = describe(pipeline, cutoff)
+    group = theme(result)["strata"][0]
+    original = theme(before)["strata"][0]
+    assert group["status"] == "observed_association" and group["reasons"] == []
+    assert group["present"] == original["present"] and group["absent"] == original["absent"]
+    assert group["present"]["video_count"] == group["absent"]["video_count"] == 2
+    assert (
+        group["present"]["observed_growth_lower"] == 36
+        and group["absent"]["observed_growth_lower"] == 84
+    )
+    for key in (
+        "difference_in_mean_growth_lower",
+        "difference_in_mean_growth_upper",
+        "difference_in_mean_rate_lower",
+        "difference_in_mean_rate_upper",
+    ):
+        assert group[key] == original[key]
+    assert group["excluded_classification_counts"] == {classification: 1}
+    assert theme(result)["classification_counts"][classification] == 1
+    assert (
+        result["eligible_video_count"]
+        == len(result["outcomes"])
+        == result["distinct_text_count"]
+        == 5
+    )
+    assert result["input_observation_count"] == 15
+    fifth = next(row for row in result["outcomes"] if row["entity_key"] == extra.entity_key)
+    assert fifth["creator_key"] is None
+    assert fifth["observed_growth_lower"] == (159 if short else 60)
+    if short:
+        assert fifth["coverage_fraction"] < 0.5 and fifth["measured_hours"] == pytest.approx(2)
+        assert fifth["counter_correction_count"] == 1
+    assert [row for row in result["outcomes"] if row["entity_key"] != extra.entity_key] == before[
+        "outcomes"
+    ]
+    assert [row for row in result["texts"] if row["entity_key"] != extra.entity_key] == before[
+        "texts"
+    ]
+    texts = {value.entity_key: value.text for value in [*values, extra]}
+    for row in result["texts"]:
+        assert all(
+            mention["quote"] == texts[row["entity_key"]][mention["start"] : mention["end"]]
+            for mention in row["mentions"]
+        )
+
+
+@pytest.mark.parametrize(
+    "text,arm", [("It can save time.", "present"), ("A small blue item.", "absent")]
+)
+def test_usable_unknown_creator_still_blocks_comparison(pipeline, text, arm):
+    service, _, _, cutoff = seed(pipeline)
+    add_unknown_creator_video(pipeline, service, cutoff, text)
+    result = describe(pipeline, cutoff)
+    group = theme(result)["strata"][0]
+    assert group["status"] == "unavailable" and group["reasons"] == ["unknown_creator_identity"]
+    assert group[arm]["video_count"] == 3 and group[arm]["known_creator_count"] == 2
+    assert group[arm]["unknown_creator_video_count"] == 1
+    assert group["excluded_classification_counts"] == {}
+    assert group["difference_in_mean_rate_lower"] is group["difference_in_mean_rate_upper"] is None
+    assert result["eligible_video_count"] == 5 and result["distinct_text_count"] == 5
+
+
 def test_unknown_attested_role_does_not_pool_known_sellers_with_buyers(pipeline):
     _, values, _, cutoff = seed(
         pipeline, roles=["seller", "seller", "buyer", "buyer"], contexts=role_contexts("unknown")
