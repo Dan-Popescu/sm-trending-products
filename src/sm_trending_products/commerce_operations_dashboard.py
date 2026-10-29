@@ -11,6 +11,7 @@ from uuid import uuid4
 import streamlit as st
 
 from .commerce_learning import ACTUAL_COSTS
+from .display_safety import current_display_secrets, display_json
 
 if TYPE_CHECKING:
     from .dashboard import DashboardPipeline
@@ -34,10 +35,12 @@ COVERAGE_LABELS = {
 
 
 def _show(value) -> None:
-    from .collector import redact
-    from .dashboard import display_safe
-
-    st.json(display_safe(redact(value)))
+    try:
+        details = display_json(value, secret_values=current_display_secrets())
+    except (ValueError, TypeError, RecursionError):
+        st.error("Details unavailable. Check the report format and bounded display limits.")
+        return
+    st.json(details)
 
 
 def _message(message: str, error: Exception) -> str:

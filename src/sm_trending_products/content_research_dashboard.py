@@ -7,16 +7,17 @@ from typing import TYPE_CHECKING
 
 import streamlit as st
 
+from .display_safety import current_display_secrets, display_json, sanitize_display
+from .json_input import MAX_INPUT_BYTES, object_from_bytes
+
 if TYPE_CHECKING:
     from .pipeline import Pipeline
 
 
 def _read_upload(uploaded) -> dict:
-    from .content_research_cli import MAX_INPUT_BYTES, _object_bytes
-
     if uploaded.size > MAX_INPUT_BYTES:
         raise ValueError("The uploaded JSON exceeds 128 KiB")
-    return _object_bytes(uploaded.getvalue())
+    return object_from_bytes(uploaded.getvalue())
 
 
 def render_content(
@@ -45,10 +46,8 @@ def render_content(
         max_upload_size=1,
     )
     if st.button("Inspect quoted themes", key="research-content-inspect"):
-        from .collector import redact
         from .content_insights import DEFAULT_TAXONOMY, ContentInsights, ContentTaxonomy
         from .content_research_cli import _cursor
-        from .dashboard import display_safe
 
         try:
             taxonomy = (
@@ -64,6 +63,15 @@ def render_content(
                 after=_cursor(after or None),
                 taxonomy=taxonomy,
             )
+            secrets = current_display_secrets()
+            gaps = (
+                sanitize_display(
+                    "Evidence gaps: " + ", ".join(result["gaps"]), secret_values=secrets
+                )
+                if result["gaps"]
+                else None
+            )
+            details = display_json(result, secret_values=secrets)
         except Exception:
             st.error(
                 "The content panel is unavailable. Check transcript initialization, "
@@ -74,6 +82,6 @@ def render_content(
                 "Counts cover this page only. Continuing pages can repeat canonical text versions; "
                 "do not add page totals as an independent audience count."
             )
-            if result["gaps"]:
-                st.warning("Evidence gaps: " + ", ".join(result["gaps"]))
-            st.json(display_safe(redact(result)))
+            if gaps is not None:
+                st.warning(gaps)
+            st.json(details)

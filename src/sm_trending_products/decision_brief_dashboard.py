@@ -7,13 +7,13 @@ from typing import Any
 
 import streamlit as st
 
-from .decision_brief_cli import MAX_INPUT_BYTES, object_from_bytes, presentation_secrets
 from .decision_brief_presentation import (
     MAX_PRESENTATION_BYTES,
     MAX_PRESENTATION_NODES,
     present_brief,
 )
-from .display_safety import display_json
+from .display_safety import current_display_secrets, display_json
+from .json_input import MAX_INPUT_BYTES, object_from_bytes
 from .product_display import product_labels
 
 
@@ -27,7 +27,7 @@ def render_brief(pipeline: Any, products: list[dict], as_of: datetime, synthetic
     if not products:
         st.info("Créer un produit et vérifier ses liens avec les observations avant de continuer.")
         return
-    navigation_secrets = presentation_secrets()
+    navigation_secrets = current_display_secrets()
     identifiers = [row["product_id"] for row in products]
     try:
         labels = product_labels(identifiers, secret_values=navigation_secrets)
@@ -134,7 +134,7 @@ def render_brief(pipeline: Any, products: list[dict], as_of: datetime, synthetic
         )
         return
     try:
-        secrets = presentation_secrets()
+        secrets = current_display_secrets()
         view = present_brief(report, secret_values=secrets)
         technical_json = display_json(
             view.technical,

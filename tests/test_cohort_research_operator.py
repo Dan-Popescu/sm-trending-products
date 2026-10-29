@@ -4,6 +4,7 @@ import json
 import os
 from datetime import timedelta
 
+import pytest
 from streamlit.testing.v1 import AppTest
 from test_cohort_insights import seed
 
@@ -229,6 +230,19 @@ def test_cohort_dashboard_reports_unknowns_uncertified_units_and_rechecks_retire
     _field(app, "button", "Compare observed panel").click().run()
     assert not app.exception
     assert app.dataframe[0].value["Value"].isna().all()
+
+
+@pytest.mark.parametrize("secret", ["rows", "percentile", "null"])
+def test_cohort_display_keeps_unavailable_facts_when_credentials_match_typed_fields(
+    pipeline, monkeypatch, secret
+):
+    _, cutoff, _ = seed(pipeline, markets=["FR", "FR", "FR", None])
+    monkeypatch.setenv("RESEARCH_API_KEY", secret)
+    app = _app(cutoff)
+    _field(app, "button", "Compare observed panel").click().run()
+    assert not app.exception and not app.error and app.json
+    assert any("Some comparisons are unavailable" in row.value for row in app.warning)
+    assert secret not in app.json[0].value
 
 
 def test_cohort_dashboard_sanitizes_taxonomy_and_panel_without_mutating_records(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import stat
@@ -12,8 +11,9 @@ from pathlib import Path
 from typing import Never
 
 from .contracts import canonical, utc
-
-MAX_INPUT_BYTES = 131_072
+from .json_input import MAX_INPUT_BYTES as MAX_INPUT_BYTES
+from .json_input import InputTooLarge, ObjectRequired
+from .json_input import object_from_bytes as _decode_object
 
 
 class _SafeParser(argparse.ArgumentParser):
@@ -41,12 +41,12 @@ def _read_object(path: Path) -> dict:
 
 
 def _object_bytes(value: bytes) -> dict:
-    if len(value) > MAX_INPUT_BYTES:
-        raise ValueError("Input exceeds the bounded file size")
-    result = json.loads(value)
-    if not isinstance(result, dict):
-        raise ValueError("A JSON object is required")
-    return result
+    try:
+        return _decode_object(value)
+    except InputTooLarge:
+        raise ValueError("Input exceeds the bounded file size") from None
+    except ObjectRequired:
+        raise ValueError("A JSON object is required") from None
 
 
 def _identifier(value: str) -> str:

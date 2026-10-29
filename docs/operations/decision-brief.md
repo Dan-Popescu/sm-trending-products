@@ -226,6 +226,17 @@ uses the explicit target country and optional exact dossier selection. Displayed
 reports are sanitized against current credentials and cleared on every new
 interaction; no source quotes or derived reports are kept in session state.
 
+The brief, changes and quoted-content adapters share the transport-neutral
+`json_input.object_from_bytes` decoder. It admits at most 128 KiB of encoded
+bytes before JSON parsing and requires an object; each adapter keeps its own
+model validation and public input errors. The existing CLI parser aliases remain
+available. Dashboards interpret the original typed report before sanitizing
+displayed tables, prose and details. Selected research and commerce detail widgets
+receive final `display_safety.display_json` strings, with current credentials
+checked again after JSON serialization. Display copies never replace report
+identities, action inputs or executable plans. Collector redaction and default
+machine JSON outputs retain their existing behavior.
+
 `Pipeline` supplies lazy factories for these optional modules. No factory adds a
 permanent worker, source request or scheduled full-universe calculation. Cohort
 and economic CLI operations construct SQL-only services and do not require S3.

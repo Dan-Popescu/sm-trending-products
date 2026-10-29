@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 from pathlib import Path
@@ -11,8 +10,9 @@ from typing import NoReturn
 
 from .contracts import canonical, now, utc
 from .display_safety import current_display_secrets as presentation_secrets
-
-MAX_INPUT_BYTES = 128 * 1024
+from .json_input import MAX_INPUT_BYTES as MAX_INPUT_BYTES
+from .json_input import InputTooLarge, ObjectRequired
+from .json_input import object_from_bytes as _decode_object
 
 
 class _SafeParser(argparse.ArgumentParser):
@@ -37,12 +37,13 @@ def _country(value: str) -> str:
 
 
 def object_from_bytes(content: bytes) -> dict:
-    if len(content) > MAX_INPUT_BYTES:
-        raise ValueError("brief_input_too_large")
-    payload = json.loads(content)
-    if not isinstance(payload, dict):
-        raise ValueError("brief_input_requires_object")
-    return payload
+    """Keep the public parser and its adapter-specific errors compatible."""
+    try:
+        return _decode_object(content)
+    except InputTooLarge:
+        raise ValueError("brief_input_too_large") from None
+    except ObjectRequired:
+        raise ValueError("brief_input_requires_object") from None
 
 
 def _object_file(path: Path) -> dict:
