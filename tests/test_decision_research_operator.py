@@ -15,6 +15,7 @@ from sm_trending_products.cli import main
         ["research"],
         ["research", "brief"],
         ["research", "changes"],
+        ["research", "patterns"],
         ["research", "validation"],
         ["research", "cohorts"],
         ["research", "economics"],

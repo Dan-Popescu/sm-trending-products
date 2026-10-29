@@ -19,10 +19,27 @@ from .creator_identity import CreatorIdentity, creator_identity
 from .evaluation import eligible_evidence
 from .history import History
 from .identity_rules import LINK_STATE_CTES
-from .opportunity_trends import describe_diagnostics
+from .opportunity_trends import _context, describe_diagnostics
 
 MAX_METADATA_ROWS = 10000
 EVIDENCE_PREVIEW_LIMIT = 200
+
+
+def _video_context(observation: Observation) -> dict[str, Any]:
+    identity = creator_identity(observation)
+    role = observation.attributes.get("creator_role")
+    return {
+        "source": observation.source,
+        "distribution_context": _context(observation)[2],
+        "account_id": observation.account_id.strip() if observation.account_id else None,
+        "market": observation.market,
+        # An account scope is inspectable but does not identify the video's creator.
+        "creator_id": identity[2] if identity and identity[1] == "creator" else None,
+        "creator_role": role
+        if isinstance(role, str) and role in {"creator", "seller", "buyer"}
+        else "unknown",
+        "published_at": observation.published_at,
+    }
 
 
 def _window(
@@ -235,6 +252,8 @@ class TrendInsights:
         min_link_confidence: float = 0.9,
         max_rows: int = 50000,
         diagnostics: bool = False,
+        include_video_intervals: bool = False,
+        video_entity_keys: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         cutoff = utc(as_of)
         if (
@@ -252,6 +271,23 @@ class TrendInsights:
             or not isinstance(max_rows, int)
             or not 1 <= max_rows <= 100000
             or not isinstance(diagnostics, bool)
+            or not isinstance(include_video_intervals, bool)
+            or (
+                video_entity_keys is not None
+                and (
+                    not include_video_intervals
+                    or diagnostics
+                    or isinstance(video_entity_keys, str | bytes)
+                    or len(video_entity_keys) > 200
+                    or any(
+                        not isinstance(key, str)
+                        or len(key) > 512
+                        or len(key.split(":", 2)) != 3
+                        or key.split(":", 2)[1] != "video"
+                        for key in video_entity_keys
+                    )
+                )
+            )
         ):
             raise ValueError("Invalid bounded trend-insight configuration")
         product = self.catalog.evidence_one(
@@ -298,6 +334,10 @@ class TrendInsights:
         video_keys = {
             row["entity_key"] for row in links if row["entity_key"].split(":", 2)[1] == "video"
         }
+        if video_entity_keys is not None:
+            video_keys.intersection_update(video_entity_keys)
+        if include_video_intervals and len(video_keys) > 200:
+            raise ValueError("Per-video timeline scope exceeds the bounded video budget")
         keys = (
             {
                 row["entity_key"]
@@ -415,5 +455,49 @@ class TrendInsights:
             result["diagnostics"] = describe_diagnostics(
                 eligible, video_keys, cutoff, sorted(windows_hours), gap
             )
+        if include_video_intervals:
+            # Full bounded kernel rows, never the evidence preview. Restrict the
+            # history read with video_entity_keys when composing text reports.
+            references = sorted(by_id)
+            availability = (
+                {
+                    row["observation_id"]: row["available_at"]
+                    for row in self.catalog.evidence_all(
+                        "SELECT o.observation_id,min(o.available_at) AS available_at "
+                        "FROM unnest(%s::text[],%s::text[]) selected(observation_id,entity_key) "
+                        "JOIN observation_deliveries o USING(observation_id,entity_key) "
+                        "JOIN normalized_objects n USING(object_id) "
+                        "JOIN datasets d USING(dataset_id) "
+                        "WHERE d.synthetic=%s "
+                        "AND o.available_at<=%s AND d.state='committed' GROUP BY o.observation_id",
+                        (
+                            references,
+                            [by_id[ref].entity_key for ref in references],
+                            synthetic,
+                            cutoff,
+                        ),
+                        synthetic=synthetic,
+                    )
+                }
+                if references
+                else {}
+            )
+            if set(availability) != set(references):
+                raise ValueError("Video evidence changed during timeline composition")
+            result["video_timelines"] = [
+                {
+                    "entity_key": key,
+                    "points": [
+                        {
+                            **point,
+                            "system_available_at": availability[point["observation_id"]],
+                            "context": _video_context(observation),
+                        }
+                        for point in timeline.rows
+                        for observation in (by_id[point["observation_id"]],)
+                    ],
+                }
+                for key, timeline in sorted(timelines.items())
+            ]
         result["report_id"] = digest(result)
         return result
