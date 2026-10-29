@@ -161,6 +161,11 @@ class Pipeline:
 
         return DecisionChanges(self.catalog, self.history, self.provenance)
 
+    def content_progression(self):
+        from .content_progression import ContentProgression
+
+        return ContentProgression(self.catalog, self.history, self.provenance)
+
     def product_matcher(self):
         from .matching import ProductMatcher
 

@@ -11,6 +11,7 @@ import streamlit as st
 VIEWS = {
     "Decision brief": ("decision_brief_dashboard", "render_brief"),
     "Changes between analyses": ("decision_changes_dashboard", "render_changes"),
+    "Themes and video progression": ("content_progression_dashboard", "render_patterns"),
     "Comparable products": ("cohort_research_dashboard", "render_cohorts"),
     "Economic scenarios": ("economic_research_dashboard", "render_economics"),
     "Competition and prices": ("competition_research_dashboard", "render_competition"),
