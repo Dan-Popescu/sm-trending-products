@@ -394,14 +394,46 @@ def _interpret(sections: dict) -> dict:
     if themes:
         for gap in themes["gaps"]:
             note(missing, "themes", gap, themes)
-        if themes["distinct_text_count"]:
+        texts = themes["texts"]
+        candidate_mentions = [
+            (text["content_key"], mention)
+            for text in texts
+            for mention in text["mentions"]
+            if mention["status"] == "candidate"
+        ]
+        if candidate_mentions:
             note(
                 support,
                 "themes",
                 "supplied_text_mentions_available_not_buyer_demand",
                 themes,
+                distinct_text_count=len({key for key, _ in candidate_mentions}),
+                candidate_mention_count=len(candidate_mentions),
+            )
+        elif themes["distinct_text_count"]:
+            note(
+                missing,
+                "themes",
+                "supplied_texts_without_candidate_theme_mentions",
+                themes,
                 distinct_text_count=themes["distinct_text_count"],
             )
+        for status in ("negated", "ambiguous"):
+            mentions = [
+                (text["content_key"], mention)
+                for text in texts
+                for mention in text["mentions"]
+                if mention["status"] == status
+            ]
+            if mentions:
+                note(
+                    missing,
+                    "themes",
+                    f"{status}_theme_mentions_require_context_review",
+                    themes,
+                    distinct_text_count=len({key for key, _ in mentions}),
+                    mention_count=len(mentions),
+                )
     variants = sections["variants"]["report"]
     if variants:
         conflicts = [row for row in variants["suggestions"] if row["conflicts"]]

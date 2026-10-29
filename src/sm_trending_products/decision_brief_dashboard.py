@@ -7,57 +7,89 @@ from typing import Any
 
 import streamlit as st
 
-from .decision_brief_cli import MAX_INPUT_BYTES, object_from_bytes
+from .decision_brief_cli import MAX_INPUT_BYTES, object_from_bytes, presentation_secrets
+from .decision_brief_presentation import (
+    MAX_PRESENTATION_BYTES,
+    MAX_PRESENTATION_NODES,
+    present_brief,
+)
+from .display_safety import display_json
+from .product_display import product_labels
 
 
 def render_brief(pipeline: Any, products: list[dict], as_of: datetime, synthetic: bool) -> None:
-    st.subheader("Product decision brief")
+    st.subheader("Dossier de décision produit")
     st.caption(
-        "Measured support, contrary evidence and missing facts for an explicit target country. "
-        "Readiness means ready for human review; it does not establish a winning product."
+        "Éléments mesurés, éléments défavorables et informations manquantes "
+        "pour un pays cible explicite. "
+        "Un dossier prêt appelle un examen humain ; il ne démontre pas une réussite commerciale."
     )
     if not products:
-        st.info("Create a product and review its evidence links first.")
+        st.info("Créer un produit et vérifier ses liens avec les observations avant de continuer.")
         return
-    product_id = st.selectbox("Product for decision brief", [row["product_id"] for row in products])
-    country = st.text_input("Target country (for example FR)")
-    st.caption("This country describes the intended sales market, not the measured audience.")
-    with st.expander("Optional reviewed context and bounded reads"):
-        taxonomy_id = st.text_input("Reviewed category taxonomy ID (optional)")
-        category_id = st.text_input("Category ID (optional)")
-        dossier_id = st.text_input("Exact launch dossier ID (optional)")
+    navigation_secrets = presentation_secrets()
+    identifiers = [row["product_id"] for row in products]
+    try:
+        labels = product_labels(identifiers, secret_values=navigation_secrets)
+    except (ValueError, TypeError, RecursionError):
+        st.error("La sélection de produit ne peut pas être affichée en sécurité.")
+        return
+    product_id = st.selectbox(
+        "Produit à examiner",
+        identifiers,
+        key="research-brief-product",
+        format_func=labels.__getitem__,
+    )
+    country = st.text_input("Pays cible (par exemple FR)")
+    st.caption(
+        "Ce pays décrit le marché de vente visé. "
+        "La géographie de l’audience doit être observée séparément."
+    )
+    with st.expander("Contexte révisé facultatif et limites de lecture"):
+        taxonomy_id = st.text_input("Identifiant des catégories révisées (facultatif)")
+        category_id = st.text_input("Identifiant de catégorie (facultatif)")
+        dossier_id = st.text_input("Identifiant exact du dossier commercial (facultatif)")
         revision = int(
             st.number_input(
-                "Expected dossier revision", min_value=1, max_value=2_147_483_647, value=1
+                "Révision exacte attendue du dossier", min_value=1, max_value=2_147_483_647, value=1
             )
         )
         scenarios = st.file_uploader(
-            "Economic scenario JSON (optional, 128 KiB maximum)", type="json", key="brief_scenarios"
+            "Scénarios économiques JSON (facultatif, 128 Kio maximum)",
+            type="json",
+            key="brief_scenarios",
         )
         matching = st.file_uploader(
-            "Reviewed variant profile JSON (optional, 128 KiB maximum)",
+            "Profil révisé des variantes JSON (facultatif, 128 Kio maximum)",
             type="json",
             key="brief_matching",
         )
         rules = st.file_uploader(
-            "Reviewed theme taxonomy JSON (optional, 128 KiB maximum)",
+            "Règles révisées des thèmes JSON (facultatif, 128 Kio maximum)",
             type="json",
             key="brief_rules",
         )
-        query = st.text_input("Observed query scope (optional)")
-        source = st.text_input("Observed source (optional)")
+        query = st.text_input("Périmètre de recherche observé (facultatif)")
+        source = st.text_input("Source observée (facultatif)")
         max_rows = int(
             st.number_input(
-                "Brief history row budget", min_value=1, max_value=100_000, value=50_000
+                "Limite de lignes historiques par composant",
+                min_value=1,
+                max_value=100_000,
+                value=50_000,
             )
         )
         max_products = int(
-            st.number_input("Brief peer panel budget", min_value=1, max_value=10_000, value=1000)
+            st.number_input(
+                "Limite de produits comparables", min_value=1, max_value=10_000, value=1000
+            )
         )
         text_limit = int(
-            st.number_input("Brief supplied-text page size", min_value=1, max_value=200, value=100)
+            st.number_input(
+                "Limite de textes fournis par page", min_value=1, max_value=200, value=100
+            )
         )
-    if not st.button("Build decision brief"):
+    if not st.button("Construire le dossier de décision"):
         return
     try:
         from .commercial_sensitivity import ScenarioProfile
@@ -97,22 +129,32 @@ def render_brief(pipeline: Any, products: list[dict], as_of: datetime, synthetic
         )
     except Exception:
         st.error(
-            "Brief unavailable. Check the target country, exact dossier revision, "
-            "JSON inputs, source availability and read budgets."
+            "Dossier indisponible. Vérifier le pays cible, la révision exacte du dossier, "
+            "les fichiers JSON, la disponibilité des sources et les limites de lecture."
         )
         return
-    from .collector import redact
-    from .dashboard import display_safe
-
-    report = display_safe(redact(report))
-    st.write("Review state:", report["status"])
-    for field, title in (
-        ("support", "Measured support"),
-        ("contrary", "Contrary evidence"),
-        ("missing", "Missing information"),
-        ("next_useful_facts", "Next useful facts"),
-    ):
-        st.markdown(f"**{title}**")
-        st.json(display_safe(report.get(field, [])), expanded=False)
-    with st.expander("Complete evidence, assumptions and cutoffs"):
-        st.json(display_safe(report), expanded=False)
+    try:
+        secrets = presentation_secrets()
+        view = present_brief(report, secret_values=secrets)
+        technical_json = display_json(
+            view.technical,
+            secret_values=secrets,
+            max_bytes=MAX_PRESENTATION_BYTES,
+            max_nodes=MAX_PRESENTATION_NODES,
+        )
+    except (ValueError, TypeError, RecursionError):
+        st.error(
+            "Présentation indisponible : le dossier dépasse les limites de lecture "
+            "ou son format est inconnu."
+        )
+        return
+    st.text(view.title)
+    st.write(view.state)
+    for line in view.context:
+        st.text(line)
+    for title, lines in view.groups:
+        st.subheader(title)
+        for line in lines:
+            st.text(line)
+    with st.expander("Détails techniques : codes, références, hypothèses et provenance"):
+        st.json(technical_json, expanded=False)
