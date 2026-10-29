@@ -513,6 +513,24 @@ class Catalog:
             clauses.append("(" + predicate + ")")
         return clauses, params
 
+    @staticmethod
+    def _dataset_scope(synthetic, as_of, since, period_window=None, source=None, dataset_ids=None):
+        clauses = ["d.state='committed'", "d.compacted_into IS NULL", "d.synthetic=%s"]
+        params: list[Any] = [synthetic]
+        if as_of:
+            clauses.append("(d.min_available_at<=%s OR d.row_count=0)")
+            params.append(as_of)
+        if since and period_window is None:
+            clauses.append("(d.max_available_at>=%s OR d.row_count=0)")
+            params.append(since)
+        if source:
+            clauses.append("d.source=%s")
+            params.append(source)
+        if dataset_ids is not None:
+            clauses.append("d.dataset_id=ANY(%s)")
+            params.append(sorted(dataset_ids))
+        return clauses, params
+
     @contextmanager
     def window_snapshot(self, synthetic: bool):
         """Start the metadata snapshot only after acquiring the retention fence.
@@ -547,15 +565,57 @@ class Catalog:
     def select_window_objects(
         self, connection, owners, cutoff, since, synthetic, budget: WindowMetadataBudget
     ) -> list[dict]:
+        if not owners:
+            return []
+        clauses, params = self._dataset_scope(synthetic, cutoff, since)
+        object_clauses, object_params = self._object_time_scope(cutoff, since, cutoff)
+        return self._select_objects(
+            connection,
+            clauses + object_clauses,
+            params + object_params,
+            list(owners),
+            budget,
+            owners=owners,
+        )
+
+    def select_history_objects(
+        self,
+        connection,
+        budget: WindowMetadataBudget,
+        *,
+        synthetic: bool,
+        as_of: datetime,
+        entity_keys: set[str],
+        since: datetime | None = None,
+        until: datetime | None = None,
+        period_window: tuple[datetime, datetime] | None = None,
+        source: str | None = None,
+        dataset_ids: set[str] | None = None,
+    ) -> list[dict]:
+        """Admit the complete scoped history selection before descriptor transfer."""
+        if not entity_keys or dataset_ids == set():
+            return []
+        clauses, params = self._dataset_scope(
+            synthetic, as_of, since, period_window, source, dataset_ids
+        )
+        object_clauses, object_params = self._object_time_scope(as_of, since, until, period_window)
+        return self._select_objects(
+            connection,
+            clauses + object_clauses,
+            params + object_params,
+            sorted(entity_keys),
+            budget,
+        )
+
+    def _select_objects(
+        self, connection, clauses, params, entity_keys, budget: WindowMetadataBudget, *, owners=None
+    ) -> list[dict]:
         """Gate descriptor transfer in SQL, including a single very large dataset.
 
         The caller holds a repeatable-read metadata snapshot and retention fence.
         Only an admitted collection is aggregated; a refused query returns scalar
         totals without descriptor JSON. SQL execution retains its statement budget.
         """
-        if not owners:
-            return []
-        clauses, params = self._object_time_scope(cutoff, since, cutoff)
         fields = (
             "dataset_id,source,synthetic,state,transform_version,created_at,committed_at,"
             "min_available_at,max_available_at,row_count,quarantine_count"
@@ -569,17 +629,25 @@ class Catalog:
             budget.max_objects - budget.objects,
             budget.max_bytes - budget.bytes,
         )
+        requested = "SELECT unnest(%s::text[]) AS entity_key"
+        request_params = [entity_keys]
+        memberships = "0"
+        if owners is not None:
+            requested = "SELECT * FROM unnest(%s::text[],%s::text[]) AS r(entity_key,product_id)"
+            request_params.append(list(owners.values()))
+            memberships = (
+                "(SELECT count(DISTINCT r.product_id) FROM normalized_object_entities e "
+                "JOIN requested r USING(entity_key) WHERE e.object_id=o.object_id)"
+            )
         result = connection.execute(
-            "WITH requested(entity_key,product_id) AS MATERIALIZED ("
-            "SELECT * FROM unnest(%s::text[],%s::text[])), candidates AS MATERIALIZED ("
-            "SELECT d.created_at,d.dataset_id,o.object_key," + body + " AS body,"
-            "(SELECT count(DISTINCT r.product_id) FROM normalized_object_entities e "
-            "JOIN requested r USING(entity_key) WHERE e.object_id=o.object_id) AS memberships "
+            "WITH requested AS MATERIALIZED (" + requested + "), candidates AS MATERIALIZED ("
+            "SELECT d.created_at,d.dataset_id,o.object_key,"
+            + body
+            + " AS body,"
+            + memberships
+            + " AS memberships "
             "FROM datasets d JOIN normalized_objects o USING(dataset_id) "
-            "WHERE d.state='committed' AND d.compacted_into IS NULL AND d.synthetic=%s "
-            "AND (d.min_available_at<=%s OR d.row_count=0) "
-            "AND (d.max_available_at>=%s OR d.row_count=0) "
-            "AND EXISTS(SELECT 1 FROM normalized_object_entities e JOIN requested r "
+            "WHERE EXISTS(SELECT 1 FROM normalized_object_entities e JOIN requested r "
             "USING(entity_key) WHERE e.object_id=o.object_id) AND "
             + " AND ".join(clauses)
             + " ORDER BY d.created_at,d.dataset_id,o.object_key LIMIT %s), "
@@ -589,11 +657,7 @@ class Catalog:
             "(SELECT jsonb_agg(body ORDER BY created_at,dataset_id,object_key) FROM candidates) "
             "ELSE NULL END AS records FROM admission",
             (
-                list(owners),
-                list(owners.values()),
-                synthetic,
-                cutoff,
-                since,
+                *request_params,
                 *params,
                 max_objects + 1,
                 max_objects,
@@ -685,20 +749,9 @@ class Catalog:
             return
         if dataset_ids is not None and not dataset_ids:
             return
-        clauses = ["d.state='committed'", "d.compacted_into IS NULL", "d.synthetic=%s"]
-        params: list[Any] = [synthetic]
-        if as_of:
-            clauses.append("(d.min_available_at<=%s OR d.row_count=0)")
-            params.append(as_of)
-        if since and period_window is None:
-            clauses.append("(d.max_available_at>=%s OR d.row_count=0)")
-            params.append(since)
-        if source:
-            clauses.append("d.source=%s")
-            params.append(source)
-        if dataset_ids is not None:
-            clauses.append("d.dataset_id=ANY(%s)")
-            params.append(sorted(dataset_ids))
+        clauses, params = self._dataset_scope(
+            synthetic, as_of, since, period_window, source, dataset_ids
+        )
         projection = "d.manifest"
         joins = ""
         # The entity index provides the candidate set; per-object bounds and
