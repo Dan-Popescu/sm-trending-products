@@ -250,7 +250,7 @@ def compare(
     present, absent = _summary(groups["present"]), _summary(groups["absent"])
     reasons = []
     usable = groups["present"] + groups["absent"]
-    if any(r["creator_key"] is None for r in rows):
+    if any(r["creator_key"] is None for r in usable):
         reasons.append("unknown_creator_identity")
     if any(
         g["video_count"] < MIN_GROUP_VIDEOS or g["known_creator_count"] < MIN_GROUP_CREATORS
