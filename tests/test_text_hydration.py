@@ -61,6 +61,159 @@ def count_reads(monkeypatch, pipeline):
         yield counts
 
 
+def individual_page_guards(service, connection, rows, product, synthetic, cutoff):
+    """Reference page boundary before metadata checks were batched."""
+    eligible, unavailable = [], []
+    for row in rows:
+        try:
+            eligible.append(service._guard_transcript(connection, row, product, synthetic, cutoff))
+        except EnrichmentDenied as error:
+            unavailable.append({"transcript_id": row["transcript_id"], "reason": str(error)})
+    return eligible, unavailable
+
+
+@pytest.mark.parametrize("page_size", [1, 2, 8])
+def test_batched_pages_match_individual_guards_with_bounded_sql(pipeline, monkeypatch, page_size):
+    service, value = selected(pipeline)
+    for index in range(8):
+        import_selected(service, value.model_copy(update={"text": f"Supplied text {index}."}))
+    cutoff, cursor = now(), None
+    while True:
+        inputs = {"synthetic": True, "as_of": cutoff, "limit": page_size, "after": cursor}
+        with monkeypatch.context() as individual:
+            individual.setattr(TranscriptInsights, "_guard_transcripts", individual_page_guards)
+            with count_reads(monkeypatch, pipeline) as baseline:
+                expected_ids = service.eligible_text_ids("p", **inputs)
+                expected_texts = service.read_text_page("p", **inputs)
+        with count_reads(monkeypatch, pipeline) as treatment:
+            actual_ids = service.eligible_text_ids("p", **inputs)
+            actual_texts = service.read_text_page("p", **inputs)
+        assert canonical(actual_ids) == canonical(expected_ids)
+        assert canonical(actual_texts) == canonical(expected_texts)
+        assert treatment["sql"] <= baseline["sql"]
+        # Metadata guard work stays constant as the page grows. Every hydrated
+        # text still pays its immediate individual authority refresh.
+        assert treatment["scope"] == actual_texts["scanned"]
+        with count_reads(monkeypatch, pipeline) as ids_only:
+            assert service.eligible_text_ids("p", **inputs) == actual_ids
+        assert ids_only["sql"] == 18 and ids_only["analysis_sql"] == 0
+        print(
+            {
+                "page_size": page_size,
+                "scanned": actual_ids["scanned"],
+                "baseline": dict(baseline),
+                "treatment": dict(treatment),
+                "ids_only": dict(ids_only),
+            }
+        )
+        cursor = actual_ids["next_cursor"]
+        if cursor is None:
+            break
+
+
+def test_batch_retains_each_live_source_refusal_and_committed_publication(pipeline):
+    values, ids = [], []
+    for index in range(8):
+        service, value = selected(pipeline, synthetic=False, source=f"authority_{index}")
+        pipeline.catalog.execute(
+            "INSERT INTO source_policies(source,retention_days,verified) VALUES(%s,1,true)",
+            (value.entity_key.split(":", 1)[0],),
+        )
+        values.append(value)
+        ids.append(import_selected(service, value))
+    pipeline.catalog.execute(
+        "UPDATE source_policies SET retention_days=2147483647 WHERE source='authority_0'"
+    )
+    pipeline.catalog.execute("UPDATE source_policies SET verified=false WHERE source='authority_1'")
+    pipeline.catalog.execute(
+        "UPDATE datasets SET created_at=clock_timestamp()-interval '2 days' WHERE dataset_id=%s",
+        (values[2].dataset_id,),
+    )
+    pipeline.create_product("other-live", "Other", synthetic=False)
+    pipeline.review_link("other-live", values[3].entity_key, confidence=0.5)
+    with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState, match="cannot cross"):
+        pipeline.catalog.execute(
+            "UPDATE datasets SET synthetic=true WHERE dataset_id=%s", (values[4].dataset_id,)
+        )
+    pipeline.catalog.invalidate_dataset(values[4].dataset_id, "source_removed")
+    pipeline.catalog.execute(
+        "UPDATE entities SET source='authority_0' WHERE entity_key=%s", (values[5].entity_key,)
+    )
+    pipeline.catalog.execute(
+        "UPDATE observation_deliveries SET available_at=clock_timestamp()+interval '1 day' "
+        "WHERE observation_id=%s",
+        (values[6].observation_id,),
+    )
+    pipeline.catalog.execute(
+        "UPDATE derived_publications SET state='invalidated' WHERE object_key="
+        "(SELECT descriptor#>>'{root,key}' FROM enrichment_transcripts WHERE transcript_id=%s)",
+        (ids[7],),
+    )
+    cutoff = now()
+    page = service.eligible_text_ids("live-p", as_of=cutoff)
+    assert page["items"] == [{"transcript_id": ids[0]}]
+    assert {item["transcript_id"]: item["reason"] for item in page["unavailable"]} == dict(
+        zip(
+            ids[1:],
+            [
+                "enrichment_source_policy_unverified",
+                "enrichment_source_retention_expired",
+                "enrichment_video_not_owned_at_cutoff",
+                "enrichment_source_unavailable",
+                "enrichment_source_unavailable",
+                "enrichment_source_observation_unavailable",
+                "enrichment_transcript_unavailable",
+            ],
+            strict=True,
+        )
+    )
+    # Refusals and their order match the independently invoked individual seam.
+    with pipeline.catalog.evidence_transaction(False) as connection:
+        rows = service._text_page_rows(connection, "live-p", False, cutoff, 100, None)
+        eligible, unavailable = individual_page_guards(
+            service, connection, rows, "live-p", False, cutoff
+        )
+    assert [row["transcript_id"] for row in eligible] == [ids[0]]
+    assert unavailable == page["unavailable"]
+
+
+def test_batched_ownership_uses_cutoff_and_refuses_competing_owner_ties(pipeline):
+    service, value = selected(pipeline)
+    transcript = import_selected(service, value)
+    pipeline.create_product("other", "Other", synthetic=True)
+    cutoff = now()
+    pipeline.review_link("other", value.entity_key, confidence=0.5)
+    assert service.eligible_text_ids("p", synthetic=True, as_of=cutoff)["items"] == [
+        {"transcript_id": transcript}
+    ]
+    assert service.eligible_text_ids("p", synthetic=True)["unavailable"] == [
+        {"transcript_id": transcript, "reason": "enrichment_video_not_owned_at_cutoff"}
+    ]
+    pipeline.catalog.execute(
+        "UPDATE product_links SET available_at=(SELECT min(available_at) FROM product_links "
+        "WHERE entity_key=%s) WHERE entity_key=%s",
+        (value.entity_key, value.entity_key),
+    )
+    assert service.eligible_text_ids("p", synthetic=True)["items"] == []
+    assert service.eligible_text_ids("other", synthetic=True)["items"] == []
+
+
+def test_partial_committed_roots_preserve_complete_guard_refusal(pipeline):
+    service, value = selected(pipeline)
+    transcript = import_selected(service, value)
+    descriptor = pipeline.catalog.one(
+        "SELECT descriptor FROM enrichment_transcripts WHERE transcript_id=%s", (transcript,)
+    )["descriptor"]
+    root = pipeline.provenance.roots(descriptor)[0]
+    missing = {**root, "key": "derived/synthetic/missing-root.json"}
+    with pipeline.catalog.evidence_transaction(True) as connection:
+        committed = pipeline.provenance.committed_roots(connection, [root, root, missing])
+        assert set(committed) == {root["key"]}
+        assert pipeline.provenance.guard(connection, [root, root]) == committed
+        with pytest.raises(ValueError, match="provenance was invalidated"):
+            pipeline.provenance.guard(connection, [root, root, missing])
+
+
 @pytest.mark.parametrize("text_count", [1, 8])
 def test_content_report_matches_legacy_bytes_with_less_guarded_work(
     pipeline, monkeypatch, text_count
@@ -190,9 +343,11 @@ def test_hydration_excludes_future_text_context_and_wrong_workspace(pipeline):
     assert service.read_text_page("p", synthetic=True, as_of=cutoff + timedelta(hours=2))["items"]
 
 
-@pytest.mark.parametrize("change", ["revocation", "ownership", "observation"])
+@pytest.mark.parametrize(
+    "change", ["revocation", "retention", "ownership", "observation", "source", "publication"]
+)
 def test_hydration_refreshes_authority_after_page_selection(pipeline, monkeypatch, change):
-    live = change == "revocation"
+    live = change in {"revocation", "retention"}
     service, value = selected(pipeline, synthetic=not live)
     if live:
         pipeline.catalog.execute(
@@ -202,12 +357,12 @@ def test_hydration_refreshes_authority_after_page_selection(pipeline, monkeypatc
     transcript = import_selected(service, value)
     product = value.product_id
     cutoff = now() + timedelta(minutes=1) if not live else now()
-    guard = service._guard_transcript
+    guard = service._guard_transcripts
     checked = False
 
-    def change_after_selection(connection, row, *args):
+    def change_after_selection(connection, rows, *args):
         nonlocal checked
-        result = guard(connection, row, *args)
+        result = guard(connection, rows, *args)
         if not checked:
             checked = True
             if change == "revocation":
@@ -218,6 +373,24 @@ def test_hydration_refreshes_authority_after_page_selection(pipeline, monkeypatc
             elif change == "ownership":
                 pipeline.create_product("other", "Other owner", synthetic=True)
                 pipeline.review_link("other", value.entity_key)
+            elif change == "retention":
+                pipeline.catalog.execute(
+                    "UPDATE datasets SET created_at=clock_timestamp()-interval '2 days' "
+                    "WHERE dataset_id=%s",
+                    (value.dataset_id,),
+                )
+            elif change == "source":
+                pipeline.catalog.execute(
+                    "UPDATE entities SET source='different_source' WHERE entity_key=%s",
+                    (value.entity_key,),
+                )
+            elif change == "publication":
+                pipeline.catalog.execute(
+                    "UPDATE derived_publications SET state='invalidated' WHERE object_key="
+                    "(SELECT descriptor#>>'{root,key}' FROM enrichment_transcripts "
+                    "WHERE transcript_id=%s)",
+                    (transcript,),
+                )
             else:
                 pipeline.catalog.execute(
                     "UPDATE observation_deliveries SET available_at=%s WHERE observation_id=%s",
@@ -225,7 +398,7 @@ def test_hydration_refreshes_authority_after_page_selection(pipeline, monkeypatc
                 )
         return result
 
-    monkeypatch.setattr(service, "_guard_transcript", change_after_selection)
+    monkeypatch.setattr(service, "_guard_transcripts", change_after_selection)
     page = service.read_text_page(product, synthetic=not live, as_of=cutoff)
     assert checked and page["scanned"] == 1
     assert page["items"] == []

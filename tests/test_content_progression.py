@@ -6,7 +6,7 @@ from datetime import timedelta
 
 import pytest
 from test_evaluation_integration import record
-from test_text_hydration import count_reads
+from test_text_hydration import count_reads, individual_page_guards
 
 from sm_trending_products.catalog import InvalidationPending
 from sm_trending_products.content_insights import DEFAULT_TAXONOMY
@@ -607,6 +607,26 @@ def test_final_eligibility_ignores_analysis_states_with_exact_report_bytes(pipel
         assert baseline["analysis_sql"] == 8 and treatment["analysis_sql"] == 0
         assert treatment["sql"] < baseline["sql"]
         print({"state": state, "baseline": dict(baseline), "treatment": dict(treatment)})
+
+
+@pytest.mark.parametrize("text_count", [1, 8])
+def test_progression_batches_both_metadata_guards_with_exact_report_bytes(
+    pipeline, monkeypatch, text_count
+):
+    _, _, _, cutoff = seed(pipeline, texts=["It can save time."] * text_count)
+    service = ContentProgression(pipeline.catalog, pipeline.history, pipeline.provenance)
+    with monkeypatch.context() as individual:
+        individual.setattr(TranscriptInsights, "_guard_transcripts", individual_page_guards)
+        with count_reads(monkeypatch, pipeline) as baseline:
+            expected = canonical(service.describe("patterns", cutoff, True, window_hours=12))
+    with count_reads(monkeypatch, pipeline) as treatment:
+        actual = canonical(service.describe("patterns", cutoff, True, window_hours=12))
+    assert actual == expected
+    assert treatment["scope"] == text_count
+    assert treatment["sql"] <= baseline["sql"]
+    if text_count > 1:
+        assert treatment["sql"] < baseline["sql"]
+    print({"texts": text_count, "baseline": dict(baseline), "treatment": dict(treatment)})
 
 
 def test_final_text_and_metric_checks_share_retention_fence_without_holding_history(

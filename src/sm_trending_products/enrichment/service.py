@@ -12,9 +12,9 @@ from psycopg.types.json import Jsonb
 
 from ..catalog import Catalog
 from ..contracts import digest, utc
-from ..identity_rules import LINK_STATE_CTES
 from ..module_schema import initialize_module, require_module
 from ..provenance import Provenance
+from ._eligibility import source_checks
 from .contracts import (
     IDENTIFIER,
     EnrichmentBudget,
@@ -95,46 +95,13 @@ class TranscriptInsights:
 
     def _scope(self, connection, product, entity, dataset, synthetic, cutoff, observation):
         self.catalog.guard_namespace(connection, synthetic)
-        try:
-            self.catalog.guard_inputs(connection, [dataset])
-        except ValueError:
-            raise EnrichmentDenied("enrichment_source_unavailable") from None
-        owner = connection.execute(
-            "WITH "
-            + LINK_STATE_CTES
-            + "SELECT product_id,confidence FROM resolved_link_owners WHERE entity_key=%s",
-            (synthetic, cutoff, cutoff, entity),
-        ).fetchone()
-        if not owner or owner["product_id"] != product or owner["confidence"] < 0.9:
-            raise EnrichmentDenied("enrichment_video_not_owned_at_cutoff")
-        source = connection.execute(
-            "SELECT d.*,p.verified,p.retention_days,clock_timestamp() AS checked_at "
-            "FROM datasets d LEFT JOIN source_policies p USING(source) "
-            "JOIN entities e ON e.entity_key=%s AND e.synthetic=d.synthetic "
-            "AND e.source=d.source WHERE d.dataset_id=%s AND d.synthetic=%s",
-            (entity, dataset, synthetic),
-        ).fetchone()
-        if not source or source["created_at"] > cutoff:
-            raise EnrichmentDenied("enrichment_source_unavailable")
-        if not synthetic:
-            if source["verified"] is not True:
-                raise EnrichmentDenied("enrichment_source_policy_unverified")
-            if (
-                source["retention_days"] is not None
-                and (source["checked_at"] - source["created_at"]).total_seconds()
-                >= source["retention_days"] * 86400
-            ):
-                raise EnrichmentDenied("enrichment_source_retention_expired")
-        delivered = connection.execute(
-            "SELECT min(o.available_at) AS available_at FROM observation_deliveries o "
-            "JOIN normalized_objects n ON n.object_id=o.object_id "
-            "WHERE n.dataset_id=%s AND o.entity_key=%s "
-            "AND o.observation_id=%s AND o.available_at<=%s",
-            (dataset, entity, observation, cutoff),
-        ).fetchone()
-        if not delivered or delivered["available_at"] is None:
-            raise EnrichmentDenied("enrichment_source_observation_unavailable")
-        return delivered["available_at"]
+        self.catalog.guard_retention(connection)
+        decision = source_checks(
+            connection, product, [(entity, dataset, observation)], synthetic, cutoff
+        )[0]
+        if decision["reason"] is not None:
+            raise EnrichmentDenied(decision["reason"])
+        return decision["available_at"]
 
     def import_transcript(self, value: TranscriptInput, *, as_of: datetime | None = None) -> dict:
         value = revalidate(TranscriptInput, value)
@@ -297,6 +264,62 @@ class TranscriptInsights:
         except ValueError:
             raise EnrichmentDenied("enrichment_transcript_unavailable") from None
         return row
+
+    def _guard_transcripts(self, connection, rows, product, synthetic, cutoff):
+        """Apply the individual transcript boundary in bounded metadata batches."""
+        self.catalog.guard_namespace(connection, synthetic)
+        self.catalog.guard_retention(connection)
+        candidates = [
+            row for row in rows if row["synthetic"] == synthetic and row["available_at"] <= cutoff
+        ]
+        checks = source_checks(
+            connection,
+            product,
+            [
+                (row["entity_key"], row["source_dataset_id"], row["observation_id"])
+                for row in candidates
+            ],
+            synthetic,
+            cutoff,
+        )
+        reasons = {
+            row["transcript_id"]: check["reason"]
+            for row, check in zip(candidates, checks, strict=True)
+        }
+        roots_by_row = {
+            row["transcript_id"]: self.provenance.roots(row["descriptor"])
+            for row in candidates
+            if reasons[row["transcript_id"]] is None
+        }
+        # Each namespace crosses the same provenance gate as an individual row.
+        # A refused namespace must not hide valid rows from another namespace.
+        roots_by_namespace: dict[str, dict] = {}
+        for roots in roots_by_row.values():
+            for root in roots:
+                key = root["key"]
+                namespace = key.split("/")[1] if "/" in key else ""
+                roots_by_namespace.setdefault(namespace, {})[key] = root
+        committed = {}
+        for namespace_roots in roots_by_namespace.values():
+            try:
+                committed.update(
+                    self.provenance.committed_roots(connection, list(namespace_roots.values()))
+                )
+            except ValueError:
+                continue
+        eligible, unavailable = [], []
+        for row in rows:
+            transcript = row["transcript_id"]
+            reason = reasons.get(transcript, "enrichment_transcript_unavailable")
+            if reason is None and any(
+                root["key"] not in committed for root in roots_by_row[transcript]
+            ):
+                reason = "enrichment_transcript_unavailable"
+            if reason is None:
+                eligible.append(row)
+            else:
+                unavailable.append({"transcript_id": transcript, "reason": reason})
+        return eligible, unavailable
 
     @staticmethod
     def _validate_text_page(product_id, synthetic, limit, after):
@@ -491,16 +514,10 @@ class TranscriptInsights:
             cutoff = self._clock(connection, as_of, synthetic)
             self.catalog.guard_namespace(connection, synthetic)
             rows = self._text_page_rows(connection, product_id, synthetic, cutoff, limit, after)
-            for row in rows[:limit]:
-                try:
-                    self._transcript(
-                        connection, row["transcript_id"], product_id, synthetic, cutoff
-                    )
-                    items.append({"transcript_id": row["transcript_id"]})
-                except EnrichmentDenied as error:
-                    unavailable.append(
-                        {"transcript_id": row["transcript_id"], "reason": str(error)}
-                    )
+            eligible, unavailable = self._guard_transcripts(
+                connection, rows[:limit], product_id, synthetic, cutoff
+            )
+            items = [{"transcript_id": row["transcript_id"]} for row in eligible]
         return self._text_page(product_id, synthetic, cutoff, rows, limit, items, unavailable)
 
     def read_text_page(
@@ -526,16 +543,9 @@ class TranscriptInsights:
             cutoff = self._clock(connection, as_of, synthetic)
             self.catalog.guard_namespace(connection, synthetic)
             rows = self._text_page_rows(connection, product_id, synthetic, cutoff, limit, after)
-            eligible = []
-            for row in rows[:limit]:
-                try:
-                    eligible.append(
-                        self._guard_transcript(connection, row, product_id, synthetic, cutoff)
-                    )
-                except EnrichmentDenied as error:
-                    unavailable.append(
-                        {"transcript_id": row["transcript_id"], "reason": str(error)}
-                    )
+            eligible, unavailable = self._guard_transcripts(
+                connection, rows[:limit], product_id, synthetic, cutoff
+            )
             canonical = {}
             for row in sorted(
                 eligible, key=lambda item: (item["available_at"], item["transcript_id"])
