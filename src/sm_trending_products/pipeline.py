@@ -267,6 +267,30 @@ class Pipeline:
     ) -> list[dict]:
         return self.identity.products(synthetic=synthetic, limit=limit, offset=offset)
 
+    def products_by_ids(
+        self,
+        product_ids: Sequence[str],
+        synthetic: bool = False,
+        *,
+        as_of: datetime | None = None,
+    ) -> list[dict]:
+        """Resolve only a bounded shortlist under the current evidence/namespace guard."""
+        from .product_shortlist import shortlist_ids
+
+        ids = shortlist_ids(product_ids)
+        if type(synthetic) is not bool:
+            raise ValueError("Invalid product workspace")
+        cutoff = utc(as_of or now())
+        if not ids:
+            return []
+        return self.catalog.evidence_all(
+            "SELECT product_id,name,created_at,synthetic,market FROM products "
+            "WHERE product_id=ANY(%s) AND synthetic=%s AND created_at<=%s "
+            "ORDER BY array_position(%s::text[],product_id)",
+            (list(ids), synthetic, cutoff, list(ids)),
+            synthetic=synthetic,
+        )
+
     def _all_products(self, synthetic: bool, as_of: datetime) -> list[dict]:
         return self.identity.all_products(as_of, synthetic=synthetic)
 
