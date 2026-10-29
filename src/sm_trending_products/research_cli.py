@@ -20,6 +20,7 @@ COMMANDS = {
         "Preview useful texts or explicitly apply local analysis",
     ),
     "brief": ("decision_brief_cli", "Explain support, contrary evidence and missing facts"),
+    "changes": ("decision_changes_cli", "Explain changes between two evidence cutoffs"),
 }
 
 
