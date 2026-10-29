@@ -9,6 +9,9 @@ from uuid import uuid4
 import streamlit as st
 
 from .content_research_dashboard import _read_upload
+from .display_safety import current_display_secrets, display_json
+from .product_display import product_labels
+from .product_shortlist import MAX_SHORTLIST_PRODUCTS, shortlist_ids, shortlist_workspace
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
@@ -24,15 +27,73 @@ def render_text_selection(
         "audio extraction or paid provider. Known themes and roles are operator attestations; "
         "unknown metadata remains unknown."
     )
-    if not products:
+    try:
+        workspace = shortlist_workspace(pipeline.catalog, synthetic)
+        # Changing the actual database/schema drops old selection IDs. Retain both
+        # real/synthetic selections only within this one current workspace.
+        for key in list(st.session_state):
+            if (
+                isinstance(key, str)
+                and key.startswith(("_research-text-shortlist:", "research-text-shortlist:"))
+                and f":{workspace}:" not in key
+            ):
+                del st.session_state[key]
+        saved_key = f"_research-text-shortlist:{workspace}:{synthetic}"
+        widget_key = f"research-text-shortlist:{workspace}:{synthetic}"
+        saved = shortlist_ids(st.session_state.get(saved_key, []))
+        current = pipeline.products_by_ids(saved, synthetic, as_of=as_of)
+        retained = [row["product_id"] for row in current]
+        if len(products) > 200:
+            raise ValueError("The product page exceeds its bounded scope")
+        page_ids = [row["product_id"] for row in products]
+        if len(page_ids) != len(set(page_ids)):
+            raise ValueError("Duplicate product page identifiers")
+        for identifier in page_ids:
+            shortlist_ids((identifier,))
+        secrets = current_display_secrets()
+        labels = product_labels(list(dict.fromkeys([*retained, *page_ids])), secret_values=secrets)
+    except Exception:
+        st.error("La sélection est indisponible. Vérifier les produits et leur espace de travail.")
+        return
+    if tuple(retained) != saved:
+        st.warning("Des produits devenus indisponibles ont été retirés de la sélection.")
+    st.session_state[saved_key] = retained
+    if not products and not retained:
         st.info("Create a product with eligible supplied text first.")
         return
+    if st.button("Effacer la sélection de cet espace", key=f"research-text-clear:{synthetic}"):
+        retained = []
+        st.session_state[saved_key] = []
+        st.session_state[widget_key] = []
+    st.caption(
+        "La sélection conserve au plus dix identifiants dans cet espace, même sur une autre "
+        "page du catalogue. Retirez une étiquette pour exclure un produit. "
+        "Les produits conservés restent visibles parmi les choix."
+    )
+    # Off-page selections remain widget options. Never retain product rows or names.
+    options = list(dict.fromkeys([*retained, *page_ids]))
+    st.session_state[widget_key] = retained
+
+    def remember_selection() -> None:
+        st.session_state[saved_key] = list(shortlist_ids(st.session_state[widget_key]))
+
     selected = st.multiselect(
         "Product shortlist for supplied text (maximum ten)",
-        [row["product_id"] for row in products],
-        max_selections=10,
-        key="research-text-shortlist",
+        options,
+        max_selections=MAX_SHORTLIST_PRODUCTS,
+        key=widget_key,
+        on_change=remember_selection,
+        format_func=labels.__getitem__,
     )
+    st.session_state[saved_key] = list(shortlist_ids(selected))
+
+    def current_selection() -> tuple[str, ...]:
+        identifiers = shortlist_ids(selected)
+        resolved = pipeline.products_by_ids(identifiers, synthetic, as_of=as_of)
+        if not identifiers or {row["product_id"] for row in resolved} != set(identifiers):
+            raise ValueError("The complete selected product scope must remain available")
+        return identifiers
+
     config_file = st.file_uploader(
         "Selection configuration JSON (optional, at most 128 KiB)",
         type=["json"],
@@ -48,7 +109,6 @@ def render_text_selection(
         from .collector import redact
         from .content_research_cli import _cursor
         from .contracts import canonical
-        from .dashboard import display_safe
         from .text_selection import TextSelection, TextSelectionConfig
 
         try:
@@ -65,18 +125,18 @@ def render_text_selection(
                     raise ValueError("A cursor must be a string")
                 _cursor(cursor)
             plan = TextSelection(pipeline.catalog, pipeline.provenance).preview(
-                selected, config=config, synthetic=synthetic, as_of=as_of, after=after
+                current_selection(), config=config, synthetic=synthetic, as_of=as_of, after=after
             )
+            displayed_plan = display_json(redact(plan), secret_values=current_display_secrets())
+            encoded = canonical(plan)
         except Exception:
             st.error(
                 "The preview is unavailable. Check the selected products, bounded configuration, "
                 "cursors, transcript initialization and current source access."
             )
         else:
-            safe_plan = display_safe(redact(plan))
-            st.json(safe_plan)
-            encoded = canonical(plan)
-            if canonical(safe_plan) != encoded:
+            st.json(displayed_plan)
+            if canonical(json.loads(displayed_plan)) != encoded:
                 st.warning(
                     "This plan contains private metadata and cannot be exported. "
                     "Correct its source metadata before creating an apply-ready plan."
@@ -113,7 +173,6 @@ def render_text_selection(
     )
     if st.button("Apply reviewed plan with free local rules", key="research-text-apply"):
         from .collector import redact
-        from .dashboard import display_safe
         from .text_selection import TextSelection, TextSelectionPlan
 
         st.session_state[remembered_key] = prefix
@@ -122,7 +181,7 @@ def render_text_selection(
                 raise ValueError("Upload the reviewed complete plan")
             reviewed_plan = TextSelectionPlan.model_validate(_read_upload(plan_file))
             if reviewed_plan.synthetic != synthetic or set(reviewed_plan.product_ids) != set(
-                selected
+                current_selection()
             ):
                 raise ValueError("The plan must match the visible namespace and shortlist")
             result = TextSelection(pipeline.catalog, pipeline.provenance).execute(
@@ -136,4 +195,14 @@ def render_text_selection(
         else:
             if result["state"] != "completed":
                 st.warning("Some selected texts were denied. Inspect the per-text reasons.")
-            st.json(display_safe(redact(result)))
+            try:
+                displayed_result = display_json(
+                    redact(result), secret_values=current_display_secrets()
+                )
+            except (ValueError, TypeError, RecursionError):
+                st.error(
+                    "Le résultat ne peut pas être affiché en sécurité. "
+                    "Vérifiez avec le même identifiant de requête."
+                )
+            else:
+                st.json(displayed_result)

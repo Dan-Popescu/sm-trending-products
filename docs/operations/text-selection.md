@@ -135,6 +135,32 @@ plan with an invalid identity. Nonsecret downloads retain the exact executable
 plan. Any interaction clears the previous derived output. Source
 withdrawal and daily budgets remain authoritative at every application.
 
+The private shortlist keeps at most ten canonical product IDs across the
+catalog's 200-product pages. Retained off-page IDs remain selectable tags; remove
+a tag or use the explicit clear button to change the scope. An empty catalog
+page does not discard a retained selection. Real and synthetic selections are
+separate. A change of actual database, role or schema discards the old workspace's
+shortlist; session keys use an opaque connection-context fingerprint, never a
+connection DSN. Product names, source quotations, plans and results are not copied
+into shortlist state.
+
+`Pipeline.products_by_ids` resolves at most ten distinct canonical IDs through
+one guarded indexed-ID predicate, with namespace and requested cutoff checks.
+Unavailable IDs are removed with a notice during rendering. Preview and apply
+resolve the complete selected scope again at the action, then retain the existing
+text service's current ownership, source-access, plan-identity and budget guards.
+No catalog scan, raw evidence fetch or optional-module initialization is added
+to navigation. Identifier labels use current-secret display sanitization; plan
+downloads still require exact equality with the original executable plan.
+All product selectors share `product_display.product_labels`. If masking makes
+two labels identical, it adds ordinal prefixes and sanitizes the complete labels
+again. Labels that still collide are refused; the canonical IDs and action scope
+never change to match the displayed text.
+Preview and result JSON pass through the shared final JSON serializer before
+`st.json` receives a string: Unicode escapes or other JSON representation changes
+cannot recreate a current credential. Downloads compare the final displayed
+payload with the original canonical plan and refuse any changed body.
+
 Native CLI and Streamlit cases, including preview-only behavior, budget denials,
 saved-plan replay and withdrawal after preview, are in
 `tests/test_text_selection_operator.py`.
