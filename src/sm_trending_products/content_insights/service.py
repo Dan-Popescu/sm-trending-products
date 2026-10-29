@@ -10,13 +10,15 @@ from datetime import datetime
 from typing import Any
 
 from ..catalog import Catalog
-from ..contracts import digest, utc
+from ..contracts import canonical, digest, utc
 from ..enrichment import TranscriptInsights
 from ..enrichment.contracts import revalidate
 from ..provenance import Provenance
+from ._memo import _ClassificationMemo
 from .contracts import DEFAULT_TAXONOMY, ContentTaxonomy
 
 METHOD = "quoted-theme-mentions-v2"
+_SCRIPT_METHOD = "nfkd-casefold-words-sha256-v1"
 MAX_MENTIONS_PER_TEXT = 24
 
 
@@ -134,9 +136,11 @@ class ContentInsights:
         as_of: datetime | None = None,
         limit: int = 100,
         after: str | None = None,
+        _memo: _ClassificationMemo | None = None,
     ) -> dict:
         cutoff = utc(as_of) if as_of is not None else self.texts.resolve_cutoff(synthetic=synthetic)
         taxonomy = revalidate(ContentTaxonomy, taxonomy)
+        taxonomy_identity = canonical(taxonomy.model_dump(mode="json")) if _memo is not None else ""
         if taxonomy.reviewed_at > cutoff:
             raise ValueError("Content taxonomy was not reviewed at this cutoff")
         page = self.texts.read_text_page(
@@ -165,7 +169,21 @@ class ContentInsights:
                 "context_reference": context.get("reference"),
                 "context_known_at": context.get("known_at"),
             }
-            result, folded = _classify_with_fold(item["text"], item["language"], taxonomy)
+            # Only freshly hydrated eligible text reaches this pure memo. Source
+            # identities, context, attribution and eligibility never enter it.
+            key = (item["text"], item["language"], taxonomy_identity, METHOD, _SCRIPT_METHOD)
+            cached = _memo.get(key) if _memo is not None else None
+            if cached is None:
+                result, folded = _classify_with_fold(item["text"], item["language"], taxonomy)
+                if folded is None:  # Unsupported classification still fingerprints full text.
+                    folded = _fold_with_offsets(item["text"])[0]
+                script_key = hashlib.sha256(
+                    " ".join(re.findall(r"\w+", folded)).encode()
+                ).hexdigest()
+                if _memo is not None:
+                    _memo.remember(key, result, script_key)
+            else:
+                result, script_key = cached
             record = (
                 {
                     key: item[key]
@@ -182,9 +200,6 @@ class ContentInsights:
                 | result
             )
             texts.append(record)
-            if folded is None:  # Unsupported classification did not need a text scan.
-                folded = _fold_with_offsets(item["text"])[0]
-            script_key = hashlib.sha256(" ".join(re.findall(r"\w+", folded)).encode()).hexdigest()
             scripts[script_key].append(item["content_key"])
             for mention in result["mentions"]:
                 theme = themes[mention["theme_id"]]
