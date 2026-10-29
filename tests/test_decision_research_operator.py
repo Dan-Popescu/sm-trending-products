@@ -124,6 +124,9 @@ def test_installed_brief_command_matches_public_module_and_never_initializes(
     )
     monkeypatch.setenv("S3_BUCKET", pipeline.settings.s3_bucket)
     monkeypatch.setenv("S3_ENDPOINT_URL", pipeline.settings.s3_endpoint_url)
+    tables_before = pipeline.catalog.all(
+        "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename"
+    )
     expected = pipeline.decision_brief().describe("trend", "FR", cutoff, True)
     assert (
         main(
@@ -148,6 +151,12 @@ def test_installed_brief_command_matches_public_module_and_never_initializes(
         pipeline.catalog.all("SELECT * FROM application_module_migrations ORDER BY module,version")
         == modules
     )
+    assert (
+        pipeline.catalog.all(
+            "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename"
+        )
+        == tables_before
+    )
 
 
 def test_private_research_navigation_runs_only_requested_brief_and_clears_it(pipeline, monkeypatch):
@@ -157,6 +166,9 @@ def test_private_research_navigation_runs_only_requested_brief_and_clears_it(pip
     )
     monkeypatch.setenv("S3_BUCKET", pipeline.settings.s3_bucket)
     monkeypatch.setenv("S3_ENDPOINT_URL", pipeline.settings.s3_endpoint_url)
+    tables_before = pipeline.catalog.all(
+        "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename"
+    )
     source = """
 from sm_trending_products.pipeline import Pipeline
 from sm_trending_products.dashboard import render_dashboard
@@ -169,12 +181,12 @@ with Pipeline.from_env() as pipeline:
     app.sidebar.radio[0].set_value("Decision research").run()
     assert not app.exception
     assert not app.json
+    next(widget for widget in app.text_input if widget.label.startswith("Pays cible")).set_value(
+        "FR"
+    ).run()
     next(
-        widget for widget in app.text_input if widget.label.startswith("Target country")
-    ).set_value("FR").run()
-    next(widget for widget in app.button if widget.label == "Build decision brief").click().run(
-        timeout=30
-    )
+        widget for widget in app.button if widget.label == "Construire le dossier de décision"
+    ).click().run(timeout=30)
     assert not app.exception and not app.error
     assert app.json
     report = json.loads(app.json[-1].value)
@@ -193,6 +205,12 @@ with Pipeline.from_env() as pipeline:
     assert (
         pipeline.catalog.all("SELECT * FROM application_module_migrations ORDER BY module,version")
         == modules
+    )
+    assert (
+        pipeline.catalog.all(
+            "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename"
+        )
+        == tables_before
     )
 
 

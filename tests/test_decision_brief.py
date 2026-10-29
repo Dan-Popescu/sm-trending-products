@@ -36,8 +36,16 @@ def codes(result, bucket):
 def test_partial_brief_never_initializes_modules_or_turns_absence_into_success(pipeline):
     pipeline.create_product("p1", "Selected physical product", synthetic=True)
     cutoff = now()
-    modules = pipeline.catalog.all(
-        "SELECT * FROM application_module_migrations ORDER BY module,version"
+    tables_before = pipeline.catalog.all(
+        "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename"
+    )
+    registry_exists = pipeline.catalog.one(
+        "SELECT to_regclass('application_module_migrations') AS relation"
+    )["relation"]
+    registry_before = (
+        pipeline.catalog.all("SELECT * FROM application_module_migrations ORDER BY module,version")
+        if registry_exists
+        else []
     )
     report = brief(pipeline, cutoff=cutoff, taxonomy_id="reviewed")
     assert report["status"] == "watch"
@@ -52,9 +60,18 @@ def test_partial_brief_never_initializes_modules_or_turns_absence_into_success(p
         report["report_id"] == brief(pipeline, cutoff=cutoff, taxonomy_id="reviewed")["report_id"]
     )
     assert (
-        pipeline.catalog.all("SELECT * FROM application_module_migrations ORDER BY module,version")
-        == modules
+        pipeline.catalog.all(
+            "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename"
+        )
+        == tables_before
     )
+    if registry_exists:
+        assert (
+            pipeline.catalog.all(
+                "SELECT * FROM application_module_migrations ORDER BY module,version"
+            )
+            == registry_before
+        )
 
 
 def test_unavailable_commerce_retains_exact_distinct_assumption_selections(pipeline):

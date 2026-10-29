@@ -9,21 +9,20 @@ from __future__ import annotations
 import hashlib
 import math
 import os
-import re
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import streamlit as st
 
 from sm_trending_products.contracts import canonical, utc
+from sm_trending_products.display_safety import SECRET_KEY
+from sm_trending_products.display_safety import TOKEN_VALUE as TOKEN_VALUE
+from sm_trending_products.display_safety import display_safe as display_safe
 
 Row = dict[str, Any]
 DIMENSIONS = ("attention", "demand", "competition", "feasibility")
-SECRET_KEY = re.compile(r"token|password|secret|authorization|credential|database_url|dsn", re.I)
-TOKEN_VALUE = re.compile(r"\b(?:act|clt)\.[A-Za-z0-9._~-]+|Bearer\s+\S+", re.I)
 MAX_REVIEW_ROWS = 200
 EVIDENCE_PAGE_SIZE = 100
 
@@ -131,41 +130,6 @@ class DashboardPipeline(Protocol):
         limit: int = 100,
         offset: int = 0,
     ) -> Row: ...
-
-
-def display_safe(value: Any) -> Any:
-    """Remove secret-bearing metadata before rendering a public facade result."""
-    if isinstance(value, Mapping):
-        return {
-            str(key): "[redacted]" if SECRET_KEY.search(str(key)) else display_safe(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [display_safe(item) for item in value]
-    if isinstance(value, str):
-        if value.startswith(("postgres://", "postgresql://")):
-            return "[connection details redacted]"
-        result = TOKEN_VALUE.sub("[redacted]", value)
-        if result.startswith(("https://", "http://")):
-            try:
-                parsed = urlsplit(result)
-                netloc = parsed.netloc.rsplit("@", 1)[-1]
-                query = urlencode(
-                    [
-                        (
-                            key,
-                            "[redacted]"
-                            if SECRET_KEY.search(key) or "signature" in key.lower()
-                            else item,
-                        )
-                        for key, item in parse_qsl(parsed.query, keep_blank_values=True)
-                    ]
-                )
-                return urlunsplit((parsed.scheme, netloc, parsed.path, query, parsed.fragment))
-            except ValueError:
-                return "[invalid URL]"
-        return result
-    return value
 
 
 def _read[T](label: str, operation: Callable[[], T], fallback: T) -> T:

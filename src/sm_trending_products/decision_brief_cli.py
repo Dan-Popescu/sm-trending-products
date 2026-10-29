@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from .contracts import canonical, now, utc
+from .display_safety import current_display_secrets as presentation_secrets
 
 MAX_INPUT_BYTES = 128 * 1024
 
@@ -77,6 +78,12 @@ def parser() -> argparse.ArgumentParser:
         "--query-scope", help="Explicit observed query scope; never supplies missing facts"
     )
     root.add_argument("--source")
+    root.add_argument(
+        "--format",
+        choices=("json", "text", "html"),
+        default="json",
+        help="Output format; text and HTML are bounded French exports. Default JSON is unchanged.",
+    )
     root.add_argument("--max-rows", type=int, default=50_000)
     root.add_argument("--max-products", type=int, default=1000)
     root.add_argument("--text-limit", type=int, default=100)
@@ -164,7 +171,15 @@ def main(argv: list[str] | None = None) -> int:
                 query_scope=args.query_scope,
                 source=args.source,
             )
-        print(canonical(redact(report)))
+        if args.format == "json":
+            print(canonical(redact(report)))
+        else:
+            from .decision_brief_presentation import present_brief, render_html, render_text
+
+            secrets = presentation_secrets()
+            view = present_brief(report, secret_values=secrets)
+            render = render_html if args.format == "html" else render_text
+            print(render(view, secret_values=secrets))
         return 0
     except KeyboardInterrupt:
         return 130

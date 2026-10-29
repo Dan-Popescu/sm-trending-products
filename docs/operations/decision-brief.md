@@ -81,6 +81,17 @@ Each complete scenario that misses its declared target remains contrary evidence
 even when other scenarios are incomplete. The latter still contribute missing
 information; they neither hide a calculated downside nor become assumed losses.
 
+Text support requires actual candidate mentions from the authoritative quoted
+content report. It reports their mention count and the number of distinct supplied
+texts containing them. Merely available texts, complete scans with no mentions
+and unsupported languages cannot create positive theme support. Availability
+without interpreted candidate mentions is a missing-information note, without
+inferring an absence of demand. Negated and ambiguous mentions retain separate
+counts and context-review notes, including when candidates coexist in the same
+text. Exact quotes, offsets, source eligibility and language gaps stay in the
+underlying content report. No mention establishes the claimed product benefit,
+buyer demand, sales or a commercial recommendation.
+
 ## Work and storage bounds
 
 Defaults are at most 50,000 history rows per component report, 1,000 compact
@@ -101,6 +112,86 @@ token: its references must pass current guards before retrieving source content.
 
 Native acceptance and source-withdrawal scenarios are in
 `tests/test_decision_brief.py`.
+
+## French reading view and explicit exports
+
+The private selected-product view presents the same guarded brief in French.
+It explains the navigation state, target country, observation cutoff, exact
+selected dossier revision, measured bounds and units, support, contrary evidence,
+missing facts and useful next checks. Economic contributions remain declared
+per-order scenarios, including known adverse results beside incomplete scenarios.
+Quote readiness keeps its current evaluation time separate from the cutoff.
+Overlapping aggregate windows are displayed as quantities rather than an invented
+time series. Video views and advertising reach are never added together.
+
+The pure interface is `present_brief(report, secret_values=())`, returning a
+`BriefPresentation`. `render_text(view)` and `render_html(view)` produce standalone
+French exports; the private UI consumes the same view. It performs no source reads,
+analysis, writes or environment access. Adapters refresh runtime credential values
+and apply redaction on each requested action before presentation. Copies strip
+URL credentials, sensitive query fields and secret-bearing metadata. Query keys
+and values are scrubbed after decoding and before URL encoding. Redaction is
+reapplied after URL normalization and generated human prose; renderers accept
+the same explicit `secret_values` for the final text/HTML output boundary. A
+redaction marker cannot introduce a bound secret. HTML escapes
+all source-derived strings and includes inert, collapsed technical JSON. Sanitizing
+a copy never rewrites the analytical report or an executable plan.
+
+Research adapters share `display_safety.sanitize_display(value, secret_values=...)`
+and `scrub_display_text(text, secret_values=...)`. Only the explicit adapter reader
+`current_display_secrets()` accesses the environment. Sensitive numeric, boolean
+or null echoes become redacted strings before JSON serialization; technical UI
+details receive the same protection as prose. The brief keeps its original
+2 MiB/40,000-node presentation limits within the shared helper's 4 MB/200,000-node
+ceiling.
+
+Technical JSON widgets receive `display_safety.display_json(...)` as a final
+string, so a widget cannot recreate a current credential by escaping Unicode
+markers. The helper uses literal Unicode, reapplies current-value scrubbing after
+JSON encoding, validates syntax and bounds final bytes. Its result is a display
+copy; executable-plan equality and export refusal remain the caller's responsibility.
+
+The product selector masks current credentials before any analysis runs, while
+retaining the exact canonical ID for an explicit build. Refreshing its safe labels
+preserves the selected product. Build-time credential redaction refreshes again
+after the guarded report read.
+All research selectors share the bounded `product_display.product_labels` mapping.
+Masked labels remain distinct, while its map keys retain exact canonical IDs.
+If safe disambiguation is impossible, the view refuses selection before analysis.
+
+Presentation reads section keys, null availability and status codes from the
+authoritative structure. It then sanitizes generated prose values and an
+independent technical copy. A credential that happens to match a structural key
+or scalar cannot hide contrary evidence, change readiness or cause a routing
+exception.
+Human adapters pass the original structure to presentation; legacy collector
+redaction still applies to the unchanged default raw-JSON branch. The shared
+display sanitizer retains bare credential-assignment masking after prose
+composition, alongside URL, metadata and current-value protections.
+
+Use the opt-in format flag and shell redirection for an explicit local export:
+
+```bash
+sm-trends research brief --product-id LAMP --target-country FR --format text
+sm-trends research brief --product-id LAMP --target-country FR --format html > brief.html
+```
+
+The default `--format json` retains the existing canonical raw JSON and analytical
+identifiers. Human presentation refuses inputs exceeding 40,000 nodes, 32 nested
+levels or 2 MiB of string data, and exports exceeding 2 MiB. It never silently
+truncates missing or adverse evidence to produce a successful export. Unknown
+future codes receive an explicit uninterpreted explanation; their original codes
+and references remain in secondary technical details.
+
+No report runs merely by navigating. Every interaction clears the displayed
+derived report; no report or source quotation is stored in session state. A new
+explicit build calls the guarded service again, so withdrawn sources cannot be
+recovered through a retained first report. Existing exported files remain
+point-in-time private artifacts and do not grant access to source references.
+
+Native, installed CLI, escaping, credential, language, mixed-scenario and private
+view regression coverage is in `tests/test_decision_brief_presentation.py` and
+`tests/test_decision_research_operator.py`.
 
 ## Operator entry points
 
