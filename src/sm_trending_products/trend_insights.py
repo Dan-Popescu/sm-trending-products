@@ -352,14 +352,8 @@ class TrendInsights:
         since = cutoff - timedelta(hours=max(windows_hours) * (2 if diagnostics else 1)) - gap
         with self.history.read_session():
             observations = (
-                self.history.read(
-                    self.catalog.iter_manifests(
-                        synthetic=synthetic,
-                        as_of=cutoff,
-                        entity_keys=keys,
-                        since=since,
-                        until=cutoff,
-                    ),
+                self.history.read_scoped(
+                    synthetic=synthetic,
                     as_of=cutoff,
                     since=since,
                     until=cutoff,

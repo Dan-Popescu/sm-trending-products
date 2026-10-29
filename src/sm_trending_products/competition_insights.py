@@ -256,14 +256,8 @@ class CompetitionInsights:
             }
             with self.history.read_session():
                 observations = (
-                    self.history.read(
-                        self.catalog.iter_manifests(
-                            synthetic=synthetic,
-                            as_of=cutoff,
-                            entity_keys=keys,
-                            since=since,
-                            until=cutoff,
-                        ),
+                    self.history.read_scoped(
+                        synthetic=synthetic,
                         as_of=cutoff,
                         since=since,
                         until=cutoff,

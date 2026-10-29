@@ -9,7 +9,7 @@ import json
 import uuid
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime
 from itertools import chain
 from pathlib import Path
@@ -22,8 +22,8 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from psycopg.types.json import Jsonb
 
-from .analysis_batches import RowBudgetExceeded
-from .analytical_diagnostics import phase, record, storage
+from .analysis_batches import RowBudgetExceeded, WindowMetadataBudget
+from .analytical_diagnostics import metadata_selection, phase, record, storage
 from .cache import cached_path, evict_cache, file_digest, pin_cached, read_session
 from .catalog import Catalog
 from .compaction_encoding import encode_compaction
@@ -391,6 +391,64 @@ class History:
         )
         return dataset_id
 
+    def read_scoped(
+        self,
+        *,
+        as_of: datetime,
+        synthetic: bool,
+        entity_keys: set[str],
+        since: datetime | None = None,
+        until: datetime | None = None,
+        period_window: tuple[datetime, datetime] | None = None,
+        source: str | None = None,
+        dataset_ids: set[str] | None = None,
+        max_rows: int | None = None,
+    ) -> list[Observation]:
+        """Read a complete research scope after admitting all required metadata.
+
+        Selection and payload reads share a retirement fence and metadata snapshot.
+        A refused scope transfers no descriptors and starts no payload read.
+        """
+        budget = WindowMetadataBudget(
+            self.settings.analysis_max_objects_per_batch,
+            self.settings.analysis_max_metadata_bytes_per_batch,
+        )
+        with self.catalog.window_snapshot(synthetic) as connection:
+            with metadata_selection(self, budget):
+                for key in entity_keys:
+                    budget.admit(0, len(key.encode()) + 512)
+                objects = self.catalog.select_history_objects(
+                    connection,
+                    budget,
+                    synthetic=synthetic,
+                    as_of=as_of,
+                    since=since,
+                    until=until,
+                    period_window=period_window,
+                    entity_keys=entity_keys,
+                    source=source,
+                    dataset_ids=dataset_ids,
+                )
+                datasets: dict[str, dict] = {}
+                for obj in objects:
+                    dataset_id = obj["dataset_id"]
+                    if dataset_id not in datasets:
+                        datasets[dataset_id] = {
+                            **obj["dataset"],
+                            "manifest": {"dataset_id": dataset_id, "normalized": []},
+                        }
+                    datasets[dataset_id]["manifest"]["normalized"].append(obj["descriptor"])
+            return self.read(
+                datasets.values(),
+                as_of=as_of,
+                since=since,
+                until=until,
+                period_window=period_window,
+                entity_keys=entity_keys,
+                max_rows=max_rows,
+                connection=connection,
+            )
+
     def read(
         self,
         manifests: Iterable[dict],
@@ -401,12 +459,26 @@ class History:
         period_window: tuple[datetime, datetime] | None = None,
         entity_keys: set[str] | None = None,
         max_rows: int | None = None,
+        connection=None,
     ) -> list[Observation]:
+        """Read verified payloads, optionally reusing the caller's guarded snapshot.
+
+        A supplied connection retains its transaction through the complete read;
+        rechecking the namespace on it avoids another pooled connection in composed
+        research operations.
+        """
         iterator = iter(manifests)
         first = next(iterator, None)
         if first is None:
             return []
-        with phase(self, "payload_read"), self.catalog.evidence_transaction(first.get("synthetic")):
+        guard = (
+            self.catalog.evidence_transaction(first.get("synthetic"))
+            if connection is None
+            else nullcontext(connection)
+        )
+        with phase(self, "payload_read"), guard:
+            if connection is not None:
+                self.catalog.guard_namespace(connection, first.get("synthetic"))
             return self._read(
                 chain((first,), iterator),
                 as_of=as_of,

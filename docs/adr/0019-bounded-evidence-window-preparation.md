@@ -63,3 +63,31 @@ payload traffic, aggregate bytes, one oversized descriptor and dataset, optional
 legacy coverage, exact split/global-rank parity, partial-publication refusal and a
 retirement that commits while the reader waits. Existing native cache, source
 correction, expiry, provenance and historical-oracle regressions remain required.
+
+## Research admission extension (#183)
+
+`History.read_scoped` applies the same configured object and metadata byte limits
+to TrendInsights and CompetitionInsights, including their composed callers.
+Catalog shares dataset and object temporal predicates with the manifest reader,
+and one SQL admission operation with ranking selection. It counts individual
+objects across the entire required selection, uses a count sentinel, and returns
+only scalar totals on refusal. It admits encoded descriptors and dataset headers
+plus conservative entity-scope and representation charges before payload reads.
+A typed `MetadataBudgetExceeded` refuses the report rather than truncating it.
+Research keeps its own history filters and computation; it does not call
+`EvidenceWindows.prepare` or reuse ranking results.
+
+Admission and verified payload reads share the existing fenced repeatable-read
+snapshot. Payload guards reuse that connection, allowing composed change reports
+to retain their outer fences within the default four-connection pool. The fence
+is acquired before establishing the snapshot, so a retirement that commits while
+the reader waits is visible to selection. Descriptor order, oldest delivery
+provenance, conservative legacy bounds, interval-period behavior and admitted
+report bytes remain unchanged. These limits retain the database-timeout and RSS
+limitations above; they do not bound every research operation.
+
+Native regressions cover scalar refusal without payload traffic for one wide
+dataset, several datasets, aggregate bytes and an oversized descriptor; exact
+admission boundaries; complete report bytes and identities against the legacy
+reader; period/source/dataset scopes; composed refusal and pool capacity; and
+retirement both before selection and during the guarded payload read.
