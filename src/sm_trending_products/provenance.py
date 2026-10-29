@@ -252,6 +252,16 @@ class Provenance:
         return [found[key] for key in sorted(found)]
 
     def guard(self, connection, roots: Sequence[dict[str, Any]]) -> dict[str, int]:
+        return self.committed_roots(connection, roots, require_all=True)
+
+    def committed_roots(
+        self, connection, roots: Sequence[dict[str, Any]], *, require_all: bool = False
+    ) -> dict[str, int]:
+        """Return currently committed identities under the ordinary evidence gates.
+
+        Missing roots remain absent so bounded readers can attribute a refusal to
+        each candidate. Callers requiring every root use ``guard`` instead.
+        """
         self.catalog.guard_retention(connection)
         keys = sorted({root["key"] for root in roots})
         namespaces = {key.split("/")[1] if "/" in key else "" for key in keys}
@@ -268,7 +278,7 @@ class Provenance:
                 "WHERE object_key=ANY(%s) AND state='committed'",
                 (chunk,),
             ).fetchall()
-            if len(rows) != len(chunk):
+            if require_all and len(rows) != len(chunk):
                 raise ValueError("Analytical provenance was invalidated")
             identities.update((row["object_key"], row["object_id"]) for row in rows)
         return identities
