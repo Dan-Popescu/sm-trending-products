@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import streamlit as st
 
 from .competition_insights import CompetitionInsights
+from .display_safety import current_display_secrets, display_json, sanitize_display
 
 PRICE_INTERVAL_PREVIEW_LIMIT = 200
 
@@ -17,10 +18,7 @@ if TYPE_CHECKING:
 
 
 def _safe(value):
-    from .collector import redact
-    from .dashboard import display_safe
-
-    return display_safe(redact(value))
+    return sanitize_display(value, secret_values=current_display_secrets())
 
 
 def render_competition(
@@ -81,7 +79,7 @@ def render_competition(
             max_rows=maximum,
             min_link_confidence=confidence,
         )
-        report = _safe(report)
+        details = display_json(report, secret_values=current_display_secrets())
     except Exception:
         st.error(
             "Competition inspection unavailable. Check scope, source availability and row budget."
@@ -101,34 +99,38 @@ def render_competition(
         "retail quotes; supplier margin, delivered cost and profit are not established."
     )
     st.dataframe(
-        [
-            {
-                "Observed country": scope["observed_country"] or "Unknown",
-                "Source": scope["source"],
-                "Source account": scope["source_account"] or "Unknown",
-                "Distribution": scope["distribution"] or "Unknown",
-                "Query scope": scope["query_scope"] or "Unknown",
-                "Coverage scope": scope["coverage_scope"] or "Unknown",
-                "Status": scope["status"],
-                "Unavailable reason": scope["reason"],
-                "Last capture age (hours)": scope["latest_observation_age_hours"],
-                "Observed named sellers": scope["observed_seller_count"],
-                "Observed named advertisers": scope["observed_advertiser_count"],
-                "Stale entities": scope["stale_entity_count"],
-                "Comparable capture intervals": scope["comparable_interval_count"],
-                "Compatible price intervals": scope["price_interval_count"],
-            }
-            for scope in report["scopes"]
-        ],
+        _safe(
+            [
+                {
+                    "Observed country": scope["observed_country"] or "Unknown",
+                    "Source": scope["source"],
+                    "Source account": scope["source_account"] or "Unknown",
+                    "Distribution": scope["distribution"] or "Unknown",
+                    "Query scope": scope["query_scope"] or "Unknown",
+                    "Coverage scope": scope["coverage_scope"] or "Unknown",
+                    "Status": scope["status"],
+                    "Unavailable reason": scope["reason"],
+                    "Last capture age (hours)": scope["latest_observation_age_hours"],
+                    "Observed named sellers": scope["observed_seller_count"],
+                    "Observed named advertisers": scope["observed_advertiser_count"],
+                    "Stale entities": scope["stale_entity_count"],
+                    "Comparable capture intervals": scope["comparable_interval_count"],
+                    "Compatible price intervals": scope["price_interval_count"],
+                }
+                for scope in report["scopes"]
+            ]
+        ),
         hide_index=True,
     )
     for index, scope in enumerate(report["scopes"], 1):
         st.write(f"Scope {index}: observed captures and retail prices")
         if scope["status"] != "observed":
             st.warning(
-                "Scope unavailable: " + (scope["reason"] or "unknown context").replace("_", " ")
+                _safe(
+                    "Scope unavailable: " + (scope["reason"] or "unknown context").replace("_", " ")
+                )
             )
-        st.dataframe(scope["timeline_preview"], hide_index=True)
+        st.dataframe(_safe(scope["timeline_preview"]), hide_index=True)
         if scope["timeline_preview_truncated"]:
             st.warning("Capture preview is truncated; totals describe the complete bounded input.")
         if not scope["price_interval_count"]:
@@ -142,18 +144,20 @@ def render_competition(
                 "The latest valid quote context does not relabel earlier changes."
             )
             st.dataframe(
-                [
-                    {
-                        "Offer": offer["entity_key"],
-                        "Status": offer["status"],
-                        "Unavailable reason": offer["reason"],
-                        "Compatible intervals": offer["comparable_interval_count"],
-                        "Observed decreases": offer["observed_decrease_count"],
-                        "Observed increases": offer["observed_increase_count"],
-                        "Uncertain changes": offer["uncertain_change_count"],
-                    }
-                    for offer in scope["price_offers_preview"]
-                ],
+                _safe(
+                    [
+                        {
+                            "Offer": offer["entity_key"],
+                            "Status": offer["status"],
+                            "Unavailable reason": offer["reason"],
+                            "Compatible intervals": offer["comparable_interval_count"],
+                            "Observed decreases": offer["observed_decrease_count"],
+                            "Observed increases": offer["observed_increase_count"],
+                            "Uncertain changes": offer["uncertain_change_count"],
+                        }
+                        for offer in scope["price_offers_preview"]
+                    ]
+                ),
                 hide_index=True,
             )
             intervals = list(
@@ -178,7 +182,7 @@ def render_competition(
                 )
             )
             if intervals:
-                st.dataframe(intervals[:PRICE_INTERVAL_PREVIEW_LIMIT], hide_index=True)
+                st.dataframe(_safe(intervals[:PRICE_INTERVAL_PREVIEW_LIMIT]), hide_index=True)
             if len(intervals) > PRICE_INTERVAL_PREVIEW_LIMIT or any(
                 offer["intervals_preview_truncated"] for offer in scope["price_offers_preview"]
             ):
@@ -191,4 +195,4 @@ def render_competition(
     if report["scope_change_count"]:
         st.warning("Collection contexts changed. Broader discovery is not competition growth.")
     with st.expander("Complete bounded coverage, identity and price evidence"):
-        st.json(report)
+        st.json(details)

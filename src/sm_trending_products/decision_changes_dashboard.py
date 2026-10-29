@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta
 from typing import Any
 
 import streamlit as st
 
-from .decision_brief_cli import MAX_INPUT_BYTES, object_from_bytes
-from .display_safety import current_display_secrets, sanitize_display, scrub_display_text
+from .display_safety import (
+    current_display_secrets,
+    display_json,
+    sanitize_display,
+    scrub_display_text,
+)
+from .json_input import MAX_INPUT_BYTES, object_from_bytes
 from .product_display import product_labels
 
 
@@ -97,7 +101,7 @@ def render_changes(pipeline: Any, products: list[dict], as_of: datetime, synthet
     if not st.button("Comparer les deux analyses", key="changes_build"):
         return
     try:
-        from .contracts import canonical, utc
+        from .contracts import utc
         from .decision_changes import (
             MAX_OUTPUT_BYTES,
             ChangesSelection,
@@ -129,11 +133,7 @@ def render_changes(pipeline: Any, products: list[dict], as_of: datetime, synthet
             scrub_display_text(sanitize_display(line, secret_values=secrets), secret_values=secrets)
             for line in explain_changes(report)
         ]
-        report = sanitize_display(report, secret_values=secrets, max_bytes=MAX_OUTPUT_BYTES)
-        details = scrub_display_text(canonical(report), secret_values=secrets)
-        if len(details.encode()) > MAX_OUTPUT_BYTES:
-            raise ValueError("Decision changes display exceeds budget")
-        json.loads(details)
+        details = display_json(report, secret_values=secrets, max_bytes=MAX_OUTPUT_BYTES)
     except Exception:
         st.error(
             "Comparaison indisponible. Vérifiez les dates, le pays, la sélection exacte, "

@@ -3,6 +3,7 @@
 import json
 from datetime import timedelta
 
+import pytest
 from streamlit.testing.v1 import AppTest
 from test_competition_insights import observation, seed
 
@@ -119,6 +120,20 @@ def test_competition_dashboard_is_explicit_and_refreshes_source_withdrawal(pipel
     refreshed = json.loads(app.json[0].value)
     assert refreshed["eligible_observation_count"] == 0 and refreshed["scopes"] == []
     assert "offer-a" not in app.json[0].value
+
+
+@pytest.mark.parametrize("secret", ["scopes", "status", "observed", "null"])
+def test_competition_display_uses_original_scope_status_before_masking_credentials(
+    pipeline, monkeypatch, secret
+):
+    _, cutoff, _ = seed(pipeline)
+    monkeypatch.setenv("RESEARCH_API_KEY", secret)
+    app = _app(pipeline, cutoff)
+    _field(app, "button", "Inspect observed competition").click().run()
+    assert not app.exception and not app.error and app.json and app.dataframe
+    assert not any("Competition comparison is unavailable" in row.value for row in app.warning)
+    assert app.dataframe[0].value["Compatible price intervals"].sum() == 3
+    assert secret not in app.json[0].value
 
 
 def test_competition_dashboard_preserves_missing_scope_and_incompatible_prices(pipeline):

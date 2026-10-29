@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import streamlit as st
 
 from .cohort_research_cli import METRICS, parse_taxonomy_categories
+from .display_safety import current_display_secrets, display_json, sanitize_display
 from .product_cohorts import CohortInsights
 
 if TYPE_CHECKING:
@@ -15,16 +16,17 @@ if TYPE_CHECKING:
 
 
 def _safe(value):
-    from .collector import redact
-    from .dashboard import display_safe
-
-    return display_safe(redact(value))
+    return sanitize_display(value, secret_values=current_display_secrets())
 
 
 def _safe_details(value) -> None:
-
+    try:
+        details = display_json(value, secret_values=current_display_secrets())
+    except (ValueError, TypeError, RecursionError):
+        st.error("Details unavailable. Check the report format and bounded display limits.")
+        return
     with st.expander("Revision, coverage and evidence details"):
-        st.json(_safe(value))
+        st.json(details)
 
 
 def render_cohorts(
@@ -87,7 +89,27 @@ def render_cohorts(
                     min_peers=minimum,
                     max_assessment_age_hours=age,
                 )
-                report = _safe(report)
+                rows = _safe(
+                    [
+                        {
+                            "Product": row["product_id"],
+                            "Category": row["category_id"],
+                            "Assignment revision": row["assignment_revision"],
+                            "Target country": row["target_country"] or "Unknown",
+                            "Audience country": "Unknown",
+                            "Age bucket": row["age_bucket"],
+                            "Metric": row["metric"],
+                            "Unit": row["metric_unit"],
+                            "Value": row["value"],
+                            "Observed-panel percentile": row["percentile"],
+                            "Independent peers": row["peer_count"],
+                            "Comparability": row["comparability"],
+                            "Unavailable reason": row["reason"],
+                            "Assessment cutoff": row["assessed_at"],
+                        }
+                        for row in report["rows"]
+                    ]
+                )
             except Exception:
                 st.error(
                     "Comparison unavailable. Check taxonomy initialization, cutoff and bounds."
@@ -108,43 +130,21 @@ def render_cohorts(
                     "Some comparisons are unavailable. Missing, stale, tied or sparse peers "
                     "remain explicit below."
                 )
-            st.dataframe(
-                [
-                    {
-                        "Product": row["product_id"],
-                        "Category": row["category_id"],
-                        "Assignment revision": row["assignment_revision"],
-                        "Target country": row["target_country"] or "Unknown",
-                        "Audience country": "Unknown",
-                        "Age bucket": row["age_bucket"],
-                        "Metric": row["metric"],
-                        "Unit": row["metric_unit"],
-                        "Value": row["value"],
-                        "Observed-panel percentile": row["percentile"],
-                        "Independent peers": row["peer_count"],
-                        "Comparability": row["comparability"],
-                        "Unavailable reason": row["reason"],
-                        "Assessment cutoff": row["assessed_at"],
-                    }
-                    for row in report["rows"]
-                ],
-                hide_index=True,
-            )
+            st.dataframe(rows, hide_index=True)
             _safe_details(report)
         return
     if task == "Review taxonomy":
         if st.button("Show taxonomy revision"):
             try:
                 record = service.taxonomy(taxonomy_id, as_of)
-                record = _safe(record)
                 if record is None:
                     st.info(
                         "No taxonomy was available at this cutoff. "
                         "A new taxonomy expects revision 0."
                     )
                 else:
-                    st.write(f"Current taxonomy revision: {record['revision']}")
-                    st.dataframe(record["categories"], hide_index=True)
+                    st.write(_safe(f"Current taxonomy revision: {record['revision']}"))
+                    st.dataframe(_safe(record["categories"]), hide_index=True)
                     _safe_details(record)
             except Exception:
                 st.error("Taxonomy unavailable. Initialize the optional module explicitly first.")
@@ -168,8 +168,7 @@ def render_cohorts(
                 record = service.save_taxonomy(
                     taxonomy_id, parsed, revision, request, reviewer=reviewer, rationale=rationale
                 )
-                record = _safe(record)
-                st.success(f"Saved taxonomy revision {record['revision']}.")
+                st.success(_safe(f"Saved taxonomy revision {record['revision']}."))
                 _safe_details(record)
             except Exception:
                 st.error(
@@ -215,8 +214,7 @@ def render_cohorts(
                 reviewer=reviewer,
                 rationale=rationale,
             )
-            record = _safe(record)
-            st.success(f"Saved assignment revision {record['revision']}.")
+            st.success(_safe(f"Saved assignment revision {record['revision']}."))
             _safe_details(record)
         except Exception:
             st.error(

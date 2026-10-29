@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import streamlit as st
 
+from .display_safety import current_display_secrets, display_json, sanitize_display
 from .research_validation_cli import (
     MAX_PROFILE_BYTES,
     ProfileError,
@@ -21,16 +22,22 @@ if TYPE_CHECKING:
 
 
 def _safe(value: Any) -> Any:
-    from .collector import redact
-    from .dashboard import display_safe
+    return sanitize_display(value, secret_values=current_display_secrets())
 
-    return display_safe(redact(value))
+
+def _show(value: Any) -> None:
+    try:
+        details = display_json(value, secret_values=current_display_secrets())
+    except (ValueError, TypeError, RecursionError):
+        st.error("Details unavailable. Check the report format and bounded display limits.")
+        return
+    st.json(details)
 
 
 def _error(error: Exception) -> None:
     body = safe_error(error)
     st.error(body["error"].replace("_", " "))
-    st.json(_safe(body))
+    _show(body)
 
 
 def _request(label: str, scope: str, action: str) -> tuple[str, str]:
@@ -123,16 +130,14 @@ def render_validation(pipeline: Pipeline, synthetic: bool) -> None:
             "Upload a protocol or inspect an existing protocol ID. Reads never initialize tables."
         )
         return
-    st.write(
-        _safe(
-            {
-                "registered_at": current["registered_at"],
-                "locked_at": current["locked_at"],
-                "selected_policy": current["locked_policy_id"],
-                "registration_timing": current["registration_timing"],
-                "heldout_timing": current["heldout_timing"],
-            }
-        )
+    _show(
+        {
+            "registered_at": current["registered_at"],
+            "locked_at": current["locked_at"],
+            "selected_policy": current["locked_policy_id"],
+            "registration_timing": current["registration_timing"],
+            "heldout_timing": current["heldout_timing"],
+        }
     )
     if "retrospective_governed" in current["heldout_timing"].values():
         st.warning(
@@ -160,7 +165,7 @@ def render_validation(pipeline: Pipeline, synthetic: bool) -> None:
         hide_index=True,
     )
     with st.expander("Protocol, exact policies and limits"):
-        st.json(_safe(current))
+        _show(current)
     scope = f"{workspace}:{selected}"
     policies = list(current["protocol"]["policies"])
     with st.form(f"research-lock:{scope}"):
@@ -217,15 +222,13 @@ def render_validation(pipeline: Pipeline, synthetic: bool) -> None:
         except Exception as error:
             _error(error)
         else:
-            st.write(
-                _safe(
-                    {
-                        "attempt_state": attempt["state"],
-                        "error_code": attempt["error_code"],
-                        "attempt_clock": attempt["as_of"],
-                        "evaluation_cutoff": attempt.get("evaluation_cutoff"),
-                    }
-                )
+            _show(
+                {
+                    "attempt_state": attempt["state"],
+                    "error_code": attempt["error_code"],
+                    "attempt_clock": attempt["as_of"],
+                    "evaluation_cutoff": attempt.get("evaluation_cutoff"),
+                }
             )
             if attempt.get("result_unavailable"):
                 st.warning("Evidence was withdrawn; the stored result is unavailable.")
@@ -233,7 +236,7 @@ def render_validation(pipeline: Pipeline, synthetic: bool) -> None:
                 st.warning(
                     "This attempt has not completed successfully. Reuse its ID to inspect it."
                 )
-            st.json(_safe(attempt))
+            _show(attempt)
     page = int(st.number_input("Attempt page", min_value=1, max_value=7, value=1, step=1))
     list_key = f"_research-list-attempts:{workspace}"
     if st.button("List protocol attempts", key=f"research-list-attempts:{scope}"):

@@ -145,4 +145,4 @@ with Pipeline.from_env() as pipeline:
     widget(app, "button", "Inspect quoted themes").click().run(timeout=30)
     assert not app.exception and not app.error
     result = app.json[0].value
-    assert "gagner du temps" not in result and "REDACTED" in result
+    assert "gagner du temps" not in result and "…" in result
