@@ -6,11 +6,12 @@ from datetime import timedelta
 
 import pytest
 from test_evaluation_integration import record
+from test_text_hydration import count_reads
 
 from sm_trending_products.catalog import InvalidationPending
 from sm_trending_products.content_insights import DEFAULT_TAXONOMY
 from sm_trending_products.content_progression import ContentProgression
-from sm_trending_products.contracts import digest, now
+from sm_trending_products.contracts import canonical, digest, now
 from sm_trending_products.enrichment import TranscriptContext, TranscriptInput, TranscriptInsights
 from sm_trending_products.trend_insights import TrendInsights
 
@@ -581,6 +582,33 @@ def test_source_retirement_between_composed_reads_never_returns_earlier_quotes(
         service.describe("patterns", cutoff, True, window_hours=12)
 
 
+def test_final_eligibility_ignores_analysis_states_with_exact_report_bytes(pipeline, monkeypatch):
+    texts, _, _, cutoff = seed(pipeline)
+    service = ContentProgression(pipeline.catalog, pipeline.history, pipeline.provenance)
+    expected = canonical(service.describe("patterns", cutoff, True, window_hours=12))
+    rows = pipeline.catalog.all("SELECT transcript_id FROM enrichment_transcripts")
+    for index, row in enumerate(rows):
+        first = texts.analyze(
+            f"initial-{index}", "patterns", row["transcript_id"], synthetic=True, as_of=cutoff
+        )
+        reused = texts.analyze(
+            f"reused-{index}", "patterns", row["transcript_id"], synthetic=True, as_of=cutoff
+        )
+        assert first["analysis_id"] == reused["analysis_id"]
+    for state in ("completed", "running", "uncertain"):
+        pipeline.catalog.execute("UPDATE enrichment_analyses SET state=%s", (state,))
+        with monkeypatch.context() as legacy:
+            legacy.setattr(service.texts, "eligible_text_ids", service.texts.eligible_texts)
+            with count_reads(monkeypatch, pipeline) as baseline:
+                previous = canonical(service.describe("patterns", cutoff, True, window_hours=12))
+        with count_reads(monkeypatch, pipeline) as treatment:
+            actual = canonical(service.describe("patterns", cutoff, True, window_hours=12))
+        assert actual == previous == expected
+        assert baseline["analysis_sql"] == 8 and treatment["analysis_sql"] == 0
+        assert treatment["sql"] < baseline["sql"]
+        print({"state": state, "baseline": dict(baseline), "treatment": dict(treatment)})
+
+
 def test_final_text_and_metric_checks_share_retention_fence_without_holding_history(
     pipeline, monkeypatch
 ):
@@ -594,7 +622,7 @@ def test_final_text_and_metric_checks_share_retention_fence_without_holding_hist
         replacement.append(row)
     pipeline.import_records(replacement, synthetic=True)
     service = ContentProgression(pipeline.catalog, pipeline.history, pipeline.provenance)
-    eligible, read = service.texts.eligible_texts, pipeline.history.read
+    eligible, read = service.texts.eligible_text_ids, pipeline.history.read
     checked = False
     active = peak = 0
     pool_connection = pipeline.catalog.pool.connection
@@ -639,7 +667,7 @@ def test_final_text_and_metric_checks_share_retention_fence_without_holding_hist
 
         monkeypatch.setattr(pipeline.catalog.pool, "connection", connection)
         monkeypatch.setattr(pipeline.history, "read", history)
-        monkeypatch.setattr(service.texts, "eligible_texts", final_text_check)
+        monkeypatch.setattr(service.texts, "eligible_text_ids", final_text_check)
         result = service.describe("patterns", cutoff, True, window_hours=12)
     assert checked and peak <= 4
     refs = next(
@@ -649,7 +677,7 @@ def test_final_text_and_metric_checks_share_retention_fence_without_holding_hist
     )
     assert refs and all(ref.startswith("zz-replacement-metric-") for ref in refs)
     assert any(t["entity_key"] == values[0].entity_key and t["mentions"] for t in result["texts"])
-    monkeypatch.setattr(service.texts, "eligible_texts", eligible)
+    monkeypatch.setattr(service.texts, "eligible_text_ids", eligible)
     pipeline.catalog.invalidate_dataset(datasets[0], "after-final-checks")
     pipeline.catalog.resume_invalidations(max_batches=100, max_seconds=10, synthetic=True)
     refreshed = service.describe("patterns", cutoff, True, window_hours=12)

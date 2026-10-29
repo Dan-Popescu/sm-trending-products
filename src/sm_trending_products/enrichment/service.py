@@ -469,6 +469,40 @@ class TranscriptInsights:
                 )
         return self._text_page(product_id, synthetic, cutoff, rows, limit, items, unavailable)
 
+    def eligible_text_ids(
+        self,
+        product_id: str,
+        *,
+        synthetic: bool = False,
+        as_of: datetime | None = None,
+        limit: int = 100,
+        after: str | None = None,
+    ) -> dict:
+        """Inspect bounded transcript eligibility without text or analysis state.
+
+        Selection, authority and cursor rules match the analysis-aware metadata
+        page. This page proves only current source eligibility, never whether an
+        analysis can be reused. Unavailable rows consume the same scan budget.
+        """
+        require_module(self.catalog, "transcript_insights", 2)
+        self._validate_text_page(product_id, synthetic, limit, after)
+        items, unavailable = [], []
+        with self.catalog.evidence_transaction(synthetic) as connection:
+            cutoff = self._clock(connection, as_of, synthetic)
+            self.catalog.guard_namespace(connection, synthetic)
+            rows = self._text_page_rows(connection, product_id, synthetic, cutoff, limit, after)
+            for row in rows[:limit]:
+                try:
+                    self._transcript(
+                        connection, row["transcript_id"], product_id, synthetic, cutoff
+                    )
+                    items.append({"transcript_id": row["transcript_id"]})
+                except EnrichmentDenied as error:
+                    unavailable.append(
+                        {"transcript_id": row["transcript_id"], "reason": str(error)}
+                    )
+        return self._text_page(product_id, synthetic, cutoff, rows, limit, items, unavailable)
+
     def read_text_page(
         self,
         product_id: str,
