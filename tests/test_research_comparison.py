@@ -284,7 +284,11 @@ with Pipeline.from_env() as pipeline:
     assert comparison["status"] == "unavailable" and "candidates" not in comparison
 
 
-@pytest.mark.parametrize("unsafe", [float("nan"), object(), "x" * 4_000_001])
+@pytest.mark.parametrize(
+    "unsafe",
+    [float("nan"), object(), "x" * 4_000_001],
+    ids=("non-finite", "unsupported-object", "oversized-string"),
+)
 def test_compare_cli_refuses_unsafe_final_display_input(monkeypatch, capsys, unsafe):
     from contextlib import contextmanager
     from types import SimpleNamespace

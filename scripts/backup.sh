@@ -162,7 +162,7 @@ python3 - "$backup_directory" "$online" <<'PY'
 import hashlib
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 root = Path(sys.argv[1])
@@ -185,7 +185,7 @@ checksums = {name: checksum(root / name) for name in (
     "pipeline.dump", "dagster.dump", "source-verification.json", "object-summary.json", "catalog-state.json"
 )}
 metadata = {"schema_version": 2, "complete": True,
-    "created_at": datetime.now(UTC).isoformat(), "sha256": checksums,
+    "created_at": datetime.now(timezone.utc).isoformat(), "sha256": checksums,
     "object_snapshot_sha256": checksum(root / "objects/snapshot.json")}
 metadata["application_checkpoint"] = (
     "exported_snapshot" if sys.argv[2] == "true" else "paused_writers"
