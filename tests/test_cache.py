@@ -372,8 +372,29 @@ def test_operation_session_hashes_twenty_warm_reads_once_then_verifies_again(tmp
     assert sum(hashed) == 2 * len(body)
 
 
+def coarsen_cache_ctime(monkeypatch):
+    from sm_trending_products import cache
+
+    original = cache._identity
+
+    def identity(path):
+        # Model writes within one filesystem timestamp tick. Other identity
+        # fields and all actual filesystem operations remain unchanged.
+        return (*original(path)[:-1], 0)
+
+    monkeypatch.setattr(cache, "_identity", identity)
+
+
+@pytest.mark.parametrize("coarse_ctime", [False, True])
+@pytest.mark.parametrize("drain_events", [False, True])
 @pytest.mark.parametrize("mutation", ["inplace", "replace", "different_expected"])
-def test_session_rechecks_corruption_replacement_and_changed_descriptor(tmp_path, mutation):
+def test_session_rechecks_corruption_replacement_and_changed_descriptor(
+    tmp_path, monkeypatch, mutation, coarse_ctime, drain_events
+):
+    from sm_trending_products.cache import _Cache
+
+    if coarse_ctime:
+        coarsen_cache_ctime(monkeypatch)
     body = b"valid"
     source = Source({"object": body})
     history = history_at(tmp_path, source)
@@ -385,7 +406,8 @@ def test_session_rechecks_corruption_replacement_and_changed_descriptor(tmp_path
         previous = local.stat()
         if mutation == "inplace":
             local.write_bytes(b"wrong")
-            # Matching size and mtime do not conceal a changed ctime.
+            # Matching size and mtime must not conceal a payload mutation,
+            # including when ctime shares the original timestamp tick.
             os.utime(local, ns=(previous.st_atime_ns, previous.st_mtime_ns))
         elif mutation == "replace":
             replacement = tmp_path / ".replacement"
@@ -396,8 +418,65 @@ def test_session_rechecks_corruption_replacement_and_changed_descriptor(tmp_path
             body = b"newly published"
             source.objects["object"] = body
             obj = reference("object", body)
+        if drain_events:
+            # Another cache user may already have consumed the write event.
+            with _Cache(history).global_lock():
+                pass
         with pin_cached(history, obj) as path:
             assert path.read_bytes() == body
+    assert source.requests == ["object", "object"]
+    assert not list((tmp_path / ".pins").iterdir())
+
+
+@pytest.mark.parametrize("watch_state", ["missing", "lost", "overflow"])
+def test_session_rehashes_after_missing_lost_or_overflowed_watch(
+    tmp_path, monkeypatch, watch_state
+):
+    from sm_trending_products import _cache_accounting
+
+    if watch_state == "missing":
+        monkeypatch.setattr(_cache_accounting.ctypes, "CDLL", lambda *a, **kw: object())
+    coarsen_cache_ctime(monkeypatch)
+    body = b"valid"
+    source = Source({"object": body})
+    history = history_at(tmp_path, source)
+    obj = reference("object", body)
+    local = history.cached(obj)
+    hashed = measured_hashes(monkeypatch)
+    with history.read_session():
+        with pin_cached(history, obj):
+            pass
+        previous = local.stat()
+        local.write_bytes(b"wrong")
+        os.utime(local, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+        shared = _cache_accounting.accounting(
+            history, (tmp_path, tmp_path / ".pins", tmp_path / ".downloads")
+        )
+        if watch_state == "lost":
+            shared.close()
+        elif watch_state == "overflow":
+            original = _cache_accounting.os.read
+            pending = True
+
+            def read(descriptor, size):
+                nonlocal pending
+                if descriptor == shared.descriptor and pending:
+                    pending = False
+                    # Overflow means queued modifications may have been lost.
+                    # Discard the real write event so only overflow can fence it.
+                    while True:
+                        try:
+                            if not original(descriptor, size):
+                                break
+                        except BlockingIOError:
+                            break
+                    return _cache_accounting._EVENT.pack(-1, _cache_accounting._OVERFLOW, 0, 0)
+                return original(descriptor, size)
+
+            monkeypatch.setattr(_cache_accounting.os, "read", read)
+        with pin_cached(history, obj) as path:
+            assert path.read_bytes() == body
+    assert sum(hashed) == 2 * len(body)
     assert source.requests == ["object", "object"]
     assert not list((tmp_path / ".pins").iterdir())
 
@@ -529,8 +608,14 @@ def test_simultaneous_sessions_keep_independent_reader_fences(tmp_path):
     assert retained_bytes(tmp_path) <= BUDGET
 
 
-def test_session_does_not_memoize_inode_changed_during_verification(tmp_path, monkeypatch):
+@pytest.mark.parametrize("coarse_ctime", [False, True])
+def test_session_does_not_memoize_inode_changed_during_verification(
+    tmp_path, monkeypatch, coarse_ctime
+):
     from sm_trending_products import cache
+
+    if coarse_ctime:
+        coarsen_cache_ctime(monkeypatch)
 
     body = b"valid"
     source = Source({"object": body})
