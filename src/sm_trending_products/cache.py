@@ -22,7 +22,7 @@ from uuid import uuid4
 
 from psycopg.errors import DeadlockDetected, LockNotAvailable, QueryCanceled
 
-from ._cache_accounting import _Charge, accounting
+from ._cache_accounting import _Accounting, _Charge, accounting
 from .analytical_diagnostics import storage
 
 if TYPE_CHECKING:
@@ -38,6 +38,7 @@ class CacheCapacityError(ValueError):
 _SESSION_MAX_BYTES = 256 * 1024 * 1024
 _SESSION_MAX_PINS = 64
 _Identity = tuple[int, int, int, int, int]
+_ContentVersion = tuple[_Accounting, int]
 _LOCAL_PREFIX = "window-"
 _PRESSURE_HEADROOM_MAX_BYTES = 32 * 1024 * 1024
 
@@ -83,6 +84,7 @@ class _Cache:
         self.downloads = self._directory(".downloads")
         self.locks = self._directory(".object-locks")
         self.verified_identity: _Identity | None = None
+        self.verified_content_version: _ContentVersion | None = None
         self._charge: _Charge | None = None
 
     def _directory(self, name: str) -> Path:
@@ -118,6 +120,13 @@ class _Cache:
         with _open(self.locks / name[:2]) as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             yield
+
+    def _content_version(self) -> _ContentVersion | None:
+        # Accounting transactions consume watch events under this same flock.
+        # Their persistent generation must survive other cache users draining it.
+        assert self._charge is not None
+        shared = accounting(self.history, (self.root, self.pins, self.downloads))
+        return (shared, shared.payload_generation) if shared.descriptor >= 0 else None
 
     def paths(self, key: str) -> tuple[Path, ...]:
         """Keep the original opaque name readable during a cache upgrade."""
@@ -273,6 +282,7 @@ class _Cache:
             if local.is_symlink():
                 raise ValueError("Cache file escaped its configured root")
             pinned = self._pin(local) if _regular(local) else None
+            content_before = self._content_version() if not refresh else None
         if pinned is None:
             return None
         target, handle = pinned
@@ -280,15 +290,21 @@ class _Cache:
             before = _identity(target)
             if file_digest(target) == expected:
                 after = _identity(target)
-                with self.inspection_lock():
+                with self.inspection_lock() if refresh else self.global_lock():
                     if _regular(local) and local.stat().st_ino == target.stat().st_ino:
                         if refresh:
                             local.touch()
                     # Ordinary reads preserve their existing verification path.
-                    # Sessions can reuse only a checksum whose inode metadata
-                    # stayed unchanged throughout verification and afterwards.
-                    if not refresh and before == after == _identity(target):
+                    # Session reuse also requires a watch generation spanning
+                    # verification: ctime alone can miss same-tick writes.
+                    if (
+                        not refresh
+                        and content_before is not None
+                        and content_before == self._content_version()
+                        and before == after == _identity(target)
+                    ):
                         self.verified_identity = after
+                        self.verified_content_version = content_before
                 storage(self.history, "cache_hits", 1)
                 return local, target, handle
             with self.global_lock():
@@ -393,6 +409,7 @@ class _Cache:
 
     def obtain(self, obj: dict[str, Any], *, refresh: bool = True) -> tuple[Path, Path, BinaryIO]:
         self.verified_identity = None
+        self.verified_content_version = None
         key, expected = obj["key"], obj["sha256"]
         local = self.root / hashlib.sha256(key.encode()).hexdigest()
         self._reconcile_budget(local)
@@ -460,6 +477,7 @@ class _ReadPin:
     target: Path
     handle: BinaryIO
     identity: _Identity
+    content_version: _ContentVersion
     expected: str
     declared: int | None
     users: int = 0
@@ -505,7 +523,7 @@ class _ReadSession:
         # Never resurrect an object retired/replaced through its ordinary name.
         # A retained pin keeps bytes safe for an existing reader, but is not
         # authority to admit another read after retention removes that name.
-        with self.cache.inspection_lock():
+        with self.cache.global_lock():
             if entry.local.is_symlink():
                 raise ValueError("Cache file escaped its configured root")
             return (
@@ -513,6 +531,7 @@ class _ReadSession:
                 and _regular(entry.target)
                 and _identity(entry.local) == entry.identity
                 and _identity(entry.target) == entry.identity
+                and self.cache._content_version() == entry.content_version
             )
 
     def _retain(self, key: str, entry: _ReadPin) -> bool:
@@ -551,7 +570,8 @@ class _ReadSession:
                 self._release_idle()
                 local, target, handle = self.cache.obtain(obj, refresh=False)
             verified = self.cache.verified_identity
-            if verified is None:
+            content_version = self.cache.verified_content_version
+            if verified is None or content_version is None:
                 # Cold downloads already verify their stream, but rename/pin
                 # changes inode metadata afterwards. Keep the ordinary lifetime;
                 # the next warm read can establish a stable checksum identity.
@@ -560,7 +580,7 @@ class _ReadSession:
                 finally:
                     self.cache.release(target, handle)
                 return
-            entry = _ReadPin(local, target, handle, verified, expected, declared)
+            entry = _ReadPin(local, target, handle, verified, content_version, expected, declared)
             try:
                 entry.retained = self._retain(key, entry)
             except BaseException:

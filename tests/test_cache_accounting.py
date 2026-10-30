@@ -306,8 +306,12 @@ def test_near_fit_hot_set_discloses_ten_additional_gets_for_optional_headroom(tm
     source = Source(objects)
     history = history_at(tmp_path, source)
     cache = _Cache(history)
-    for key, body in objects.items():
-        cache.paths(key)[0].write_bytes(body)
+    # A fast write loop can tie mtimes; directory order is not an LRU contract.
+    # Whole-second spacing makes source/0..31 the required oldest eviction set.
+    for stamp, (key, body) in enumerate(objects.items(), start=1):
+        path = cache.paths(key)[0]
+        path.write_bytes(body)
+        os.utime(path, (stamp, stamp))
     window = cache.admit_local(b"w" * 32768)
     for index in range(32, 1024):
         key = f"source/{index}"
