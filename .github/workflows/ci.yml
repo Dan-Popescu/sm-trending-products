@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   # Separate bounded runs from stalled executions created before the watchdog.
-  group: verify-v4-${{ github.workflow }}-${{ github.ref }}
+  group: verify-v5-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
