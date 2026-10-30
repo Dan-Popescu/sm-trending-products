@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 from psycopg.conninfo import conninfo_to_dict
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .contracts import digest, utc
+from .contracts import digest, now, utc
 from .costs import Store, _store_charges
 from .enrichment import TranscriptContext, TranscriptInput
 from .text_selection import TextSelectionConfig
@@ -177,7 +177,9 @@ def require_scratch(application: Pipeline) -> None:
             raise ValueError("Research workload refuses live state")
 
 
-def seed(application: Pipeline, workload: Workload) -> dict:
+def seed(
+    application: Pipeline, workload: Workload, *, cutoff: datetime = CUTOFF, retained_days: int = 7
+) -> dict:
     require_scratch(application)
     if application.catalog.one("SELECT 1 FROM products UNION ALL SELECT 1 FROM datasets LIMIT 1"):
         raise ValueError("Research workload requires empty scratch state")
@@ -193,8 +195,11 @@ def seed(application: Pipeline, workload: Workload) -> dict:
             links.append((product_id, f"workload:video:{key}"))
             for sample in range(workload.samples):
                 # Skew concentrates growth in one entity, retaining the same complete row count.
-                timestamp = CUTOFF - timedelta(
-                    hours=168 * (workload.samples - sample - 1) / (workload.samples - 1)
+                timestamp = cutoff - timedelta(
+                    hours=24
+                    * retained_days
+                    * (workload.samples - sample - 1)
+                    / (workload.samples - 1)
                 )
                 views = 100 + sample * (100 if workload.shape == "skewed" and entity == 0 else 1)
                 row: dict[str, Any] = {
@@ -213,7 +218,9 @@ def seed(application: Pipeline, workload: Workload) -> dict:
                     step = 100 if workload.shape == "skewed" and entity == 0 else entity + 1
                     views = 100 + sample * step + (step if sample == workload.samples - 1 else 0)
                     row["metrics"] = {"view_count": {"lower": views, "upper": views}}
-                    row["published_at"] = (CUTOFF - timedelta(hours=170)).isoformat()
+                    row["published_at"] = (
+                        cutoff - timedelta(hours=24 * retained_days + 2)
+                    ).isoformat()
                     row["attributes"].update(
                         distribution="public_video", distribution_context="public_video"
                     )
@@ -226,8 +233,8 @@ def seed(application: Pipeline, workload: Workload) -> dict:
                     {
                         **row,
                         "observation_id": f"{key}-correction",
-                        "available_at": (CUTOFF - timedelta(hours=1)).isoformat(),
-                        "observed_at": (CUTOFF - timedelta(hours=168)).isoformat(),
+                        "available_at": (cutoff - timedelta(hours=1)).isoformat(),
+                        "observed_at": (cutoff - timedelta(days=retained_days)).isoformat(),
                         "metrics": {"view_count": {"lower": 90, "upper": 90}},
                     }
                 )
@@ -235,7 +242,7 @@ def seed(application: Pipeline, workload: Workload) -> dict:
             key = f"p{product}-offer{offer}"
             links.append((product_id, f"workload:offer:{key}"))
             for sample in range(2):
-                timestamp = CUTOFF - timedelta(hours=24 * (1 - sample))
+                timestamp = cutoff - timedelta(hours=24 * (1 - sample))
                 rows.append(
                     {
                         "observation_id": f"{key}-{sample}",
@@ -269,6 +276,19 @@ def seed(application: Pipeline, workload: Workload) -> dict:
         # import_records may split a batch by source/day: authoritative membership is SQL.
     for linked_product, linked_entity in links:
         application.review_link(linked_product, linked_entity)
+    if cutoff < now():
+        # Explicit owned synthetic fixture chronology: production APIs correctly use
+        # physical clocks. This harness declares pre-existing products, reviewed
+        # ownership and imported delivery metadata before its historical report cutoff.
+        # require_scratch and the empty-state guard above exclude operator/live state.
+        known_at = cutoff - timedelta(days=retained_days)
+        application.catalog.execute(
+            "UPDATE products SET created_at=%s WHERE synthetic", (known_at,)
+        )
+        application.catalog.execute("UPDATE product_links SET available_at=%s", (known_at,))
+        application.catalog.execute(
+            "UPDATE datasets SET created_at=%s WHERE synthetic", (known_at,)
+        )
     if workload.texts:
         texts = application.transcript_insights()
         texts.initialize()
@@ -303,7 +323,7 @@ def seed(application: Pipeline, workload: Workload) -> dict:
                 else f"Synthetic text {index}: can save time. Easy to use. "
             )
             text = (prefix + "x" * workload.text_characters)[: workload.text_characters]
-            known_at = utc(observation["observed_at"]) if workload.research_reports else CUTOFF
+            known_at = utc(observation["observed_at"]) if workload.research_reports else cutoff
             texts.import_transcript(
                 TranscriptInput(
                     product_id=f"workload-{product}",
@@ -330,6 +350,12 @@ def seed(application: Pipeline, workload: Workload) -> dict:
                 ),
                 as_of=known_at,
             )
+    if cutoff < now() and workload.texts:
+        application.catalog.execute(
+            "UPDATE enrichment_transcripts SET available_at="
+            "(metadata#>>'{context,known_at}')::timestamptz WHERE synthetic"
+        )
+
     return {
         "rows": len(rows),
         "datasets": len(datasets),
@@ -338,13 +364,13 @@ def seed(application: Pipeline, workload: Workload) -> dict:
         "supplied_text_characters": workload.products * workload.texts * workload.text_characters,
         "fixture_sha256": digest(rows),
         "text_timing": "known_by_first_metric" if workload.research_reports else "known_at_cutoff",
-        "cutoff": CUTOFF.isoformat(),
+        "cutoff": cutoff.isoformat(),
         "source_requests": 0,
         "paid_provider_calls": 0,
     }
 
 
-def reports(application: Pipeline, workload: Workload) -> dict:
+def reports(application: Pipeline, workload: Workload, *, cutoff: datetime = CUTOFF) -> dict:
     """Concrete adapters only; each public module retains its guards and full output."""
     require_scratch(application)
     results = {}
@@ -360,27 +386,27 @@ def reports(application: Pipeline, workload: Workload) -> dict:
             product_id = f"workload-{product}"
             if case == "trend":
                 report = application.trend_insights().describe(
-                    product_id, CUTOFF, True, max_rows=workload.max_rows
+                    product_id, cutoff, True, max_rows=workload.max_rows
                 )
             elif case == "brief":
                 report = application.decision_brief().describe(
                     product_id,
                     "FR",
-                    CUTOFF,
+                    cutoff,
                     True,
                     max_rows=workload.max_rows,
                     text_limit=workload.text_limit,
                 )
             elif case == "content":
                 report = application.content_insights().aggregate(
-                    product_id, synthetic=True, as_of=CUTOFF, limit=workload.text_limit
+                    product_id, synthetic=True, as_of=cutoff, limit=workload.text_limit
                 )
             elif case == "changes":
                 report = application.decision_changes().compare(
                     product_id,
                     "FR",
-                    CUTOFF - timedelta(hours=24),
-                    CUTOFF,
+                    cutoff - timedelta(hours=24),
+                    cutoff,
                     True,
                     max_rows=workload.max_rows,
                     text_limit=workload.text_limit,
@@ -388,7 +414,7 @@ def reports(application: Pipeline, workload: Workload) -> dict:
             elif case == "progression":
                 report = application.content_progression().describe(
                     product_id,
-                    CUTOFF,
+                    cutoff,
                     True,
                     window_hours=24,
                     max_rows=workload.max_rows,
@@ -399,7 +425,7 @@ def reports(application: Pipeline, workload: Workload) -> dict:
                 report = application.text_selection().preview(
                     [product_id],
                     synthetic=True,
-                    as_of=CUTOFF,
+                    as_of=cutoff,
                     config=TextSelectionConfig(
                         per_product_candidates=min(100, workload.text_limit)
                     ),
