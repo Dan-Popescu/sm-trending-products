@@ -114,6 +114,7 @@ def compare(service: ResearchValidation, attempt_ids: tuple[str, ...], synthetic
                             "counts",
                             "reason_counts",
                             "commercial_stage_note",
+                            "products",
                         )
                     },
                     "measurement_sample": None
@@ -164,9 +165,45 @@ def compare(service: ResearchValidation, attempt_ids: tuple[str, ...], synthetic
                 "methodology": result["methodology"],
             }
         )
-    coverage = [[row["coverage"] for row in candidate["decisions"]] for candidate in candidates]
+    # Compare the actual preselection population, not aggregate counts or which
+    # fully observed products each policy selected. Commercial review stages also
+    # do not establish whether a product was observable/eligible for ranking.
+    coverage = [
+        [
+            {
+                product["product_id"]: {
+                    "stages": {
+                        key: product["stages"][key]
+                        for key in ("discovered", "linked", "eligible", "ranked")
+                    },
+                    "exclusion_reason": None if product["stages"]["ranked"] else product["reason"],
+                }
+                for product in decision["coverage"]["products"]
+            }
+            for decision in candidate["decisions"]
+        ]
+        for candidate in candidates
+    ]
+    coverage_differences = []
+    for index, decision in enumerate(candidates[0]["decisions"]):
+        products = set().union(*(candidate[index] for candidate in coverage))
+        changed = sorted(
+            product_id
+            for product_id in products
+            if any(
+                candidate[index].get(product_id) != coverage[0][index].get(product_id)
+                for candidate in coverage[1:]
+            )
+        )
+        if changed:
+            coverage_differences.append(
+                {
+                    "decision_time": decision["decision_time"],
+                    "product_ids": changed,
+                }
+            )
     flags = []
-    if any(value != coverage[0] for value in coverage[1:]):
+    if coverage_differences:
         flags.append("different_coverage_or_exclusions")
     outcome_coverage = [
         [
@@ -202,6 +239,7 @@ def compare(service: ResearchValidation, attempt_ids: tuple[str, ...], synthetic
         response = {
             "status": "flagged" if flags else "comparable",
             "flags": flags,
+            "coverage_differences": coverage_differences,
             "candidate_status": "UNVALIDATED",
             "winner": None,
             "protocol_id": protocol["protocol_id"],
