@@ -48,6 +48,9 @@ class _Accounting:
         self.directories = directories
         self.process = os.getpid()
         self.descriptor = -1
+        # Retained checksums must notice writes even when another transaction
+        # already drained the event queue and inode timestamps have coalesced.
+        self.payload_generation = 0
         self.watches: dict[int, int] = {}
         self.established = False
         self.finalizer: weakref.finalize | None = None
@@ -73,6 +76,8 @@ class _Accounting:
             self.close()
 
     def close(self) -> None:
+        if self.descriptor >= 0:
+            self.payload_generation += 1
         if self.finalizer is not None:
             self.finalizer()
         self.descriptor = -1
@@ -100,6 +105,7 @@ class _Accounting:
                 if mask & _OVERFLOW:
                     uncertain = True
                     modified = True
+                    self.payload_generation += 1
                     continue
                 if mask & _LOST or watch not in self.watches:
                     self.close()
@@ -118,6 +124,7 @@ class _Accounting:
                     clean = False
                     if directory != 2 and mask & _MODIFY:
                         modified = True
+                        self.payload_generation += 1
         return clean and not uncertain and self.descriptor >= 0, modified
 
     def _versions(self) -> list[list[int]]:
