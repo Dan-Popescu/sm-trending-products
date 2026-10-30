@@ -93,7 +93,17 @@ jobs:
         timeout-minutes: 20
         env:
           TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
-        run: uv run --locked pytest -vv -ra --durations=15 --junitxml=output/test-results.xml
+        run: |
+          mkdir -p output
+          ulimit -c 0
+          # Bound pytest itself and leave time to publish its diagnostic output.
+          native_test_status=0
+          timeout --verbose --signal=ABRT --kill-after=15s 19m \
+            uv run --locked pytest -vv -ra --durations=15 \
+            -o faulthandler_timeout=90 --junitxml=output/test-results.xml \
+            >output/native-tests.log 2>&1 || native_test_status=$?
+          cat output/native-tests.log
+          exit "$native_test_status"
       - name: Verify controlled benchmark and quota exhaustion
         timeout-minutes: 5
         run: bash scripts/ci-benchmark.sh
@@ -117,6 +127,7 @@ jobs:
           name: verification-results
           path: |
             output/test-results.xml
+            output/native-tests.log
             output/recovery-report.json
             output/offline-benchmark.json
             output/offline-benchmark.log

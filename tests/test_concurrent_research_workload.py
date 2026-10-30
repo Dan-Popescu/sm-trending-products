@@ -184,7 +184,10 @@ def test_native_shared_cache_pressure_preserves_reports_and_receipts(tmp_path, m
             cache_bytes=1_000_000,
             source_padding_bytes=450000,
         ),
-        Workload(case="research"),
+        # Real report work must exceed a complete first normalization interval;
+        # one tiny product can phase-lock all four publications across report boundaries.
+        # Four products remain a small 272-row fixture under the existing 1,000-row guard.
+        Workload(case="research", products=4),
         output=tmp_path / "pressure.json",
         timeout=90,
     )
