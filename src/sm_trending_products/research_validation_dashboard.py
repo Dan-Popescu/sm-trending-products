@@ -166,6 +166,10 @@ def render_validation(pipeline: Pipeline, synthetic: bool) -> None:
     )
     with st.expander("Protocol, exact policies and limits"):
         _show(current)
+    with st.expander("Illustrative UNVALIDATED criteria and editable candidates"):
+        from .research_validation._candidates import candidate_bundle
+
+        _show(candidate_bundle())
     scope = f"{workspace}:{selected}"
     policies = list(current["protocol"]["policies"])
     with st.form(f"research-lock:{scope}"):
@@ -237,6 +241,27 @@ def render_validation(pipeline: Pipeline, synthetic: bool) -> None:
                     "This attempt has not completed successfully. Reuse its ID to inspect it."
                 )
             _show(attempt)
+    st.caption("Critères NON VALIDÉS : comparaison descriptive du développement, aucun gagnant.")
+    compare_key = f"research-compare-widget:{scope}"
+    compare_intent = f"_research-compare:{scope}"
+    comparison_text = st.text_input(
+        "Development attempt IDs (2–8, separated by commas)",
+        max_chars=1031,
+        key=compare_key,
+    )
+    if st.button("Compare development attempts", key=f"research-compare:{scope}"):
+        st.session_state[compare_intent] = comparison_text
+    if comparison_text and st.session_state.get(compare_intent) == comparison_text:
+        try:
+            from .research_validation._comparison import french_summary
+
+            comparison = service.compare(
+                tuple(item.strip() for item in comparison_text.split(",")), synthetic
+            )
+            st.text(_safe(french_summary(comparison)))
+            _show(comparison)
+        except Exception as error:
+            _error(error)
     page = int(st.number_input("Attempt page", min_value=1, max_value=7, value=1, step=1))
     list_key = f"_research-list-attempts:{workspace}"
     if st.button("List protocol attempts", key=f"research-list-attempts:{scope}"):
