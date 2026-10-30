@@ -11,12 +11,12 @@ permissions:
 
 concurrency:
   # Separate bounded runs from stalled executions created before the watchdog.
-  group: verify-v2-${{ github.workflow }}-${{ github.ref }}
+  group: verify-v3-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   verify:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     # Native source/restore checks and the actual two-image campaign run here.
     timeout-minutes: 45
     services:
@@ -88,7 +88,7 @@ jobs:
       - name: Verify Python types
         timeout-minutes: 5
         run: uv run --locked mypy src
-      - name: Verify native PostgreSQL behavior
+      - name: Verify native PostgreSQL behavior with watchdog
         # Includes bounded 12k-dataset and 50k-artifact retirement regressions.
         # The independently exercised commerce and recovery cases expand this suite.
         timeout-minutes: 20
