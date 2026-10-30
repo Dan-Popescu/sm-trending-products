@@ -283,7 +283,12 @@ fenced outcome `evaluation_cutoff`.
 Matching scopes return `comparable`, or `flagged` when observed coverage,
 exclusions or outcome coverage/status differ. Intentional strict-missingness
 exclusions remain visible alongside each policy's selected identities and
-per-date audit, rather than hiding the rows. These differences do not support a
+per-date audit, rather than hiding the rows. Each audit retains the per-product
+IDs, stages and reasons; `coverage_differences` identifies products whose
+preselection discovery/link/eligibility/ranking status or exclusion reason differs.
+Equal aggregate counts do not establish equal coverage. Different selections among
+fully ranked products, and commercial review/test stages, do not by themselves
+trigger a coverage warning. These differences do not support a
 rate league or automatic winner. Existing kernel summaries retain selected and
 observed denominators, status counts, coverage, precision bounds, uncertainty and
 dependence. Seeded measurement samples retain their actual IDs, population,

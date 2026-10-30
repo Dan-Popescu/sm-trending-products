@@ -371,3 +371,121 @@ def test_multiple_dates_preserve_frozen_chronology_in_hashed_record_tree(pipelin
         base,
         base + timedelta(days=2),
     ]
+
+
+@pytest.mark.integration
+def test_equal_aggregate_counts_flag_different_exclusions_but_not_normal_selection_changes(
+    pipeline,
+):
+    from test_evaluation_integration import record
+
+    policies = {
+        "demand": AssessmentPolicy(version="demand-only", weights={"demand": 1}),
+        "feasibility": AssessmentPolicy(version="feasibility-only", weights={"feasibility": 1}),
+    }
+    service, _, identifier, base, _ = seed(pipeline, policies=policies)
+    pipeline.import_records(
+        [
+            record("thin", base - timedelta(hours=1), 2),
+            record("thin", base + timedelta(days=1), 305),
+        ],
+        synthetic=True,
+    )
+
+    def sold(product_id, before, after):
+        rows = []
+        for timestamp, value in ((base - timedelta(hours=1), before), (base, after)):
+            row = record(product_id + "-offer", timestamp, value)
+            row["entity_type"] = "offer"
+            row["metrics"] = {
+                "units_sold": {"lower": value, "upper": value + 1, "precision": "bounded"}
+            }
+            row["attributes"] = {"sold_period": "lifetime"}
+            rows.append(row)
+        pipeline.import_records(rows, synthetic=True)
+        pipeline.review_link(product_id, f"fixture_import:offer:{product_id}-offer")
+
+    def cost(product_id, unit_cost):
+        row = record(product_id + "-cost", base, 0)
+        row["entity_type"] = "cost"
+        row["metrics"] = {}
+        row["attributes"] = {
+            "currency": "EUR",
+            "sale_price": "20",
+            "unit_cost": unit_cost,
+            "shipping_cost": "2",
+            "payment_fee": "1",
+            "ad_cost": "3",
+            "tax_cost": "2",
+            "return_rate": "0.1",
+            "return_cost": "5",
+        }
+        pipeline.import_records([row], synthetic=True)
+        pipeline.review_link(product_id, f"fixture_import:cost:{product_id}-cost")
+
+    def compare_attempts(request_prefix):
+        return service.compare(
+            tuple(
+                service.run(
+                    identifier,
+                    "development",
+                    policy,
+                    request_prefix + policy,
+                    synthetic=True,
+                    as_of=base + timedelta(days=1),
+                )["attempt_id"]
+                for policy in policies
+            ),
+            True,
+        )
+
+    sold("dev", 100, 200)
+    cost("thin", "4")
+    comparison = compare_attempts("missing-")
+    demand, feasibility = comparison["candidates"]
+    demand_audit = demand["decisions"][0]["coverage"]
+    feasibility_audit = feasibility["decisions"][0]["coverage"]
+    assert demand_audit["counts"] == feasibility_audit["counts"]
+    assert demand_audit["reason_counts"] == feasibility_audit["reason_counts"]
+    assert demand_audit["reason_counts"]["score_unavailable"] == 1
+    assert [
+        (row["selected_count"], row["observed_count"], row["status_counts"])
+        for row in demand["outcome_summaries"]
+    ] == [
+        (row["selected_count"], row["observed_count"], row["status_counts"])
+        for row in feasibility["outcome_summaries"]
+    ]
+    assert comparison["flags"] == ["different_coverage_or_exclusions"]
+    assert comparison["status"] == "flagged"
+    assert comparison["coverage_differences"] == [
+        {
+            "decision_time": base.isoformat(),
+            "product_ids": ["dev", "thin"],
+        }
+    ]
+    demand_products = {row["product_id"]: row for row in demand_audit["products"]}
+    feasibility_products = {row["product_id"]: row for row in feasibility_audit["products"]}
+    assert demand_products["thin"]["reason"] == "score_unavailable"
+    assert feasibility_products["dev"]["reason"] == "score_unavailable"
+    assert demand_products["dev"]["stages"]["ranked"]
+    assert feasibility_products["thin"]["stages"]["ranked"]
+    assert demand_products["thin"]["assessment_reasons"]
+    assert feasibility_products["dev"]["assessment_reasons"]
+
+    # Both products now have both dimensions, and opposite policy preferences.
+    # Different selections alone must not masquerade as an exclusion/coverage gap.
+    sold("thin", 100, 101)
+    cost("dev", "18")
+    complete = compare_attempts("complete-")
+    assert [row["decisions"][0]["selected"] for row in complete["candidates"]] == [
+        ["dev"],
+        ["thin"],
+    ]
+    assert complete["status"] == "comparable"
+    assert complete["coverage_differences"] == []
+    assert "different_coverage_or_exclusions" not in complete["flags"]
+    assert all(
+        candidate["decisions"][0]["coverage"]["counts"]["ranked"] == 2
+        for candidate in complete["candidates"]
+    )
+    assert complete["winner"] is None
