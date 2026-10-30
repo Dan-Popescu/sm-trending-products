@@ -460,6 +460,12 @@ class ResearchValidation:
                     result["result_unavailable"] = "evidence_invalidated"
             return result
 
+    def compare(self, attempt_ids: tuple[str, ...], synthetic: bool = False) -> dict:
+        """Inspect 2–8 existing development attempts, without execution or selection."""
+        from ._comparison import compare
+
+        return compare(self, attempt_ids, synthetic)
+
     def attempts(
         self, protocol_id: str, synthetic: bool = False, limit: int = 100, offset: int = 0
     ) -> list[dict]:

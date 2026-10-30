@@ -209,3 +209,154 @@ therefore disappear on the next interaction instead of surviving in a session
 cache. Listing uses pages of 20 attempts, bounded by the protocol's 128-attempt
 limit. The view labels retrospective chronology and never calls the stored
 protocol evidence of blind validation outside its recorded scope.
+
+## Illustrative candidates and read-only development comparisons
+
+The additional candidate bundle is explicitly `UNVALIDATED`. No winning-product
+criteria have been calibrated. Generate the dictionary and editable protocol with:
+
+```sh
+sm-trends research validation candidates
+sm-trends research validation candidates --format protocol > candidates.json
+```
+
+The first command returns `status`, `criterion_dictionary` and `protocol`. The
+second returns only a valid `ValidationProtocol`, ready for editing; it does not
+register or execute anything. Replace all example product IDs and dates with a
+reviewed, separated development/test/holdout design before registration. Declare
+all policies together before examining their governed outcomes. The original
+`example` command and existing command outputs retain their prior format.
+
+| Illustrative policy | Retained history | Minimum distinct-time observations | Weighted dimensions | Missing weighted dimensions |
+| --- | --- | --- | --- | --- |
+| `attention-7d` | 7 days | 2 | attention 1 | exclude |
+| `attention-demand-14d-strict` | 14 days | 3 | attention 0.7, demand 0.3 | exclude |
+| `attention-demand-14d-available` | 14 days | 3 | attention 0.7, demand 0.3 | explicitly renormalize available dimensions |
+| `commercial-30d-strict` | 30 days | 4 | attention 0.5, demand 0.2, competition 0.15, feasibility 0.15 | exclude |
+
+These are investigation strategies with declared differences, rather than a
+prediction of sales. A lookback retains available history; it does not require
+observations on every day, positive growth on every day or a configurable minimum
+persistence. The protocol evaluates the existing attention target at a three-day
+horizon, with launch delays of 12, 24 and 48 hours. Those delays represent when a
+launch could start; they do not measure shipping or supplier delivery time.
+
+The dictionary distinguishes facts the existing assessment kernel can use from
+requirements it cannot establish:
+
+| Criterion | Existing facts or derivations | Unavailable or unmodeled claims |
+| --- | --- | --- |
+| Growth across days | Compatible interval growth, positive interval fraction and available acceleration within the retained window | No new minimum persistence or consecutive-growing-days rule |
+| Diversity and coverage | Known creator spread/concentration, family deduplication, declared-panel selection audit | No configurable creator diversity threshold, unknown-creator independence or global market census |
+| Demand | Existing intent proxies and compatible purchase counters, when supplied | Views do not establish sales; missing demand remains unknown |
+| Competition | Named observed sellers/advertisers, offers, explicit creative fingerprints and comparable prices | Coverage-dependent proxy does not establish market saturation |
+| Margin | Existing feasibility calculation for complete, currency-consistent stated cost scenarios | Missing costs remain unknown; scenario margin is not realized profit |
+| Delivery | Declared launch-delay sensitivity | Supplier reliability, delivery time and geography are not modeled by `AssessmentPolicy` |
+
+Compare **existing** attempt IDs after running the declared development policies:
+
+```sh
+sm-trends research validation compare --synthetic \
+  --attempt-id DEVELOPMENT_ATTEMPT_A --attempt-id DEVELOPMENT_ATTEMPT_B
+sm-trends research validation compare --synthetic \
+  --attempt-id DEVELOPMENT_ATTEMPT_A --attempt-id DEVELOPMENT_ATTEMPT_B \
+  --format summary
+```
+
+JSON is the default for this new command. `--format summary` produces concise
+French operator prose, limited to six policy scenarios per attempt; the JSON
+retains all admitted scenarios. The private research view provides the same
+comparison and candidate dictionary after explicit protocol inspection. Enter
+2–8 comma-separated development attempt IDs, then press **Compare development
+attempts**. Only ID intent remains in session state. Every subsequent interaction
+reloads the comparison through the ordinary evidence guards. Final JSON and text
+use current credential redaction and bounded display serialization.
+
+Comparison never creates an attempt, registers a candidate, changes a policy lock,
+opens test/holdout results or installs optional SQL. It checks stored partition and
+workspace identity before hydrating result metadata. Missing IDs, cross-workspace
+IDs, test/holdout IDs, different protocols, different decision scopes and unequal
+outcome evaluation cutoffs are refused. UTC representations of the same instant
+are treated equally. The attempt's execution clock is shown separately from the
+fenced outcome `evaluation_cutoff`.
+
+Matching scopes return `comparable`, or `flagged` when observed coverage,
+exclusions or outcome coverage/status differ. Intentional strict-missingness
+exclusions remain visible alongside each policy's selected identities and
+per-date audit, rather than hiding the rows. Each audit retains the per-product
+IDs, stages and reasons; `coverage_differences` identifies products whose
+preselection discovery/link/eligibility/ranking status or exclusion reason differs.
+Equal aggregate counts do not establish equal coverage. Different selections among
+fully ranked products, and commercial review/test stages, do not by themselves
+trigger a coverage warning. These differences do not support a
+rate league or automatic winner. Existing kernel summaries retain selected and
+observed denominators, status counts, coverage, precision bounds, uncertainty and
+dependence. Seeded measurement samples retain their actual IDs, population,
+inclusion probability, methodology and scenario summaries. Missing or pending
+outcomes remain unknown; zero selected products does not mean zero demand.
+`winner` is always null.
+
+Failed, running or withdrawn attempts return `unavailable` without candidate
+reports. An invalidation encountered during hydration can instead refuse the
+read. Authoritative readers hydrate independently; a final namespace/retention
+fence rechecks every collected provenance root and evaluation invalidation before
+bounded output finalization. This avoids holding an outer read lock while a
+nested reader waits behind a queued retirement writer. No new evaluator, counter
+formula, persistent comparison table or report cache is introduced.
+
+The comparison admits 2–8 unique attempts, up to the protocol's 64 dates and 500
+products. Across the comparison it permits at most 10,000 hydrated records and
+4,000,000 encoded bytes, and separately bounds the finalized output to 4,000,000
+bytes. Reads use existing pages of at most 100 records. These are work/output
+admission bounds, not a process RSS guarantee. Existing provenance-node and cache
+budgets still apply. An over-budget comparison fails explicitly. Inspection of an
+unavailable comparison exits 0; rejected inputs or incompatible scopes exit 2.
+
+## Controlled native walkthrough
+
+Use a disposable native PostgreSQL URL and the existing loopback HTTP object-store
+fixtures; do not point the test database at deployed state. Run the controlled
+operator and service walkthrough with:
+
+```sh
+PYTHONPATH=src:tests flock -w 300 /tmp/night-native-tests.lock \
+  python -m pytest -q tests/test_research_comparison.py \
+  tests/test_research_validation_operator.py
+```
+
+The fixture creates canonical synthetic development products `dev`, `empty` and
+`thin`, separate test/holdout products, actual reviewed links and immutable
+observations. `dev` has two distinct-time observations at the decision and a
+future attention outcome; `thin` has only one observation and `empty` has no
+reviewed link. The declared development universe and evaluation cutoff are held
+constant while the preregistered policies differ.
+
+The native checks establish these controlled outcomes:
+
+- Attention-only and an explicitly renormalized attention/demand policy both
+  select `dev`. Their existing policy outcome summaries show 1/1 observed and
+  `success`, while both exclusions remain visible in the selection audit.
+- A strict attention/demand policy selects no product because the fixture supplies
+  no demand evidence. Its `score_unavailable` exclusion and zero selected
+  denominator remain explicit; precision is null. This is useful evidence of an
+  unmet information requirement, not evidence that demand is absent.
+- Removing the future boundary evidence leaves observed outcomes unknown. Reading
+  at the decision clock exposes the existing `pending` state, never an invented
+  success, failure or zero sale.
+- Different outcome cutoffs and different protocols are refused. A genuinely
+  executed holdout attempt, available only after the ordinary policy lock, is
+  refused before its result is hydrated. The existing heldout lock and immutable
+  selected-policy restrictions remain enforced.
+- Withdrawing a real fixture dataset removes candidate reports from the next
+  service, CLI or private-view inspection. Concurrent withdrawal during metadata
+  or descriptor hydration cannot return a stale comparison. Multi-date frozen
+  chronology is preserved across hash-addressed record trees.
+- Seeded measurement audits preserve sample size, population and inclusion
+  probability. Record/byte budgets reject oversized reads, and unsupported,
+  non-finite or oversized final display values are refused without echoing them.
+
+This walkthrough verifies software behavior on synthetic observations. It does
+not establish source access, real product opportunities, calibrated selection
+criteria, supplier feasibility, profitable launches or counterfactual profit.
+Real selection research requires authorized real history; profit evaluation also
+requires complete reviewed actual commercial outcomes under the existing contract.
