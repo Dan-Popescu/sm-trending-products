@@ -130,7 +130,7 @@ def collector_identity(path: Path, profile: str) -> dict:
     return {"path": str(path.resolve()), "sha256": checksum.hexdigest(), "profile": profile}
 
 
-def session_resources(session_id: int, known_pids: set[int]) -> dict:
+def session_resources(session_id: int, known_pids: set[int], *, details: bool = False) -> dict:
     """Visit only the owned worker and its thread-child links, never scan host PIDs."""
     pending, visited, members = list(known_pids | {session_id}), set(), []
     complete = True
@@ -165,6 +165,15 @@ def session_resources(session_id: int, known_pids: set[int]) -> dict:
             continue
     known_pids.update(pid for pid, _, _ in members)
     return {
+        **(
+            {
+                "processes": [
+                    {"pid": pid, "rss_bytes": rss, "cpu_seconds": cpu} for pid, rss, cpu in members
+                ]
+            }
+            if details
+            else {}
+        ),
         "session_rss_bytes": sum(rss for _, rss, _ in members) if complete else None,
         "discovered_rss_bytes": sum(rss for _, rss, _ in members),
         "live_discovered_cpu_seconds": sum(cpu for _, _, cpu in members),

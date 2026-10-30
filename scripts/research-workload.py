@@ -70,15 +70,17 @@ def memory() -> dict:
 
 
 @contextmanager
-def sql_counts():
+def sql_counts(*, current_thread_only: bool = False):
     """Count this isolated worker's execute calls, including its own pool threads."""
     counts = {"execute_calls": 0}
     execute = psycopg.Connection.execute
     count_lock = threading.Lock()
+    owner_thread = threading.get_ident()
 
     def counted(connection, query, *args, **kwargs):
-        with count_lock:
-            counts["execute_calls"] += 1
+        if not current_thread_only or threading.get_ident() == owner_thread:
+            with count_lock:
+                counts["execute_calls"] += 1
         return execute(connection, query, *args, **kwargs)
 
     psycopg.Connection.execute = counted
@@ -201,10 +203,11 @@ def _run_case(
     timeout: float = 120,
     max_disk_bytes: int = 256 * MIB,
     prices: Store | None = None,
+    campaign: dict | None = None,
 ) -> dict:
-    """One fresh worker and stores per case; no collector or external provider is run."""
+    """One fresh owned worker and stores; optional concrete synthetic capture campaign."""
     report = {
-        "version": "research-workload-v1",
+        "version": "concurrent-research-workload-v1" if campaign else "research-workload-v1",
         "synthetic": True,
         "ok": False,
         "status": "refused",
@@ -222,6 +225,10 @@ def _run_case(
             or not MIB <= max_disk_bytes <= 512 * MIB
         ):
             raise ValueError("Limits: runtime at most 180s and owned disk 1..512 MiB")
+        if campaign is not None:
+            from sm_trending_products.concurrent_research_workload import Campaign
+
+            campaign = Campaign.model_validate(campaign).model_dump(mode="json")
         database_url = test_database_url()
     except Exception as error:
         report["error_type"] = type(error).__name__
@@ -234,6 +241,7 @@ def _run_case(
     process, created, server_started = None, False, False
     started, cpu_started = time.monotonic(), time.process_time()
     samples, known, reason = [], set(), None
+    supervisor_failed = False
     report.update(
         schema=schema,
         status="running",
@@ -278,7 +286,8 @@ def _run_case(
             spool_dir=owned / "spool",
             cache_max_bytes=16 * MIB,
             acquisition_enabled=False,
-            collector_binary="unused-offline-only",
+            collector_binary=campaign["collector_binary"] if campaign else "unused-offline-only",
+            collector_timeout_seconds=10,
         )
         values = settings.model_dump(mode="json")
         values["database_url"] = scoped_url
@@ -289,9 +298,16 @@ def _run_case(
             "AWS_SESSION_TOKEN": "",
             "AWS_EC2_METADATA_DISABLED": "true",
             "TMPDIR": str(owned),
+            **({"TIKTOK_DISPLAY_ACCESS_TOKEN": "concurrent-fixture-token"} if campaign else {}),
         }
         process = subprocess.Popen(
-            [sys.executable, str(Path(__file__).resolve()), "--worker"],
+            [
+                sys.executable,
+                str(ROOT / "scripts/concurrent-research-workload.py")
+                if campaign
+                else str(Path(__file__).resolve()),
+                "--worker",
+            ],
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -308,6 +324,7 @@ def _run_case(
                     "owned": str(owned),
                     "max_upload_bytes": max_disk_bytes,
                     "checkpoint": str(checkpoint),
+                    **({"campaign": campaign} if campaign else {}),
                 }
             )
         )
@@ -323,7 +340,7 @@ def _run_case(
             sample = {
                 "elapsed_seconds": elapsed,
                 "phase": progress.get("active_phase", "startup"),
-                **existing.session_resources(process.pid, known),
+                **existing.session_resources(process.pid, known, details=campaign is not None),
                 "owned_file_bytes": disk,
                 "schema_bytes": snapshot.get("schema_bytes"),
                 "memory_headroom_bytes": existing.memory_headroom(),
@@ -358,6 +375,10 @@ def _run_case(
             report.update(ok=False, status=report.get("status", "worker_failed"))
         elif not report.get("identity_preserved"):
             report.update(ok=False, status="missing_worker_result")
+        if campaign is not None:
+            report["environment"]["collector"] = existing.collector_identity(
+                Path(campaign["collector_binary"]), "prebuilt-explicit"
+            )
         report["final_database_snapshot"] = existing.database_snapshot(scoped_url)
         report["published_data"] = existing.data_summary(scoped_url)
         report["final_owned_file_bytes"] = existing.owned_disk_bytes(owned)
@@ -367,6 +388,7 @@ def _run_case(
         elif report["final_owned_file_bytes"] + schema_bytes > max_disk_bytes:
             report.update(ok=False, status="owned_disk_limit")
     except Exception as error:
+        supervisor_failed = True
         report.update(
             ok=False,
             status="runner_interrupted" if isinstance(error, InterruptedError) else "runner_failed",
@@ -378,6 +400,14 @@ def _run_case(
                 existing.stop_session(process)
             except Exception as error:
                 report["cleanup"]["errors"].append(type(error).__name__)
+        # Stop the owned process before adopting its final durable checkpoint,
+        # including exception/signal paths that skipped the ordinary result merge.
+        # The supervisor's terminal failure always wins over a child success.
+        terminal = {
+            key: report[key] for key in ("ok", "status", "error_type", "exit_code") if key in report
+        }
+        report.update(existing.read_report(checkpoint))
+        report.update(terminal)
         if server_started:
             try:
                 server.stop()
@@ -415,7 +445,13 @@ def _run_case(
     }
     completed_phases = {phase.get("name") for phase in phases if phase}
     in_flight = report.get("active_phase")
-    accounting_complete = in_flight in completed_phases or process is None
+    accounting_complete = (
+        bool(report.get("worker_usage_complete"))
+        if campaign is not None
+        else in_flight in completed_phases or process is None
+    )
+    if supervisor_failed or reason:
+        accounting_complete = False
     report["checkpointed_usage"] = totals
     report["usage_accounting_complete"] = accounting_complete
     report["usage"] = totals if accounting_complete else {key: None for key in totals}
@@ -460,6 +496,20 @@ def _run_case(
         "Local synthetic planning evidence only; no target-VPS capacity certificate or "
         "production cost is established.",
     ]
+    if campaign is not None:
+        report["measurement_limits"] = [
+            "Synthetic capture/research; actual source HTTP uses only owned loopback fixtures.",
+            "The collection and report threads share one worker, cache directory and cache budget. "
+            "Report thread CPU/SQL excludes other threads; worker CPU includes all its threads.",
+            "Supervisor CPU includes HTTP Moto; worker RSS excludes Moto and PostgreSQL. "
+            "Samples can miss brief Rust children; unknown session discovery stays null.",
+            "Owned disk samples files plus schema relations; excludes WAL and PostgreSQL temp/logs "
+            "and Moto RAM. Cumulative upload admission happens before each encoded History write.",
+            "Interrupted checkpoint usage is a lower bound; in-flight usage stays null.",
+            "Fixture metadata/text clocks declare synthetic history; "
+            "actual Rust receipt and arrival observation/availability clocks are not backdated.",
+            "Retained days are logical history. No production/source/provider capacity claim.",
+        ]
     if report["cleanup"]["errors"]:
         report.update(ok=False, status="cleanup_failed")
     existing.write_report(output, report)
