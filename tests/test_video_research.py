@@ -337,3 +337,72 @@ def test_listing_redacts_source_text_after_policy_withdrawal(pipeline, tmp_path)
         and hidden["unavailable_reason"] == "enrichment_source_policy_unverified"
     )
     assert hidden["title"] is None and hidden["video_url"] is None
+
+
+def test_completion_ack_loss_preserves_download_and_reuses_durable_completion(
+    pipeline, tmp_path, monkeypatch
+):
+    from contextlib import contextmanager
+
+    service, selection, config, executor = setup(pipeline, tmp_path)
+    original = pipeline.catalog.evidence_transaction
+    calls = 0
+
+    @contextmanager
+    def lose_completion_ack(synthetic):
+        nonlocal calls
+        calls += 1
+        number = calls
+        with original(synthetic) as connection:
+            yield connection
+        if number == 4:
+            raise OSError("controlled completion acknowledgement loss")
+
+    monkeypatch.setattr(pipeline.catalog, "evidence_transaction", lose_completion_ack)
+    with pytest.raises(OSError, match="acknowledgement loss"):
+        service.run(request(selection, action="download"), config)
+    job = pipeline.catalog.one("SELECT * FROM video_research_jobs")
+    assert job["state"] == "completed"
+    assert (config.work_dir / job["job_id"] / "video.mp4").read_bytes() == MEDIA
+    again = service.run(request(selection, action="download"), config)
+    assert again["reused"] and again["job_id"] == job["job_id"]
+    destination = tmp_path / "recovered.mp4"
+    service.export_media(job["job_id"], selection, config, destination)
+    assert destination.read_bytes() == MEDIA and len(executor.calls) == 1
+
+
+def test_failure_recording_loss_retains_private_files_and_original_error(
+    pipeline, tmp_path, monkeypatch
+):
+    from contextlib import contextmanager
+
+    lost = False
+
+    class FailedExecutor(FixtureExecutor):
+        def execute(self, payload, directory, config):
+            nonlocal lost
+            self.calls.append(payload)
+            (directory / "video.mp4").write_bytes(MEDIA)
+            lost = True
+            raise OSError("original backend failure")
+
+    service, selection, config, executor = setup(pipeline, tmp_path, executor=FailedExecutor())
+    original = pipeline.catalog.transaction
+
+    @contextmanager
+    def unavailable():
+        if lost:
+            raise ConnectionError("failure recording unavailable")
+        with original() as connection:
+            yield connection
+
+    monkeypatch.setattr(pipeline.catalog, "transaction", unavailable)
+    with pytest.raises(OSError, match="original backend failure"):
+        service.run(request(selection, action="download"), config)
+    lost = False
+    job = pipeline.catalog.one("SELECT * FROM video_research_jobs")
+    assert job["state"] == "running"
+    assert (config.work_dir / job["job_id"] / "video.mp4").read_bytes() == MEDIA
+    with pytest.raises(VideoResearchDenied, match="uncertain_no_automatic_retry"):
+        service.run(request(selection, action="download", identifier="alias"), config)
+    assert len(executor.calls) == 1

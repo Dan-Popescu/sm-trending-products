@@ -264,9 +264,10 @@ class VideoResearch:
                     reused=True,
                 )
             directory = root / row["job_id"]
-            completed = False
+            cleanup, owned_directory = False, False
             try:
                 directory.mkdir(mode=0o700)
+                owned_directory = True
                 result = self.executor.execute(payload, directory, config)
                 records = self._validate_output(request, config, directory, result, payload)
                 with self.catalog.evidence_transaction(selection.synthetic) as connection:
@@ -288,19 +289,32 @@ class VideoResearch:
                     ).fetchone()
                     if updated is None:
                         raise VideoResearchDenied("video_completion_identity_conflict")
-                completed = True
             except BaseException:
-                with self.catalog.transaction() as connection:
-                    connection.execute(
-                        "UPDATE video_research_jobs SET state='uncertain',"
-                        "finished_at=clock_timestamp() "
-                        "WHERE job_id=%s AND state='running'",
-                        (row["job_id"],),
-                    )
+                try:
+                    with self.catalog.transaction() as connection:
+                        failed = connection.execute(
+                            "UPDATE video_research_jobs SET state='uncertain',"
+                            "finished_at=clock_timestamp() "
+                            "WHERE job_id=%s AND state='running' RETURNING job_id",
+                            (row["job_id"],),
+                        ).fetchone()
+                    # Only acknowledged durable failure authorizes deleting owned files.
+                    # A lost completion/failure ACK must preserve potentially committed media.
+                    cleanup = failed is not None
+                except Exception:
+                    pass  # Preserve private bytes and the original failure if SQL is unavailable.
                 raise
             finally:
-                if not completed and directory.is_dir() and not directory.is_symlink():
-                    shutil.rmtree(directory)
+                if (
+                    cleanup
+                    and owned_directory
+                    and directory.is_dir()
+                    and not directory.is_symlink()
+                ):
+                    try:
+                        shutil.rmtree(directory)
+                    except OSError:
+                        pass  # Capacity checks bound leftovers; retain the original failure.
             return self.result(
                 request.request_id, selection.product_id, config, synthetic=selection.synthetic
             )

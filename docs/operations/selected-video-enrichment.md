@@ -132,7 +132,9 @@ Canonical URLs must have the matching numeric ID and no tracking query string.
 Do not reuse a request ID for another input. To request a deliberate later sample,
 change both `request_id` and `refresh_key`. A new alias for the same input reuses
 the completed job. Running/uncertain outcomes never trigger automatic retries,
-including after a process crash. An operator must investigate and explicitly
+including after a process crash. Lost database acknowledgements preserve private
+files unless a durable failure transition was positively confirmed; a committed
+download remains reusable even if its first response was lost. An operator must investigate and explicitly
 choose a new refresh key before repeating uncertain external work.
 
 ```sh
