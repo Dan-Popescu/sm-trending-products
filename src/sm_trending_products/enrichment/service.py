@@ -113,6 +113,11 @@ class TranscriptInsights:
                 "source_kind": value.source_kind,
                 "language": value.language,
                 "text_sha256": hashlib.sha256(value.text.encode()).hexdigest(),
+                **(
+                    {"machine_origin": value.machine_origin.model_dump(mode="json")}
+                    if value.machine_origin is not None
+                    else {}
+                ),
             }
         )
         context = value.context.model_dump(mode="json") if value.context is not None else None
@@ -123,6 +128,11 @@ class TranscriptInsights:
             "text_characters": len(value.text),
             "text_sha256": hashlib.sha256(value.text.encode()).hexdigest(),
             **({"context": context} if context is not None else {}),
+            **(
+                {"machine_origin": value.machine_origin.model_dump(mode="json")}
+                if value.machine_origin is not None
+                else {}
+            ),
         }
         with self.catalog.evidence_transaction(value.synthetic) as connection:
             cutoff = self._clock(connection, as_of, value.synthetic)
@@ -137,6 +147,11 @@ class TranscriptInsights:
                 cutoff,
                 value.observation_id,
             )
+            if value.machine_origin is not None:
+                self.provenance.guard(
+                    connection,
+                    self.provenance.roots(value.machine_origin.model_dump(mode="json")),
+                )
             cached = connection.execute(
                 "SELECT t.* FROM enrichment_transcripts t JOIN datasets d "
                 "ON d.dataset_id=t.source_dataset_id AND d.state='committed' "
@@ -184,6 +199,11 @@ class TranscriptInsights:
                     "source_kind": value.source_kind,
                     "language": value.language,
                     "permission_reference": value.permission_reference,
+                    **(
+                        {"machine_origin": value.machine_origin.model_dump(mode="json")}
+                        if value.machine_origin is not None
+                        else {}
+                    ),
                     "text_normalization": "nfc-lf-trim-v1",
                     "input_provenance": source_refs,
                     **({"context": context} if context is not None else {}),
@@ -816,6 +836,8 @@ class TranscriptInsights:
                 output = self.provenance.selected_records(
                     row["descriptor"], ["insight"], connection=connection
                 )["insight"]["output"]
+                if content.get("machine_origin") is not None:
+                    response["machine_origin"] = content["machine_origin"]
                 response.update(
                     source_kind=content["source_kind"],
                     language=content["language"],

@@ -73,4 +73,9 @@ country and period, with incomplete evidence identified explicitly.
 
 **Transcript insight**: A reproducible interpretation of supplied spoken-text or
 subtitle evidence, with its origin, version and uncertainty. A description is not
-automatically a transcript of speech.
+automatically a transcript of speech. Machine transcripts retain their model/media
+identity and remain unverified speech evidence.
+
+**Selected-video enrichment**: An explicitly requested comment sample, media
+artifact or machine transcript for a currently confirmed product video. A sample
+is not a complete comment census; a purchase question is not a measured sale.

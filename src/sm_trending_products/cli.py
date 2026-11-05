@@ -52,6 +52,7 @@ def parser() -> argparse.ArgumentParser:
     )
 
     commands.add_parser("transcripts", help="Analyze selected supplied text (transcripts --help)")
+    commands.add_parser("video-research", help="Selected comments, media and transcription")
 
     def command(name: str, help_text: str, *, synthetic: bool = False):
         child = commands.add_parser(name, help=help_text, description=help_text)
@@ -310,6 +311,10 @@ def read_json(path: Path | None, default=None):
 
 def main(argv: list[str] | None = None) -> int:
     effective = sys.argv[1:] if argv is None else argv
+    if effective and effective[0] == "video-research":
+        from .video_research.cli import main as video_research_main
+
+        return video_research_main(effective[1:])
     if effective and effective[0] == "research":
         from .research_cli import main as research_main
 

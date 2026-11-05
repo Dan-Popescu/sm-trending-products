@@ -88,23 +88,62 @@ jobs:
       - name: Verify Python types
         timeout-minutes: 5
         run: uv run --locked mypy src
-      - name: Verify native PostgreSQL behavior with watchdog
-        # Includes bounded 12k-dataset and 50k-artifact retirement regressions.
-        # The independently exercised commerce and recovery cases expand this suite.
-        timeout-minutes: 20
+      - name: Verify native PostgreSQL batch a-d
+        # All core tests are collected and partitioned; fail fast with diagnostics.
+        timeout-minutes: 11
         env:
           TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
           mkdir -p output
           ulimit -c 0
-          # Bound pytest itself and leave time to publish its diagnostic output.
           native_test_status=0
-          timeout --verbose --signal=ABRT --kill-after=15s 19m \
-            uv run --locked pytest -vv -ra --durations=15 \
-            -o faulthandler_timeout=90 --junitxml=output/test-results.xml \
-            >output/native-tests.log 2>&1 || native_test_status=$?
-          cat output/native-tests.log
+          timeout --verbose --signal=ABRT --kill-after=15s 10m \
+            uv run --locked python scripts/ci-native-tests.py --batch a-d \
+            >output/native-batch-a-d.log 2>&1 || native_test_status=$?
+          cat output/native-batch-a-d.log
           exit "$native_test_status"
+      - name: Verify native PostgreSQL batch e-m
+        # All core tests are collected and partitioned; fail fast with diagnostics.
+        timeout-minutes: 11
+        env:
+          TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          mkdir -p output
+          ulimit -c 0
+          native_test_status=0
+          timeout --verbose --signal=ABRT --kill-after=15s 10m \
+            uv run --locked python scripts/ci-native-tests.py --batch e-m \
+            >output/native-batch-e-m.log 2>&1 || native_test_status=$?
+          cat output/native-batch-e-m.log
+          exit "$native_test_status"
+      - name: Verify native PostgreSQL batch n-z
+        # All core tests are collected and partitioned; fail fast with diagnostics.
+        timeout-minutes: 11
+        env:
+          TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          mkdir -p output
+          ulimit -c 0
+          native_test_status=0
+          timeout --verbose --signal=ABRT --kill-after=15s 10m \
+            uv run --locked python scripts/ci-native-tests.py --batch n-z \
+            >output/native-batch-n-z.log 2>&1 || native_test_status=$?
+          cat output/native-batch-n-z.log
+          exit "$native_test_status"
+      - name: Verify native CPU and drain controls
+        # Keep collection lifecycle checks bounded separately as the suite grows.
+        timeout-minutes: 5
+        run: >-
+          uv run --locked pytest -q -o faulthandler_timeout=60
+          tests/test_resource_cpu.py tests/test_worker_draining.py
+          --junitxml=output/lifecycle-tests.xml
+      - name: Verify optional video enrichment and installed SDK contracts offline
+        timeout-minutes: 5
+        run: >-
+          uv run --locked --extra dev --extra video-research pytest -q
+          -o faulthandler_timeout=60 tests/test_video_research.py
+          tests/test_video_research_providers.py tests/test_video_research_sdks.py
+          --junitxml=output/video-research-tests.xml
       - name: Verify controlled benchmark and quota exhaustion
         timeout-minutes: 5
         run: bash scripts/ci-benchmark.sh
@@ -127,8 +166,10 @@ jobs:
         with:
           name: verification-results
           path: |
-            output/test-results.xml
-            output/native-tests.log
+            output/native-batch-*.xml
+            output/lifecycle-tests.xml
+            output/video-research-tests.xml
+            output/native-batch-*.log
             output/recovery-report.json
             output/offline-benchmark.json
             output/offline-benchmark.log

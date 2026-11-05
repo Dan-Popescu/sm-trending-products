@@ -118,7 +118,12 @@ def _selection(candidates: list[dict], config: TextSelectionConfig) -> tuple[lis
         state = candidate["local_analysis_state"]
         if canonical[(candidate["product_id"], candidate["content_key"])] is not candidate:
             reason = "duplicate_canonical_text"
-        elif metadata.get("source_kind") not in {"subtitles", "human_transcript", "description"}:
+        elif metadata.get("source_kind") not in {
+            "subtitles",
+            "human_transcript",
+            "description",
+            "machine_transcript",
+        }:
             reason = "not_reviewed_metadata"
         elif (metadata.get("language") or "unknown").split("-", 1)[0] not in {"en", "fr"}:
             reason = "unsupported_or_unknown_language"
