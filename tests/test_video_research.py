@@ -8,7 +8,7 @@ from datetime import timedelta
 from threading import Event
 
 import pytest
-from test_transcript_insights import selected
+from test_transcript_insights import refresh, selected
 
 from sm_trending_products.contracts import now
 from sm_trending_products.video_research import (
@@ -406,3 +406,72 @@ def test_failure_recording_loss_retains_private_files_and_original_error(
     with pytest.raises(VideoResearchDenied, match="uncertain_no_automatic_retry"):
         service.run(request(selection, action="download", identifier="alias"), config)
     assert len(executor.calls) == 1
+
+
+def test_original_download_source_remains_dependency_after_new_observation_and_import(
+    pipeline, tmp_path
+):
+    from sm_trending_products.enrichment import TranscriptInsights
+
+    service, selection, config, _ = setup(pipeline, tmp_path)
+    media = service.run(request(selection, action="download"), config)
+    later = refresh(pipeline, selection, observation="later-source")
+    speech = service.run(
+        request(later, action="transcribe", identifier="speech", media_job_id=media["job_id"]),
+        config,
+    )
+    imported = service.import_transcription("speech", "p", config, synthetic=True)
+    insights = TranscriptInsights(pipeline.catalog, pipeline.provenance)
+    assert len(insights.read_texts("p", [imported["transcript_id"]], synthetic=True)["items"]) == 1
+    pipeline.catalog.invalidate_dataset(selection.dataset_id, "original_media_removed")
+    assert (
+        pipeline.catalog.one("SELECT state FROM datasets WHERE dataset_id=%s", (later.dataset_id,))[
+            "state"
+        ]
+        == "committed"
+    )
+    with pytest.raises(ValueError, match="invalidated"):
+        service.result("speech", "p", config, synthetic=True)
+    unavailable = insights.read_texts("p", [imported["transcript_id"]], synthetic=True)
+    assert unavailable["items"] == [] and len(unavailable["unavailable"]) == 1
+    assert speech["state"] == "completed"
+
+
+def test_original_media_withdrawal_during_later_observation_transcription_blocks_publication(
+    pipeline, tmp_path
+):
+    service, selection, config, executor = setup(pipeline, tmp_path)
+    media = service.run(request(selection, action="download"), config)
+    later = refresh(pipeline, selection, observation="later-source")
+    executor.callback = lambda: pipeline.catalog.invalidate_dataset(
+        selection.dataset_id, "original_media_removed"
+    )
+    with pytest.raises(ValueError, match="invalidated"):
+        service.run(
+            request(later, action="transcribe", identifier="speech", media_job_id=media["job_id"]),
+            config,
+        )
+    job = pipeline.catalog.one(
+        "SELECT state,descriptor FROM video_research_jobs WHERE operation='transcribe'"
+    )
+    assert job == {"state": "uncertain", "descriptor": None}
+
+
+def test_export_rechecks_original_media_provenance_with_newer_selection(
+    pipeline, tmp_path, monkeypatch
+):
+    service, selection, config, _ = setup(pipeline, tmp_path)
+    media = service.run(request(selection, action="download"), config)
+    later = refresh(pipeline, selection, observation="later-source")
+    original = service._media_job
+
+    def withdraw_after_preflight(*args):
+        result = original(*args)
+        pipeline.catalog.invalidate_dataset(selection.dataset_id, "original_media_removed")
+        return result
+
+    monkeypatch.setattr(service, "_media_job", withdraw_after_preflight)
+    destination = tmp_path / "must-not-export.mp4"
+    with pytest.raises(ValueError, match="invalidated"):
+        service.export_media(media["job_id"], later, config, destination)
+    assert not destination.exists()

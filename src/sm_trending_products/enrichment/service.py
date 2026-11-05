@@ -147,6 +147,11 @@ class TranscriptInsights:
                 cutoff,
                 value.observation_id,
             )
+            if value.machine_origin is not None:
+                self.provenance.guard(
+                    connection,
+                    self.provenance.roots(value.machine_origin.model_dump(mode="json")),
+                )
             cached = connection.execute(
                 "SELECT t.* FROM enrichment_transcripts t JOIN datasets d "
                 "ON d.dataset_id=t.source_dataset_id AND d.state='committed' "

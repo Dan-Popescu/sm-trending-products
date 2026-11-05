@@ -141,6 +141,7 @@ class VideoResearch:
         with self.catalog.evidence_transaction(selection.synthetic) as connection:
             self._permission(request, config, self._scope(connection, selection))
         payload: dict[str, Any] = {"request": request.model_dump(mode="json")}
+        media = None
         if request.operation == "transcribe":
             media = self._media_job(request.media_job_id, selection, config)
             payload.update(
@@ -178,6 +179,8 @@ class VideoResearch:
         with workspace(config) as root:
             with self.catalog.evidence_transaction(selection.synthetic) as connection:
                 self._permission(request, config, self._scope(connection, selection))
+                if media is not None:
+                    self.provenance.guard(connection, self.provenance.roots(media["descriptor"]))
                 # One authoritative lock spans aliases and daily admission, not external I/O.
                 connection.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended("
@@ -270,8 +273,14 @@ class VideoResearch:
                 owned_directory = True
                 result = self.executor.execute(payload, directory, config)
                 records = self._validate_output(request, config, directory, result, payload)
+                if media is not None:
+                    records["metadata"]["media_provenance"] = media["descriptor"]
                 with self.catalog.evidence_transaction(selection.synthetic) as connection:
                     self._permission(request, config, self._scope(connection, selection))
+                    if media is not None:
+                        self.provenance.guard(
+                            connection, self.provenance.roots(media["descriptor"])
+                        )
                 records["metadata"]["input_provenance"] = self.provenance.references(
                     [selection.observation_id],
                     {selection.observation_id: selection.dataset_id},
@@ -454,7 +463,7 @@ class VideoResearch:
     def _media_job(self, job_id, selection, config) -> dict:
         require_module(self.catalog, "video_research")
         row = self.catalog.one(
-            "SELECT r.request_id,j.selection FROM video_research_jobs j "
+            "SELECT r.request_id,j.selection,j.descriptor FROM video_research_jobs j "
             "JOIN video_research_requests r USING(job_id) WHERE j.job_id=%s "
             "AND j.synthetic=%s AND j.operation='download' LIMIT 1",
             (job_id, selection.synthetic),
@@ -474,7 +483,7 @@ class VideoResearch:
         actual, size = file_hash(path, config.max_media_bytes)
         if actual != output["result"]["sha256"] or size != output["result"]["bytes"]:
             raise VideoResearchDenied("media_checksum_mismatch")
-        return output
+        return {**output, "descriptor": row["descriptor"]}
 
     def export_media(
         self, job_id: str, selection: VideoSelection, config: ExecutionConfig, destination: Path
@@ -490,6 +499,7 @@ class VideoResearch:
         try:
             with self.catalog.evidence_transaction(selection.synthetic) as connection:
                 self._scope(connection, selection)
+                self.provenance.guard(connection, self.provenance.roots(metadata["descriptor"]))
                 fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
                 created = True
                 original = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
@@ -501,6 +511,7 @@ class VideoResearch:
                 if checksum != metadata["result"]["sha256"] or size != metadata["result"]["bytes"]:
                     raise VideoResearchDenied("media_changed_during_export")
                 self._scope(connection, selection)
+                self.provenance.guard(connection, self.provenance.roots(metadata["descriptor"]))
                 os.link(temporary, destination)  # Atomic, and never overwrites an existing path.
             return {"job_id": job_id, "bytes": size, "sha256": checksum, "exported": True}
         finally:
@@ -519,7 +530,8 @@ class VideoResearch:
             {key: output["result"][key] for key in SpeechResult.model_fields}
         )
         job = self.catalog.one(
-            "SELECT configuration FROM video_research_jobs WHERE job_id=%s", (output["job_id"],)
+            "SELECT configuration,descriptor FROM video_research_jobs WHERE job_id=%s",
+            (output["job_id"],),
         )
         origin = MachineTranscriptOrigin(
             model=speech.model,
@@ -527,6 +539,7 @@ class VideoResearch:
             compute_type=job["configuration"]["compute_type"],
             model_sha256=speech.model_sha256,
             media_sha256=speech.media_sha256,
+            artifact_provenance=job["descriptor"],
         )
         value = TranscriptInput(
             **output["selection"],

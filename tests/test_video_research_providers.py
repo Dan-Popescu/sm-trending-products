@@ -368,3 +368,44 @@ render(Pipeline(), [{"product_id": "product"}], False)
     assert not app.exception
     assert app.session_state["executed"]["operation"] == "comments"
     assert app.session_state["executed"]["selection"]["permission_reference"] == "test-permission"
+
+
+@pytest.mark.parametrize("terminal", [True, False])
+def test_empty_process_snapshot_rechecks_exit_and_still_refuses_lost_tracking(
+    tmp_path, monkeypatch, terminal
+):
+    from sm_trending_products.video_research import execution
+
+    request, config = inputs(tmp_path)
+    directory = config.work_dir / "worker"
+    directory.mkdir(mode=0o700, parents=True)
+    (directory / "result.json").write_text('{"ok":false,"reason":"research_token_required"}')
+
+    class Worker:
+        pid = 999999999
+        stdin = io.BytesIO()
+        returncode = None
+        polls = 0
+
+        def poll(self):
+            self.polls += 1
+            if terminal and self.polls >= 3:
+                self.returncode = 0
+            return self.returncode
+
+    worker = Worker()
+    snapshots = 0
+    stopped = []
+
+    def snapshot(pid, known=None):
+        nonlocal snapshots
+        snapshots += 1
+        return {worker.pid: (1, 1)} if snapshots == 1 else {}
+
+    monkeypatch.setattr(execution.subprocess, "Popen", lambda *_args, **_kwargs: worker)
+    monkeypatch.setattr(execution, "_session", snapshot)
+    monkeypatch.setattr(execution, "_stop", lambda process, _known: stopped.append(process.pid))
+    reason = "research_token_required" if terminal else "memory_or_process_limit"
+    with pytest.raises(VideoResearchDenied, match=reason):
+        ProcessExecutor().execute({"request": request.model_dump(mode="json")}, directory, config)
+    assert stopped == [worker.pid]

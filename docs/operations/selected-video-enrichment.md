@@ -203,8 +203,10 @@ available if the machine has sufficient headroom. There is no smaller-model or
 turbo fallback. Largest-model quality is not guaranteed for every short/noisy clip.
 
 Results retain timestamps, machine origin, model/media checksums, library version
-and unverified-speech status. Audio duration is limited and transcripts are capped
-at 16,000 characters. Silence, unsupported output or exceeded budgets can fail
+and unverified-speech status. Their provenance includes the original download, even
+when a newer observation of the same video is selected. Withdrawal of that original
+source also fences speech, imported transcripts and later exports. Audio duration
+is limited and transcripts are capped at 16,000 characters. Silence, unsupported output or exceeded budgets can fail
 instead of silently truncating. Same media/model/settings reuse a saved result.
 Import into the existing optional transcript insights is explicit:
 

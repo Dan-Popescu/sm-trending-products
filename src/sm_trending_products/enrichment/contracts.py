@@ -83,6 +83,20 @@ class TranscriptContext(_EnrichmentContract):
         return self
 
 
+class _MachineArtifactRoot(_EnrichmentContract):
+    key: str = Field(min_length=1, max_length=2048)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    bytes: int = Field(ge=1, le=256_000, strict=True)
+    count: int = Field(ge=1, le=1, strict=True)
+    prefix: str = Field(default="", pattern=r"^[a-f0-9]{0,16}$")
+
+
+class _MachineArtifactProvenance(_EnrichmentContract):
+    format: Literal["sharded-records-v1"] = "sharded-records-v1"
+    root: _MachineArtifactRoot
+    count: int = Field(ge=1, le=1, strict=True)
+
+
 class MachineTranscriptOrigin(_EnrichmentContract):
     model: Literal["large-v3"] = "large-v3"
     engine: Literal["faster-whisper"] = "faster-whisper"
@@ -91,6 +105,7 @@ class MachineTranscriptOrigin(_EnrichmentContract):
     model_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     media_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     speech_verified: Literal[False] = False
+    artifact_provenance: _MachineArtifactProvenance
 
 
 class TranscriptInput(_EnrichmentContract):

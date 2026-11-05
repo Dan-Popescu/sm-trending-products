@@ -295,6 +295,13 @@ class ProcessExecutor:
                 known.update(current)
                 if not current and process.poll() is not None:
                     break
+                if not current:
+                    # /proc can lose an exiting process before waitpid reports its exit.
+                    time.sleep(0.02)
+                    if process.poll() is not None:
+                        break
+                    current = _session(process.pid, known)
+                    known.update(current)
                 if (
                     not current
                     or len(current) > 128
