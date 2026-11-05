@@ -105,6 +105,9 @@ jobs:
             >output/native-tests.log 2>&1 || native_test_status=$?
           cat output/native-tests.log
           exit "$native_test_status"
+      - name: Verify installed optional video SDK contracts offline
+        timeout-minutes: 5
+        run: uv run --locked --extra dev --extra video-research pytest -q tests/test_video_research_sdks.py
       - name: Verify controlled benchmark and quota exhaustion
         timeout-minutes: 5
         run: bash scripts/ci-benchmark.sh

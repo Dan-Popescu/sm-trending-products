@@ -83,6 +83,16 @@ class TranscriptContext(_EnrichmentContract):
         return self
 
 
+class MachineTranscriptOrigin(_EnrichmentContract):
+    model: Literal["large-v3"] = "large-v3"
+    engine: Literal["faster-whisper"] = "faster-whisper"
+    engine_version: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9.+_-]+$")
+    compute_type: Literal["int8", "float32"]
+    model_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    media_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    speech_verified: Literal[False] = False
+
+
 class TranscriptInput(_EnrichmentContract):
     product_id: str = Field(pattern=IDENTIFIER)
     entity_key: str = Field(pattern=r"^[A-Za-z0-9_.-]+:video:\S{1,384}$", max_length=512)
@@ -90,10 +100,19 @@ class TranscriptInput(_EnrichmentContract):
     observation_id: str = Field(min_length=1, max_length=256)
     synthetic: bool = Field(default=False, strict=True)
     text: str = Field(min_length=1, max_length=MAX_TEXT_CHARACTERS)
-    source_kind: Literal["subtitles", "human_transcript", "description"]
+    source_kind: Literal["subtitles", "human_transcript", "description", "machine_transcript"]
+    machine_origin: MachineTranscriptOrigin | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     language: str | None = Field(default=None, pattern=r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")
     permission_reference: str = Field(min_length=1, max_length=512)
     context: TranscriptContext | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def explicit_machine_origin(self):
+        if (self.source_kind == "machine_transcript") != (self.machine_origin is not None):
+            raise ValueError("Machine transcripts require explicit model and media provenance")
+        return self
 
     @field_validator("permission_reference")
     @classmethod

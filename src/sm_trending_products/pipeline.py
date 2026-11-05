@@ -176,6 +176,11 @@ class Pipeline:
 
         return TranscriptInsights(self.catalog, self.provenance)
 
+    def video_research(self):
+        from .video_research import VideoResearch
+
+        return VideoResearch(self.catalog, self.provenance)
+
     def commerce_orders(self):
         from .commerce_orders import CommerceOrders
 

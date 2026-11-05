@@ -705,6 +705,7 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
                 "Catalog",
                 "Launch preparation",
                 "Transcript insights",
+                "Selected video enrichment",
                 "Decision research",
                 "Commerce operations",
                 "Collection plan",
@@ -733,7 +734,13 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
         st.success(notice)
     # Read results on every interaction, but only for the selected view. No result
     # cache can retain pre-mutation identity or source-capability state.
-    if view in {"Opportunities", "Catalog", "Transcript insights", "Decision research"}:
+    if view in {
+        "Opportunities",
+        "Catalog",
+        "Transcript insights",
+        "Decision research",
+        "Selected video enrichment",
+    }:
         product_page = st.number_input(
             "Product page", min_value=1, value=1, step=1, key="product_page"
         )
@@ -744,7 +751,11 @@ def render_dashboard(pipeline: DashboardPipeline) -> None:
             ),
             [],
         )
-        if view == "Decision research":
+        if view == "Selected video enrichment":
+            from sm_trending_products.video_research.dashboard import render
+
+            render(pipeline, products, synthetic)
+        elif view == "Decision research":
             from sm_trending_products.research_dashboard import render_research
 
             render_research(pipeline, products, as_of, synthetic)

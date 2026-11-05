@@ -16,6 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+video-research = ["TikTokApi>=7.3.3,<8", "yt-dlp>=2025.10.22", "faster-whisper>=1.2,<2"]
 dev = ["pytest>=9,<10", "httpx>=0.28,<1", "ruff>=0.17,<0.18", "mypy>=2.4,<3", "moto[server]>=5.2,<6"]
 
 [project.scripts]

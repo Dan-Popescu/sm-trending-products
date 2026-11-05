@@ -30,6 +30,7 @@ _LABELS = {
 }
 _KINDS = {
     "human_transcript": "Transcription fournie",
+    "machine_transcript": "Transcription automatique non vérifiée",
     "subtitles": "Sous-titres",
     "description": "Description",
 }
