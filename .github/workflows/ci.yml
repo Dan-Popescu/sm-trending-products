@@ -101,13 +101,28 @@ jobs:
           native_test_status=0
           timeout --verbose --signal=ABRT --kill-after=15s 19m \
             uv run --locked pytest -vv -ra --durations=15 \
+            --ignore=tests/test_video_research.py \
+            --ignore=tests/test_video_research_providers.py \
+            --ignore=tests/test_video_research_sdks.py \
+            --ignore=tests/test_resource_cpu.py --ignore=tests/test_worker_draining.py \
             -o faulthandler_timeout=90 --junitxml=output/test-results.xml \
             >output/native-tests.log 2>&1 || native_test_status=$?
           cat output/native-tests.log
           exit "$native_test_status"
-      - name: Verify installed optional video SDK contracts offline
+      - name: Verify native CPU and drain controls
+        # Keep collection lifecycle checks bounded separately as the suite grows.
         timeout-minutes: 5
-        run: uv run --locked --extra dev --extra video-research pytest -q tests/test_video_research_sdks.py
+        run: >-
+          uv run --locked pytest -q -o faulthandler_timeout=60
+          tests/test_resource_cpu.py tests/test_worker_draining.py
+          --junitxml=output/lifecycle-tests.xml
+      - name: Verify optional video enrichment and installed SDK contracts offline
+        timeout-minutes: 5
+        run: >-
+          uv run --locked --extra dev --extra video-research pytest -q
+          -o faulthandler_timeout=60 tests/test_video_research.py
+          tests/test_video_research_providers.py tests/test_video_research_sdks.py
+          --junitxml=output/video-research-tests.xml
       - name: Verify controlled benchmark and quota exhaustion
         timeout-minutes: 5
         run: bash scripts/ci-benchmark.sh
@@ -131,6 +146,8 @@ jobs:
           name: verification-results
           path: |
             output/test-results.xml
+            output/lifecycle-tests.xml
+            output/video-research-tests.xml
             output/native-tests.log
             output/recovery-report.json
             output/offline-benchmark.json
