@@ -11,22 +11,18 @@ import resource
 import shutil
 import signal
 import stat
-import subprocess
 import sys
-import tempfile
 import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from uuid import uuid4
 
 import psycopg
-from moto.server import ThreadedMotoServer
-from psycopg import sql
 
 from sm_trending_products.contracts import canonical, now
 from sm_trending_products.costs import Store
 from sm_trending_products.pipeline import Pipeline
+from sm_trending_products.qualification import QualificationResources
 from sm_trending_products.research_workload import (
     CASES,
     Workload,
@@ -234,90 +230,78 @@ def _run_case(
         report["error_type"] = type(error).__name__
         existing.write_report(output, report)
         return report
-    schema = "research_workload_" + uuid4().hex
-    scoped_url = existing.scoped_database_url(database_url, schema)
-    owned = Path(tempfile.mkdtemp(prefix="sm-research-workload-"))
-    server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
-    process, created, server_started = None, False, False
-    started, cpu_started = time.monotonic(), time.process_time()
-    samples, known, reason = [], set(), None
-    supervisor_failed = False
-    report.update(
-        schema=schema,
-        status="running",
-        bounds={
-            "timeout_seconds": timeout,
-            "max_owned_disk_bytes": max_disk_bytes,
-            "max_uploaded_bytes": max_disk_bytes,
-            "sample_interval_seconds": 0.25,
-            "stop_memory_headroom_bytes": 256 * MIB,
-            "stop_filesystem_free_bytes": 512 * MIB,
-            "cleanup_sql_timeout_seconds": 5,
-        },
+    resources = QualificationResources(
+        database_url, schema_prefix="research_workload_", directory_prefix="sm-research-workload-"
     )
-    report["environment"] = {
-        "recorded_at": now().isoformat(),
-        "versions": {
-            name: importlib.metadata.version(name)
-            for name in ("moto", "psycopg", "boto3", "polars", "pyarrow")
-        },
-        "revision": existing.command(["git", "-C", str(ROOT), "rev-parse", "HEAD"]),
-        "tree": existing.command(["git", "-C", str(ROOT), "rev-parse", "HEAD^{tree}"]),
-        "dirty_checkout": bool(existing.command(["git", "-C", str(ROOT), "status", "--porcelain"])),
-        "hardware": existing.hardware_facts(owned),
-    }
-    checkpoint = owned / "checkpoint.json"
-    try:
-        with psycopg.connect(database_url, autocommit=True, connect_timeout=5) as connection:
-            connection.execute("SET statement_timeout='5000ms'")
-            connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-            created = True
-            report["environment"]["database_version"] = connection.execute(
-                "SELECT version()"
-            ).fetchone()[0]
-        server.start()
-        server_started = True
-        host, port = server.get_host_and_port()
-        settings = Settings(
-            database_url=scoped_url,
-            s3_endpoint_url=f"http://{host}:{port}",
-            s3_bucket=schema.replace("_", "-"),
-            cache_dir=owned / "read-cache",
-            spool_dir=owned / "spool",
-            cache_max_bytes=16 * MIB,
-            acquisition_enabled=False,
-            collector_binary=campaign["collector_binary"] if campaign else "unused-offline-only",
-            collector_timeout_seconds=10,
+    with resources:
+        schema, scoped_url, owned = resources.schema, resources.database_url, resources.directory
+        report["cleanup"] = resources.cleanup
+        process = None
+        started, cpu_started = time.monotonic(), time.process_time()
+        samples, known, reason = [], set(), None
+        supervisor_failed = False
+        report.update(
+            schema=schema,
+            status="running",
+            bounds={
+                "timeout_seconds": timeout,
+                "max_owned_disk_bytes": max_disk_bytes,
+                "max_uploaded_bytes": max_disk_bytes,
+                "sample_interval_seconds": 0.25,
+                "stop_memory_headroom_bytes": 256 * MIB,
+                "stop_filesystem_free_bytes": 512 * MIB,
+                "cleanup_sql_timeout_seconds": 5,
+            },
         )
-        values = settings.model_dump(mode="json")
-        values["database_url"] = scoped_url
-        environment = {
-            **os.environ,
-            "AWS_ACCESS_KEY_ID": "research-fixture",
-            "AWS_SECRET_ACCESS_KEY": "research-fixture",
-            "AWS_SESSION_TOKEN": "",
-            "AWS_EC2_METADATA_DISABLED": "true",
-            "TMPDIR": str(owned),
-            **({"TIKTOK_DISPLAY_ACCESS_TOKEN": "concurrent-fixture-token"} if campaign else {}),
+        report["environment"] = {
+            "recorded_at": now().isoformat(),
+            "versions": {
+                name: importlib.metadata.version(name)
+                for name in ("moto", "psycopg", "boto3", "polars", "pyarrow")
+            },
+            "revision": existing.command(["git", "-C", str(ROOT), "rev-parse", "HEAD"]),
+            "tree": existing.command(["git", "-C", str(ROOT), "rev-parse", "HEAD^{tree}"]),
+            "dirty_checkout": bool(
+                existing.command(["git", "-C", str(ROOT), "status", "--porcelain"])
+            ),
+            "hardware": existing.hardware_facts(owned),
         }
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                str(ROOT / "scripts/concurrent-research-workload.py")
+        checkpoint = owned / "checkpoint.json"
+        try:
+            resources.start()
+            report["environment"]["database_version"] = resources.database_version
+            settings = Settings(
+                database_url=scoped_url,
+                s3_endpoint_url=resources.endpoint,
+                s3_bucket=schema.replace("_", "-"),
+                cache_dir=owned / "read-cache",
+                spool_dir=owned / "spool",
+                cache_max_bytes=16 * MIB,
+                acquisition_enabled=False,
+                collector_binary=campaign["collector_binary"]
                 if campaign
-                else str(Path(__file__).resolve()),
-                "--worker",
-            ],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            env=environment,
-            start_new_session=True,
-        )
-        assert process.stdin is not None
-        process.stdin.write(
-            canonical(
+                else "unused-offline-only",
+                collector_timeout_seconds=10,
+            )
+            values = settings.model_dump(mode="json")
+            values["database_url"] = scoped_url
+            environment = {
+                **os.environ,
+                "AWS_ACCESS_KEY_ID": "research-fixture",
+                "AWS_SECRET_ACCESS_KEY": "research-fixture",
+                "AWS_SESSION_TOKEN": "",
+                "AWS_EC2_METADATA_DISABLED": "true",
+                "TMPDIR": str(owned),
+                **({"TIKTOK_DISPLAY_ACCESS_TOKEN": "concurrent-fixture-token"} if campaign else {}),
+            }
+            process = resources.launch(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts/concurrent-research-workload.py")
+                    if campaign
+                    else str(Path(__file__).resolve()),
+                    "--worker",
+                ],
                 {
                     "settings": values,
                     "workload": workload.model_dump(),
@@ -325,113 +309,91 @@ def _run_case(
                     "max_upload_bytes": max_disk_bytes,
                     "checkpoint": str(checkpoint),
                     **({"campaign": campaign} if campaign else {}),
+                },
+                environment=environment,
+            )
+            next_disk_sample, snapshot, disk = 0.0, {}, 0
+            while process.poll() is None:
+                elapsed = time.monotonic() - started
+                if elapsed >= next_disk_sample:
+                    snapshot = existing.database_snapshot(scoped_url)
+                    disk = existing.owned_disk_bytes(owned)
+                    next_disk_sample = elapsed + 1
+                progress = existing.read_report(checkpoint)
+                sample = {
+                    "elapsed_seconds": elapsed,
+                    "phase": progress.get("active_phase", "startup"),
+                    **existing.session_resources(process.pid, known, details=campaign is not None),
+                    "owned_file_bytes": disk,
+                    "schema_bytes": snapshot.get("schema_bytes"),
+                    "memory_headroom_bytes": existing.memory_headroom(),
                 }
-            )
-        )
-        process.stdin.close()
-        next_disk_sample, snapshot, disk = 0.0, {}, 0
-        while process.poll() is None:
-            elapsed = time.monotonic() - started
-            if elapsed >= next_disk_sample:
-                snapshot = existing.database_snapshot(scoped_url)
-                disk = existing.owned_disk_bytes(owned)
-                next_disk_sample = elapsed + 1
-            progress = existing.read_report(checkpoint)
-            sample = {
-                "elapsed_seconds": elapsed,
-                "phase": progress.get("active_phase", "startup"),
-                **existing.session_resources(process.pid, known, details=campaign is not None),
-                "owned_file_bytes": disk,
-                "schema_bytes": snapshot.get("schema_bytes"),
-                "memory_headroom_bytes": existing.memory_headroom(),
-            }
-            samples.append(sample)
-            uploads = sum(
-                item.get("storage", {}).get("upload_bytes", 0)
-                for item in [progress.get("setup", {}), *progress.get("phases", [])]
-            )
-            if elapsed >= timeout:
-                reason = "case_deadline"
-            elif snapshot.get("schema_bytes") is None:
-                reason = "disk_measurement_unavailable"
-            elif disk + snapshot["schema_bytes"] > max_disk_bytes or uploads > max_disk_bytes:
-                reason = "owned_disk_limit"
-            elif shutil.disk_usage(owned).free < 512 * MIB:
-                reason = "disk_headroom_limit"
-            elif (
-                sample["memory_headroom_bytes"] is not None
-                and sample["memory_headroom_bytes"] < 256 * MIB
-            ):
-                reason = "memory_headroom_limit"
+                samples.append(sample)
+                uploads = sum(
+                    item.get("storage", {}).get("upload_bytes", 0)
+                    for item in [progress.get("setup", {}), *progress.get("phases", [])]
+                )
+                if elapsed >= timeout:
+                    reason = "case_deadline"
+                elif snapshot.get("schema_bytes") is None:
+                    reason = "disk_measurement_unavailable"
+                elif disk + snapshot["schema_bytes"] > max_disk_bytes or uploads > max_disk_bytes:
+                    reason = "owned_disk_limit"
+                elif shutil.disk_usage(owned).free < 512 * MIB:
+                    reason = "disk_headroom_limit"
+                elif (
+                    sample["memory_headroom_bytes"] is not None
+                    and sample["memory_headroom_bytes"] < 256 * MIB
+                ):
+                    reason = "memory_headroom_limit"
+                if reason:
+                    resources.stop_worker()
+                    break
+                time.sleep(0.25)
+            report.update(existing.read_report(checkpoint))
+            report["exit_code"] = process.returncode
             if reason:
-                existing.stop_session(process)
-                break
-            time.sleep(0.25)
-        report.update(existing.read_report(checkpoint))
-        report["exit_code"] = process.returncode
-        if reason:
-            report.update(ok=False, status=reason)
-        elif process.returncode != 0:
-            report.update(ok=False, status=report.get("status", "worker_failed"))
-        elif not report.get("identity_preserved"):
-            report.update(ok=False, status="missing_worker_result")
-        if campaign is not None:
-            report["environment"]["collector"] = existing.collector_identity(
-                Path(campaign["collector_binary"]), "prebuilt-explicit"
-            )
-        report["final_database_snapshot"] = existing.database_snapshot(scoped_url)
-        report["published_data"] = existing.data_summary(scoped_url)
-        report["final_owned_file_bytes"] = existing.owned_disk_bytes(owned)
-        schema_bytes = report["final_database_snapshot"].get("schema_bytes")
-        if schema_bytes is None:
-            report.update(ok=False, status="disk_measurement_unavailable")
-        elif report["final_owned_file_bytes"] + schema_bytes > max_disk_bytes:
-            report.update(ok=False, status="owned_disk_limit")
-    except Exception as error:
-        supervisor_failed = True
-        report.update(
-            ok=False,
-            status="runner_interrupted" if isinstance(error, InterruptedError) else "runner_failed",
-            error_type=type(error).__name__,
-        )
-    finally:
-        if process is not None:
-            try:
-                existing.stop_session(process)
-            except Exception as error:
-                report["cleanup"]["errors"].append(type(error).__name__)
-        # Stop the owned process before adopting its final durable checkpoint,
-        # including exception/signal paths that skipped the ordinary result merge.
-        # The supervisor's terminal failure always wins over a child success.
-        terminal = {
-            key: report[key] for key in ("ok", "status", "error_type", "exit_code") if key in report
-        }
-        report.update(existing.read_report(checkpoint))
-        report.update(terminal)
-        if server_started:
-            try:
-                server.stop()
-            except Exception as error:
-                report["cleanup"]["errors"].append(type(error).__name__)
-        if created:
-            try:
-                with psycopg.connect(
-                    database_url, autocommit=True, connect_timeout=5
-                ) as connection:
-                    connection.execute("SET statement_timeout='5000ms'")
-                    connection.execute(
-                        sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema))
-                    )
-                report["cleanup"]["schema_dropped"] = True
-            except Exception as error:
-                report["cleanup"]["schema_dropped"] = False
-                report["cleanup"]["errors"].append(type(error).__name__)
-        try:
-            shutil.rmtree(owned)
-            report["cleanup"]["files_removed"] = not owned.exists()
+                report.update(ok=False, status=reason)
+            elif process.returncode != 0:
+                report.update(ok=False, status=report.get("status", "worker_failed"))
+            elif not report.get("identity_preserved"):
+                report.update(ok=False, status="missing_worker_result")
+            if campaign is not None:
+                report["environment"]["collector"] = existing.collector_identity(
+                    Path(campaign["collector_binary"]), "prebuilt-explicit"
+                )
+            report["final_database_snapshot"] = existing.database_snapshot(scoped_url)
+            report["published_data"] = existing.data_summary(scoped_url)
+            report["final_owned_file_bytes"] = existing.owned_disk_bytes(owned)
+            schema_bytes = report["final_database_snapshot"].get("schema_bytes")
+            if schema_bytes is None:
+                report.update(ok=False, status="disk_measurement_unavailable")
+            elif report["final_owned_file_bytes"] + schema_bytes > max_disk_bytes:
+                report.update(ok=False, status="owned_disk_limit")
         except Exception as error:
-            report["cleanup"]["files_removed"] = False
-            report["cleanup"]["errors"].append(type(error).__name__)
+            supervisor_failed = True
+            report.update(
+                ok=False,
+                status="runner_interrupted"
+                if isinstance(error, InterruptedError)
+                else "runner_failed",
+                error_type=type(error).__name__,
+            )
+        finally:
+            try:
+                resources.stop_worker()
+            except Exception as error:
+                report["cleanup"]["errors"].append(type(error).__name__)
+            # Stop the owned process before adopting its final durable checkpoint,
+            # including exception/signal paths that skipped the ordinary result merge.
+            # The supervisor's terminal failure always wins over a child success.
+            terminal = {
+                key: report[key]
+                for key in ("ok", "status", "error_type", "exit_code")
+                if key in report
+            }
+            report.update(existing.read_report(checkpoint))
+            report.update(terminal)
     phases = [report.get("setup", {}), *report.get("phases", [])]
     totals = {
         key: sum(phase.get("storage", {}).get(key, 0) for phase in phases)
