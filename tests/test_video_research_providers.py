@@ -258,7 +258,10 @@ def test_supervisor_stops_owned_worker_and_child_on_limits(tmp_path, monkeypatch
     from sm_trending_products.video_research import execution
 
     request, config = inputs(tmp_path)
-    config = config.model_copy(update={"timeout_seconds": 1, "memory_mb": 512})
+    # Give non-timeout guards time to reach their next poll before the deadline.
+    config = config.model_copy(
+        update={"timeout_seconds": 1 if failure == "timeout" else 10, "memory_mb": 512}
+    )
     directory = config.work_dir / "worker"
     directory.mkdir(mode=0o700, parents=True)
     pid_file = directory / "owned-child"
