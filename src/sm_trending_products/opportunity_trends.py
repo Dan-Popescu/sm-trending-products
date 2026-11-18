@@ -14,8 +14,9 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from .analytics import _counter_windows, _CounterWindow
-from .contracts import Observation, utc
+from .contracts import Observation, digest, utc
 from .creator_identity import CreatorIdentity, creator_identity
+from .distribution_context import known_distribution_context
 
 PREVIEW_LIMIT = 200
 Context = tuple[str, str, str]
@@ -164,6 +165,70 @@ def _period_report(period: _Period, known_entities: set[str]) -> dict[str, Any]:
         ),
         "counter_correction_count": period.corrections,
         "exclusion_counts": dict(sorted(period.exclusions.items())),
+    }
+
+
+def _period_fingerprint(period: dict) -> str | None:
+    if period["evidence_preview_truncated"]:
+        return None
+    # Discovery can change coverage without changing the measured baseline.
+    # Continuing-panel membership remains the counter kernel's responsibility.
+    return digest(
+        {
+            key: value
+            for key, value in period.items()
+            if key
+            not in {
+                "known_entity_count",
+                "missing_entity_count",
+                "mean_entity_coverage_fraction",
+                "exclusion_counts",
+            }
+        }
+    )
+
+
+def compare_cutoff_period(
+    previous_period: dict, current_comparison: dict, *, previous_cutoff: str
+) -> dict:
+    """Admit a generated diagnostic panel against its earlier cutoff measurement.
+
+    This owns measurement comparability, not a caller's selection policy. It
+    preserves the kernel's ratios only when its baseline can be verified in full.
+    Inputs are existing diagnostic reports; no evidence is read or reconstructed.
+    """
+    baseline = current_comparison["previous"]
+    panel = current_comparison["continuing_panel"]
+    reason: str | None
+    if baseline["window_end"] != previous_cutoff:
+        reason = "requested_cutoffs_do_not_match_adjacent_kernel_windows"
+    else:
+        previous_identity = _period_fingerprint(previous_period)
+        baseline_identity = _period_fingerprint(baseline)
+        reason = (
+            "baseline_reference_preview_incomplete"
+            if previous_identity is None or baseline_identity is None
+            else "baseline_evidence_changed_or_newly_available"
+            if previous_identity != baseline_identity
+            else "counter_corrections_limit_comparison"
+            if baseline["counter_correction_count"]
+            or current_comparison["current"]["counter_correction_count"]
+            else "source_context_unknown_or_incomplete"
+            if current_comparison["source_distribution_contexts_truncated"]
+            or any(
+                not known_distribution_context(context["distribution_context"])
+                and context["continuing_panel"]["entity_count"]
+                for context in current_comparison["source_distribution_contexts"]
+            )
+            else None
+            if panel["comparison_status"] == "measured"
+            else panel["comparison_status"]
+        )
+    return {
+        "comparison_status": "measured" if reason is None else "unavailable",
+        "reason": reason,
+        "pace_ratio_lower": panel["pace_ratio_lower"] if reason is None else None,
+        "pace_ratio_upper": panel["pace_ratio_upper"] if reason is None else None,
     }
 
 
