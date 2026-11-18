@@ -19,9 +19,9 @@ from .content_insights import DEFAULT_TAXONOMY, ContentTaxonomy
 from .content_insights._memo import _ClassificationMemo
 from .contracts import canonical, digest, utc
 from .decision_brief import DecisionBrief, _identifier, _unavailable
-from .distribution_context import known_distribution_context
 from .history import History
 from .matching import MatchingProfile
+from .opportunity_trends import compare_cutoff_period
 from .provenance import Provenance
 
 PREVIEW_LIMIT = 20
@@ -383,26 +383,6 @@ def _compose(before: dict, after: dict) -> dict:
     }
 
 
-def _period_fingerprint(period: dict) -> str | None:
-    if period["evidence_preview_truncated"]:
-        return None
-    # Known entity counts can grow through later discovery. Compare the measured
-    # baseline itself; continuing-panel membership is decided only by the kernel.
-    return digest(
-        {
-            key: value
-            for key, value in period.items()
-            if key
-            not in {
-                "known_entity_count",
-                "missing_entity_count",
-                "mean_entity_coverage_fraction",
-                "exclusion_counts",
-            }
-        }
-    )
-
-
 def _measure(period: dict) -> dict:
     return {
         key: period[key]
@@ -428,40 +408,27 @@ def _trajectory(before: dict, after: dict, selection_changed: bool) -> dict:
     prior_periods = {row["window_hours"]: row for row in prior["diagnostics"]["comparisons"]}
     for row in current["diagnostics"]["comparisons"]:
         old = prior_periods[row["window_hours"]]["current"]
-        baseline = row["previous"]
         panel = row["continuing_panel"]
-        reason = (
-            "changed_selection_or_configuration"
+        comparison = (
+            {
+                "comparison_status": "unavailable",
+                "reason": "changed_selection_or_configuration",
+                "pace_ratio_lower": None,
+                "pace_ratio_upper": None,
+            }
             if selection_changed
-            else "requested_cutoffs_do_not_match_adjacent_kernel_windows"
-            if baseline["window_end"] != before["as_of"]
-            else "baseline_reference_preview_incomplete"
-            if _period_fingerprint(old) is None or _period_fingerprint(baseline) is None
-            else "baseline_evidence_changed_or_newly_available"
-            if _period_fingerprint(old) != _period_fingerprint(baseline)
-            else "counter_corrections_limit_comparison"
-            if baseline["counter_correction_count"] or row["current"]["counter_correction_count"]
-            else "source_context_unknown_or_incomplete"
-            if row["source_distribution_contexts_truncated"]
-            or any(
-                not known_distribution_context(context["distribution_context"])
-                and context["continuing_panel"]["entity_count"]
-                for context in row["source_distribution_contexts"]
-            )
-            else None
-            if panel["comparison_status"] == "measured"
-            else panel["comparison_status"]
+            else compare_cutoff_period(old, row, previous_cutoff=before["as_of"])
         )
         rows.append(
             {
                 "window_hours": row["window_hours"],
                 "previous_cutoff_measurement": _measure(old),
                 "current_cutoff_measurement": _measure(row["current"]),
-                "comparison_status": "measured" if reason is None else "unavailable",
-                "reason": reason,
+                "comparison_status": comparison["comparison_status"],
+                "reason": comparison["reason"],
                 "continuing_entity_count": panel["entity_count"],
-                "pace_ratio_lower": panel["pace_ratio_lower"] if reason is None else None,
-                "pace_ratio_upper": panel["pace_ratio_upper"] if reason is None else None,
+                "pace_ratio_lower": comparison["pace_ratio_lower"],
+                "pace_ratio_upper": comparison["pace_ratio_upper"],
                 "newly_observed_entity_count": row["newly_observed"]["entity_count"],
                 "other_current_entity_count": row["other_current_evidence"]["entity_count"],
                 "newly_observed_meaning": "first_sampled_not_market_entry_or_growth",
