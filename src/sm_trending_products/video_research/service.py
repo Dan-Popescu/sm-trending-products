@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 import uuid
 from pathlib import Path
 from typing import Any, Protocol
@@ -14,6 +12,7 @@ from ..contracts import digest
 from ..enrichment._eligibility import source_checks
 from ..identity_rules import LINK_STATE_CTES
 from ..module_schema import initialize_module, require_module
+from ._media import OwnedJobFiles
 from .contracts import (
     CommentSample,
     ExecutionConfig,
@@ -22,7 +21,7 @@ from .contracts import (
     VideoResearchDenied,
     VideoSelection,
 )
-from .execution import ProcessExecutor, admit_workspace, file_hash, workspace
+from .execution import ProcessExecutor, admit_workspace, workspace
 from .insights import describe_comments
 from .schema import MIGRATIONS
 
@@ -144,10 +143,7 @@ class VideoResearch:
         media = None
         if request.operation == "transcribe":
             media = self._media_job(request.media_job_id, selection, config)
-            payload.update(
-                media_path=str(config.work_dir / media["job_id"] / "video.mp4"),
-                media_sha256=media["result"]["sha256"],
-            )
+            payload.update(media["file"].transcription_input())
         processing = (
             {
                 "max_comments": config.max_comments,
@@ -176,7 +172,7 @@ class VideoResearch:
             }
         )
         request_sha = digest({"content_key": content_key})
-        with workspace(config) as root:
+        with workspace(config):
             with self.catalog.evidence_transaction(selection.synthetic) as connection:
                 self._permission(request, config, self._scope(connection, selection))
                 if media is not None:
@@ -266,13 +262,11 @@ class VideoResearch:
                     synthetic=selection.synthetic,
                     reused=True,
                 )
-            directory = root / row["job_id"]
-            cleanup, owned_directory = False, False
+            files = OwnedJobFiles(config, row["job_id"])
             try:
-                directory.mkdir(mode=0o700)
-                owned_directory = True
-                result = self.executor.execute(payload, directory, config)
-                records = self._validate_output(request, config, directory, result, payload)
+                files.create()
+                result = self.executor.execute(payload, files.directory, config)
+                records = self._validate_output(request, config, files, result, payload)
                 if media is not None:
                     records["metadata"]["media_provenance"] = media["descriptor"]
                 with self.catalog.evidence_transaction(selection.synthetic) as connection:
@@ -309,27 +303,17 @@ class VideoResearch:
                         ).fetchone()
                     # Only acknowledged durable failure authorizes deleting owned files.
                     # A lost completion/failure ACK must preserve potentially committed media.
-                    cleanup = failed is not None
+                    if failed is not None:
+                        files.discard()
                 except Exception:
                     pass  # Preserve private bytes and the original failure if SQL is unavailable.
                 raise
-            finally:
-                if (
-                    cleanup
-                    and owned_directory
-                    and directory.is_dir()
-                    and not directory.is_symlink()
-                ):
-                    try:
-                        shutil.rmtree(directory)
-                    except OSError:
-                        pass  # Capacity checks bound leftovers; retain the original failure.
             return self.result(
                 request.request_id, selection.product_id, config, synthetic=selection.synthetic
             )
 
     @staticmethod
-    def _validate_output(request, config, directory, result, payload) -> dict:
+    def _validate_output(request, config, files, result, payload) -> dict:
         metadata = {
             "operation": request.operation,
             "provider": request.provider
@@ -367,8 +351,7 @@ class VideoResearch:
                 or not 0 < duration <= config.max_duration_seconds
             ):
                 raise VideoResearchDenied("invalid_media_duration")
-            checksum, size = file_hash(directory / "video.mp4", config.max_media_bytes)
-            metadata.update(sha256=checksum, bytes=size, duration_seconds=duration)
+            metadata.update(files.media().metadata(), duration_seconds=duration)
         else:
             speech = SpeechResult.model_validate(result)
             if (
@@ -477,13 +460,8 @@ class VideoResearch:
         output = self.result(
             row["request_id"], selection.product_id, config, synthetic=selection.synthetic
         )
-        path = config.work_dir / output["job_id"] / "video.mp4"
-        if path.parent.is_symlink() or path.parent.resolve().parent != config.work_dir.resolve():
-            raise VideoResearchDenied("media_path_escaped")
-        actual, size = file_hash(path, config.max_media_bytes)
-        if actual != output["result"]["sha256"] or size != output["result"]["bytes"]:
-            raise VideoResearchDenied("media_checksum_mismatch")
-        return {**output, "descriptor": row["descriptor"]}
+        media = OwnedJobFiles(config, output["job_id"]).media(output["result"])
+        return {**output, "descriptor": row["descriptor"], "file": media}
 
     def export_media(
         self, job_id: str, selection: VideoSelection, config: ExecutionConfig, destination: Path
@@ -493,30 +471,14 @@ class VideoResearch:
             ExecutionConfig.model_validate(config),
         )
         metadata = self._media_job(job_id, selection, config)
-        source = config.work_dir / metadata["job_id"] / "video.mp4"
-        temporary = destination.with_name("." + destination.name + "." + uuid.uuid4().hex)
-        created = False
-        try:
-            with self.catalog.evidence_transaction(selection.synthetic) as connection:
+        with self.catalog.evidence_transaction(selection.synthetic) as connection:
+            self._scope(connection, selection)
+            self.provenance.guard(connection, self.provenance.roots(metadata["descriptor"]))
+            with metadata["file"].stage_export(destination) as staged:
                 self._scope(connection, selection)
                 self.provenance.guard(connection, self.provenance.roots(metadata["descriptor"]))
-                fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                created = True
-                original = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
-                with os.fdopen(fd, "wb") as target, os.fdopen(original, "rb") as origin:
-                    shutil.copyfileobj(origin, target, length=1024 * 1024)
-                    target.flush()
-                    os.fsync(target.fileno())
-                checksum, size = file_hash(temporary, config.max_media_bytes)
-                if checksum != metadata["result"]["sha256"] or size != metadata["result"]["bytes"]:
-                    raise VideoResearchDenied("media_changed_during_export")
-                self._scope(connection, selection)
-                self.provenance.guard(connection, self.provenance.roots(metadata["descriptor"]))
-                os.link(temporary, destination)  # Atomic, and never overwrites an existing path.
-            return {"job_id": job_id, "bytes": size, "sha256": checksum, "exported": True}
-        finally:
-            if created:
-                temporary.unlink(missing_ok=True)
+                exported = staged.publish()
+        return {"job_id": job_id, **exported}
 
     def import_transcription(
         self, request_id: str, product_id: str, config: ExecutionConfig, *, synthetic: bool = False

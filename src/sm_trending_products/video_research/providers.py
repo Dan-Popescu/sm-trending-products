@@ -12,6 +12,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
+from ._media import file_hash, transcription_media
 from .contracts import (
     Comment,
     CommentSample,
@@ -211,48 +212,40 @@ def download_video(request: VideoRequest, config: ExecutionConfig, directory: Pa
 def transcribe_media(payload: dict, config: ExecutionConfig) -> dict:
     from faster_whisper import WhisperModel
 
-    from .execution import file_hash
-
     if config.model_dir is None or config.model_sha256 is None:
         raise VideoResearchDenied("provisioned_large_v3_model_required")
-    media_path = Path(payload["media_path"])
-    media_before, _ = file_hash(media_path, config.max_media_bytes)
-    if media_before != payload["media_sha256"]:
-        raise VideoResearchDenied("media_checksum_mismatch")
-    before, _ = file_hash(config.model_dir / "model.bin", 8_000_000_000)
-    if before != config.model_sha256:
-        raise VideoResearchDenied("model_checksum_mismatch")
+    with transcription_media(payload, config) as media_path:
+        before, _ = file_hash(config.model_dir / "model.bin", 8_000_000_000)
+        if before != config.model_sha256:
+            raise VideoResearchDenied("model_checksum_mismatch")
 
-    model = WhisperModel(
-        str(config.model_dir),
-        device="cpu",
-        compute_type=config.compute_type,
-        cpu_threads=config.cpu_threads,
-        num_workers=1,
-        local_files_only=True,
-    )
-    segments, info = model.transcribe(
-        payload["media_path"],
-        language=payload["request"].get("language"),
-        beam_size=5,
-        vad_filter=False,
-        word_timestamps=False,
-        condition_on_previous_text=False,
-    )
-    if not 0 < info.duration <= config.max_duration_seconds:
-        raise VideoResearchDenied("audio_duration_limit")
-    rows: list[dict[str, Any]] = []
-    text = ""
-    for segment in segments:
-        if len(rows) >= 1000 or len(text) + len(segment.text) + 1 > 16000:
-            raise VideoResearchDenied("transcript_text_limit")
-        if not 0 <= segment.start <= segment.end <= config.max_duration_seconds:
-            raise VideoResearchDenied("invalid_speech_interval")
-        text += (" " if text else "") + segment.text.strip()
-        rows.append({"start": segment.start, "end": segment.end, "text": segment.text})
-    media_after, _ = file_hash(media_path, config.max_media_bytes)
-    if media_after != media_before:
-        raise VideoResearchDenied("media_changed_during_transcription")
+        model = WhisperModel(
+            str(config.model_dir),
+            device="cpu",
+            compute_type=config.compute_type,
+            cpu_threads=config.cpu_threads,
+            num_workers=1,
+            local_files_only=True,
+        )
+        segments, info = model.transcribe(
+            media_path,
+            language=payload["request"].get("language"),
+            beam_size=5,
+            vad_filter=False,
+            word_timestamps=False,
+            condition_on_previous_text=False,
+        )
+        if not 0 < info.duration <= config.max_duration_seconds:
+            raise VideoResearchDenied("audio_duration_limit")
+        rows: list[dict[str, Any]] = []
+        text = ""
+        for segment in segments:
+            if len(rows) >= 1000 or len(text) + len(segment.text) + 1 > 16000:
+                raise VideoResearchDenied("transcript_text_limit")
+            if not 0 <= segment.start <= segment.end <= config.max_duration_seconds:
+                raise VideoResearchDenied("invalid_speech_interval")
+            text += (" " if text else "") + segment.text.strip()
+            rows.append({"start": segment.start, "end": segment.end, "text": segment.text})
     after, _ = file_hash(config.model_dir / "model.bin", 8_000_000_000)
     if after != before:
         raise VideoResearchDenied("model_changed_during_transcription")

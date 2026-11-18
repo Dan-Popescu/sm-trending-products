@@ -281,18 +281,126 @@ def test_download_export_transcribe_and_existing_insights_keep_machine_provenanc
     assert len(executor.calls) == 2
 
 
-def test_tampered_cached_media_is_not_transcribed_or_exported(pipeline, tmp_path):
+@pytest.mark.parametrize("operation", ["transcribe", "export"])
+def test_tampered_cached_media_is_not_transcribed_or_exported(pipeline, tmp_path, operation):
     service, selection, config, executor = setup(pipeline, tmp_path)
     media = service.run(request(selection, action="download"), config)
     (config.work_dir / media["job_id"] / "video.mp4").write_bytes(b"corrupted")
     with pytest.raises(VideoResearchDenied, match="checksum_mismatch"):
-        service.run(
-            request(
-                selection, action="transcribe", identifier="speech", media_job_id=media["job_id"]
-            ),
-            config,
-        )
+        if operation == "export":
+            service.export_media(media["job_id"], selection, config, tmp_path / "export.mp4")
+        else:
+            service.run(
+                request(
+                    selection,
+                    action="transcribe",
+                    identifier="speech",
+                    media_job_id=media["job_id"],
+                ),
+                config,
+            )
     assert len(executor.calls) == 1
+    assert not (tmp_path / "export.mp4").exists()
+
+
+def test_failed_directory_creation_preserves_preexisting_unregistered_files(
+    pipeline, tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from sm_trending_products.video_research import service as module
+
+    service, selection, config, executor = setup(pipeline, tmp_path)
+    service.run(request(selection), config)
+    occupied = config.work_dir / ("d" * 64)
+    occupied.mkdir(mode=0o700)
+    (occupied / "video.mp4").write_bytes(MEDIA)
+    monkeypatch.setattr(module.uuid, "uuid4", lambda: SimpleNamespace(hex="d" * 32))
+    with pytest.raises(FileExistsError):
+        service.run(request(selection, action="download", identifier="download"), config)
+    assert (occupied / "video.mp4").read_bytes() == MEDIA
+    assert len(executor.calls) == 1
+    job = pipeline.catalog.one(
+        "SELECT state,descriptor FROM video_research_jobs WHERE operation='download'"
+    )
+    assert job == {"state": "uncertain", "descriptor": None}
+
+
+@pytest.mark.parametrize("operation", ["transcribe", "export"])
+def test_symlinked_job_directory_never_supplies_media(pipeline, tmp_path, operation):
+    service, selection, config, executor = setup(pipeline, tmp_path)
+    media = service.run(request(selection, action="download"), config)
+    original = config.work_dir / media["job_id"]
+    saved = original.with_name(original.name + "-saved")
+    original.rename(saved)
+    original.symlink_to(saved, target_is_directory=True)
+    with pytest.raises(VideoResearchDenied, match="media_path_escaped"):
+        if operation == "export":
+            service.export_media(media["job_id"], selection, config, tmp_path / "export.mp4")
+        else:
+            service.run(
+                request(
+                    selection,
+                    action="transcribe",
+                    identifier="speech",
+                    media_job_id=media["job_id"],
+                ),
+                config,
+            )
+    assert (saved / "video.mp4").read_bytes() == MEDIA
+    assert not (tmp_path / "export.mp4").exists()
+    assert len(executor.calls) == 1
+
+
+@pytest.mark.parametrize("failure", ["changed_media", "ownership_withdrawn"])
+def test_failed_export_staging_does_not_publish_or_leave_temporary_output(
+    pipeline, tmp_path, monkeypatch, failure
+):
+    from sm_trending_products.video_research import _media
+
+    service, selection, config, _ = setup(pipeline, tmp_path)
+    media = service.run(request(selection, action="download"), config)
+    source = config.work_dir / media["job_id"] / "video.mp4"
+    copy = _media.shutil.copyfileobj
+
+    def change_during_copy(origin, target, length):
+        if failure == "changed_media":
+            source.write_bytes(b"changed-during-export")
+        else:
+            pipeline.review_link("p", selection.entity_key, status="rejected")
+        copy(origin, target, length=length)
+
+    monkeypatch.setattr(_media.shutil, "copyfileobj", change_during_copy)
+    destination = tmp_path / "export.mp4"
+    reason = "media_changed_during_export" if failure == "changed_media" else "not_owned"
+    with pytest.raises(VideoResearchDenied, match=reason):
+        service.export_media(media["job_id"], selection, config, destination)
+    assert not destination.exists()
+    assert list(tmp_path.glob(".export.mp4.*")) == []
+
+
+def test_export_refuses_media_path_replaced_during_verification(pipeline, tmp_path, monkeypatch):
+    from sm_trending_products.video_research import _media
+
+    service, selection, config, _ = setup(pipeline, tmp_path)
+    media = service.run(request(selection, action="download"), config)
+    source = config.work_dir / media["job_id"] / "video.mp4"
+    saved = source.with_name("previous.mp4")
+    stat = _media.os.fstat
+
+    def replace_open_media(descriptor):
+        details = stat(descriptor)
+        if not saved.exists() and _media.os.readlink(f"/proc/self/fd/{descriptor}") == str(source):
+            source.rename(saved)
+            source.write_bytes(MEDIA)
+        return details
+
+    monkeypatch.setattr(_media.os, "fstat", replace_open_media)
+    destination = tmp_path / "export.mp4"
+    with pytest.raises(VideoResearchDenied, match="file_changed_during_verification"):
+        service.export_media(media["job_id"], selection, config, destination)
+    assert saved.read_bytes() == source.read_bytes() == MEDIA
+    assert not destination.exists()
 
 
 def test_selected_video_listing_is_metadata_only_and_requires_explicit_permission(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import importlib.util
 import json
 import os
@@ -16,29 +15,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ..contracts import canonical
+from ._media import file_hash
 from .contracts import ExecutionConfig, VideoRequest, VideoResearchDenied
-
-
-def file_hash(path: Path, maximum: int) -> tuple[str, int]:
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    with os.fdopen(descriptor, "rb") as stream:
-        before = os.fstat(stream.fileno())
-        if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= maximum:
-            raise VideoResearchDenied("invalid_owned_file")
-        total, checksum = 0, hashlib.sha256()
-        while block := stream.read(1024 * 1024):
-            total += len(block)
-            if total > maximum:
-                raise VideoResearchDenied("file_byte_limit")
-            checksum.update(block)
-        after = os.fstat(stream.fileno())
-        if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
-            after.st_size,
-            after.st_mtime_ns,
-            after.st_ctime_ns,
-        ) or total != before.st_size:
-            raise VideoResearchDenied("file_changed_during_verification")
-        return checksum.hexdigest(), total
 
 
 @contextmanager
