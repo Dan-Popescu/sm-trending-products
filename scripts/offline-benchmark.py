@@ -13,21 +13,20 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
 import psycopg
-from moto.server import ThreadedMotoServer
-from psycopg import sql
 
 from sm_trending_products.cli import dispatch, parser
 from sm_trending_products.contracts import canonical, now
 from sm_trending_products.pipeline import Pipeline
+from sm_trending_products.qualification import QualificationResources
+from sm_trending_products.qualification import scoped_database_url as scoped_database_url
+from sm_trending_products.qualification import stop_session as stop_session
 from sm_trending_products.settings import Settings
 
 GIB = 1024**3
@@ -47,21 +46,6 @@ def read_report(path: Path) -> dict:
         return value if isinstance(value, dict) else {}
     except (OSError, ValueError):
         return {}
-
-
-def scoped_database_url(database_url: str, schema: str) -> str:
-    parsed = urlsplit(database_url)
-    query = dict(parse_qsl(parsed.query))
-    query.update(options=f"-c search_path={schema}", connect_timeout="5")
-    return urlunsplit(
-        (
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path,
-            urlencode(query, quote_via=quote),
-            parsed.fragment,
-        )
-    )
 
 
 def read_cgroup(name: str) -> str | None:
@@ -180,24 +164,6 @@ def session_resources(session_id: int, known_pids: set[int], *, details: bool = 
         "process_count": len(members),
         "descendant_discovery_complete": complete,
     }
-
-
-def stop_session(process: subprocess.Popen) -> None:
-    """The caller created this child with start_new_session=True; signal only that group."""
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    try:
-        process.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        pass
-    # The leader may have exited while a collector ignored SIGTERM.
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    process.wait(timeout=2)
 
 
 def owned_disk_bytes(directory: Path) -> int:
@@ -504,30 +470,28 @@ def _run_case(
     if not database_url:
         raise ValueError("Set TEST_DATABASE_URL to an isolated native test database")
     identity = collector_identity(collector_binary, collector_profile)
-    schema = "benchmark_" + uuid4().hex
-    scoped_url = scoped_database_url(database_url, schema)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.unlink(missing_ok=True)
     before_hardware = hardware_facts(args.output.parent)
     before_cpu, started = time.process_time(), time.monotonic()
-    process, settings, schema_created = None, None, False
-    server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
-    result, samples, cleanup_errors, reason = {}, [], [], None
+    resources = QualificationResources(
+        database_url, schema_prefix="benchmark_", directory_prefix="sm-trends-benchmark-"
+    )
+    schema, scoped_url = resources.schema, resources.database_url
+    process, settings = None, None
+    result, samples, reason = {}, [], None
+    cleanup_errors = resources.cleanup["errors"]
     last_checkpoint = {}
     database_version = None
-    with tempfile.TemporaryDirectory(prefix="sm-trends-benchmark-") as temporary:
-        owned = Path(temporary)
+    with resources:
+        owned = resources.directory
         try:
-            with psycopg.connect(database_url, autocommit=True, connect_timeout=5) as connection:
-                connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-                schema_created = True
-                database_version = connection.execute("SELECT version()").fetchone()[0]
-            server.start()
-            host, port = server.get_host_and_port()
+            resources.start()
+            database_version = resources.database_version
             settings = Settings(
                 database_url=scoped_url,
                 s3_bucket=schema.replace("_", "-"),
-                s3_endpoint_url=f"http://{host}:{port}",
+                s3_endpoint_url=resources.endpoint,
                 aws_default_region="us-east-1",
                 cache_dir=owned / "cache",
                 spool_dir=owned / "spool",
@@ -551,26 +515,16 @@ def _run_case(
                 "TMPDIR": str(owned / "tmp"),
             }
             with args.output.with_suffix(".worker.log").open("w") as log:
-                process = subprocess.Popen(
+                process = resources.launch(
                     [sys.executable, str(Path(__file__).resolve()), "--case-worker"],
-                    stdin=subprocess.PIPE,
-                    stdout=log,
-                    stderr=log,
-                    text=True,
-                    env=env,
-                    start_new_session=True,
+                    {
+                        "settings": values,
+                        "arguments": arguments,
+                        "interruption_probe": interruption,
+                    },
+                    environment=env,
+                    log=log,
                 )
-                assert process.stdin is not None
-                process.stdin.write(
-                    canonical(
-                        {
-                            "settings": values,
-                            "arguments": arguments,
-                            "interruption_probe": interruption,
-                        }
-                    )
-                )
-                process.stdin.close()
                 next_snapshot, latest_database, known_pids, latest_disk = 0.0, {}, set(), 0
                 while process.poll() is None:
                     elapsed = time.monotonic() - started
@@ -606,7 +560,7 @@ def _run_case(
                     if reason:
                         break
                     time.sleep(0.25)
-                stop_session(process)
+                resources.stop_worker()
             result = read_report(args.output) or last_checkpoint
             if reason:
                 result.update(
@@ -630,98 +584,81 @@ def _run_case(
                 runner_error=type(error).__name__,
             )
         finally:
-            if process is not None:
-                try:
-                    stop_session(process)
-                except (OSError, subprocess.TimeoutExpired) as error:
-                    cleanup_errors.append(type(error).__name__)
-            if schema_created:
+            try:
+                resources.stop_worker()
+            except (OSError, subprocess.TimeoutExpired) as error:
+                cleanup_errors.append(type(error).__name__)
+            if resources.schema_created:
                 result["final_database_snapshot"] = database_snapshot(scoped_url)
                 result["published_data"] = data_summary(scoped_url)
-            try:
-                server.stop()
-            except Exception as error:
-                cleanup_errors.append(type(error).__name__)
-            if schema_created:
-                try:
-                    with psycopg.connect(
-                        database_url, autocommit=True, connect_timeout=5
-                    ) as connection:
-                        connection.execute("SET statement_timeout='5000ms'")
-                        connection.execute(
-                            sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema))
-                        )
-                except psycopg.Error as error:
-                    cleanup_errors.append(type(error).__name__)
-        result["runner"] = {
-            "schema": schema,
-            "case_timeout_seconds": case_timeout,
-            "max_owned_disk_bytes": max_disk_bytes,
-            "elapsed_seconds": time.monotonic() - started,
-            "exit_code": process.returncode if process is not None else None,
-            "stop_reason": reason,
-            "cleanup_errors": cleanup_errors,
-            "samples": samples,
-            "sample_interval_seconds": 0.25,
-            "sampled_peak_session_rss_bytes": max(
-                (row["session_rss_bytes"] for row in samples), default=0
-            )
-            if all(row["descendant_discovery_complete"] for row in samples)
-            else None,
-            "sampled_peak_discovered_process_rss_bytes": max(
-                (row["discovered_rss_bytes"] for row in samples), default=0
-            ),
-            "descendant_discovery_complete": bool(samples)
-            and all(row["descendant_discovery_complete"] for row in samples),
-            "supervisor_cpu_seconds": time.process_time() - before_cpu,
-            "supervisor_lifetime_peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
-        }
-        if cleanup_errors:
-            result.update(ok=False, status="cleanup_failed")
-        result.setdefault("complete", True)
-        result["environment"] = {
-            "revision": command(["git", "-C", str(ROOT), "rev-parse", "HEAD"]),
-            "tree": command(["git", "-C", str(ROOT), "rev-parse", "HEAD^{tree}"]),
-            "recorded_at": now().isoformat(),
-            "dirty_checkout": bool(command(["git", "-C", str(ROOT), "status", "--porcelain"])),
-            "collector": identity,
-            "hardware_before": before_hardware,
-            "hardware_after": hardware_facts(args.output.parent),
-            "versions": {
-                name: importlib.metadata.version(name)
-                for name in ("moto", "polars", "duckdb", "pyarrow", "psycopg", "boto3")
-            },
-            "effective_settings": {
-                key: value
-                for key, value in (settings.model_dump(mode="json") if settings else {}).items()
-                if key not in {"database_url", "s3_endpoint_url"}
-            },
-            "thread_environment": {
-                name: os.environ.get(name) for name in ("POLARS_MAX_THREADS", "RAYON_NUM_THREADS")
-            },
-        }
-        result["verification_boundary"] = {
-            "database": database_version,
-            "object_store": "supervisor-owned loopback HTTP Moto",
-            "worker_mode": "crashed child process and normal replacement Pipeline"
-            if interruption
-            else "one Python process with Pipeline threads and Rust children",
-            "synthetic": True,
-            "production_acceptance": False,
-        }
-        result.setdefault("measurement_limits", []).extend(
-            [
-                "Session RSS is sampled at 250 ms; brief peaks may be missed",
-                "Missing /proc children: aggregate RSS unavailable; "
-                "discovered RSS is a lower bound",
-                "Supervisor CPU/RSS includes Moto; worker CPU includes the controlled source",
-                "PostgreSQL/Dagster/dashboard and other host processes are excluded from RSS/CPU",
-                "Logical observation timestamps do not measure live upstream freshness",
-                "Schema/files exclude PostgreSQL WAL, temp files and container disk",
-            ]
+    result["runner"] = {
+        "schema": schema,
+        "case_timeout_seconds": case_timeout,
+        "max_owned_disk_bytes": max_disk_bytes,
+        "elapsed_seconds": time.monotonic() - started,
+        "exit_code": resources.worker_exit_code,
+        "stop_reason": reason,
+        "cleanup_errors": cleanup_errors,
+        "samples": samples,
+        "sample_interval_seconds": 0.25,
+        "sampled_peak_session_rss_bytes": max(
+            (row["session_rss_bytes"] for row in samples), default=0
         )
-        write_report(args.output, result)
-        return result
+        if all(row["descendant_discovery_complete"] for row in samples)
+        else None,
+        "sampled_peak_discovered_process_rss_bytes": max(
+            (row["discovered_rss_bytes"] for row in samples), default=0
+        ),
+        "descendant_discovery_complete": bool(samples)
+        and all(row["descendant_discovery_complete"] for row in samples),
+        "supervisor_cpu_seconds": time.process_time() - before_cpu,
+        "supervisor_lifetime_peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+    }
+    if cleanup_errors:
+        result.update(ok=False, status="cleanup_failed")
+    result.setdefault("complete", True)
+    result["environment"] = {
+        "revision": command(["git", "-C", str(ROOT), "rev-parse", "HEAD"]),
+        "tree": command(["git", "-C", str(ROOT), "rev-parse", "HEAD^{tree}"]),
+        "recorded_at": now().isoformat(),
+        "dirty_checkout": bool(command(["git", "-C", str(ROOT), "status", "--porcelain"])),
+        "collector": identity,
+        "hardware_before": before_hardware,
+        "hardware_after": hardware_facts(args.output.parent),
+        "versions": {
+            name: importlib.metadata.version(name)
+            for name in ("moto", "polars", "duckdb", "pyarrow", "psycopg", "boto3")
+        },
+        "effective_settings": {
+            key: value
+            for key, value in (settings.model_dump(mode="json") if settings else {}).items()
+            if key not in {"database_url", "s3_endpoint_url"}
+        },
+        "thread_environment": {
+            name: os.environ.get(name) for name in ("POLARS_MAX_THREADS", "RAYON_NUM_THREADS")
+        },
+    }
+    result["verification_boundary"] = {
+        "database": database_version,
+        "object_store": "supervisor-owned loopback HTTP Moto",
+        "worker_mode": "crashed child process and normal replacement Pipeline"
+        if interruption
+        else "one Python process with Pipeline threads and Rust children",
+        "synthetic": True,
+        "production_acceptance": False,
+    }
+    result.setdefault("measurement_limits", []).extend(
+        [
+            "Session RSS is sampled at 250 ms; brief peaks may be missed",
+            "Missing /proc children: aggregate RSS unavailable; discovered RSS is a lower bound",
+            "Supervisor CPU/RSS includes Moto; worker CPU includes the controlled source",
+            "PostgreSQL/Dagster/dashboard and other host processes are excluded from RSS/CPU",
+            "Logical observation timestamps do not measure live upstream freshness",
+            "Schema/files exclude PostgreSQL WAL, temp files and container disk",
+        ]
+    )
+    write_report(args.output, result)
+    return result
 
 
 def run_case(arguments: list[str], **options) -> dict:
