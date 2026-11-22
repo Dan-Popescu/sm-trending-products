@@ -269,8 +269,9 @@ def test_content_report_matches_legacy_bytes_with_less_guarded_work(
     assert actual == expected
     assert treatment["analysis_sql"] == 0
     assert treatment["sql"] < baseline["sql"]
-    assert treatment["scope"] < baseline["scope"]
-    assert treatment["provenance"] < baseline["provenance"]
+    # Both metadata readers now batch eligibility. Each hydrated text still
+    # crosses its individual authority check immediately before the object read.
+    assert treatment["scope"] == text_count
 
 
 def test_hydrated_pages_match_legacy_context_selection_and_unavailable_scan_budget(
