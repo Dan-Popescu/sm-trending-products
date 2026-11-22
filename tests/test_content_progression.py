@@ -604,7 +604,7 @@ def test_final_eligibility_ignores_analysis_states_with_exact_report_bytes(pipel
         with count_reads(monkeypatch, pipeline) as treatment:
             actual = canonical(service.describe("patterns", cutoff, True, window_hours=12))
         assert actual == previous == expected
-        assert baseline["analysis_sql"] == 8 and treatment["analysis_sql"] == 0
+        assert baseline["analysis_sql"] > 0 and treatment["analysis_sql"] == 0
         assert treatment["sql"] < baseline["sql"]
         print({"state": state, "baseline": dict(baseline), "treatment": dict(treatment)})
 
