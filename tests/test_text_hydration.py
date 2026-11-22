@@ -72,6 +72,39 @@ def individual_page_guards(service, connection, rows, product, synthetic, cutoff
     return eligible, unavailable
 
 
+def test_analysis_aware_metadata_uses_bounded_queries_for_mixed_cache_states(pipeline, monkeypatch):
+    service, value = selected(pipeline)
+    completed = set()
+    for index in range(64):
+        transcript = import_selected(service, value.model_copy(update={"text": f"Review {index}."}))
+        if index % 8 == 0:
+            analyze(service, transcript, request=f"review-{index}")
+            completed.add(transcript)
+    cutoff = now()
+    sql_counts = []
+    for size in (1, 8, 64):
+        inputs = {"synthetic": True, "as_of": cutoff, "limit": size}
+        ids = service.eligible_text_ids("p", **inputs)
+        with count_reads(monkeypatch, pipeline) as counts:
+            page = service.eligible_texts("p", **inputs)
+        assert page["next_cursor"] == ids["next_cursor"]
+        assert page["scanned"] == size
+        assert page["unavailable"] == ids["unavailable"] == []
+        assert [item["transcript_id"] for item in page["items"]] == [
+            item["transcript_id"] for item in ids["items"]
+        ]
+        assert all(
+            item["local_analysis_state"]
+            == ("completed" if item["transcript_id"] in completed else "not_analyzed")
+            for item in page["items"]
+        )
+        sql_counts.append(counts["sql"])
+        print({"page_size": size, "eligible_metadata": dict(counts)})
+    # A page containing cached results needs a bounded extra authority check,
+    # regardless of how many individual transcripts or results are returned.
+    assert max(sql_counts) <= min(sql_counts) + 12
+
+
 @pytest.mark.parametrize("page_size", [1, 2, 8])
 def test_batched_pages_match_individual_guards_with_bounded_sql(pipeline, monkeypatch, page_size):
     service, value = selected(pipeline)
@@ -236,8 +269,9 @@ def test_content_report_matches_legacy_bytes_with_less_guarded_work(
     assert actual == expected
     assert treatment["analysis_sql"] == 0
     assert treatment["sql"] < baseline["sql"]
-    assert treatment["scope"] < baseline["scope"]
-    assert treatment["provenance"] < baseline["provenance"]
+    # Both metadata readers now batch eligibility. Each hydrated text still
+    # crosses its individual authority check immediately before the object read.
+    assert treatment["scope"] == text_count
 
 
 def test_hydrated_pages_match_legacy_context_selection_and_unavailable_scan_budget(
