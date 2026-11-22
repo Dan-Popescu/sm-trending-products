@@ -177,14 +177,14 @@ def test_committed_business_error_still_settles_while_source_budget_is_blocked(
     pipeline, monkeypatch
 ):
     acquisition = service(pipeline)
-    original = acquisition._reschedule_failure
+    original = pipeline.catalog.settle_collection_failure
 
-    def interrupted(task, category, delay, *, error_dataset_id=None):
+    def interrupted(task, category, delay, *, error_dataset_id=None, **kwargs):
         if error_dataset_id:
             raise RuntimeError("controlled_after_error_commit_before_attempt_advance")
-        return original(task, category, delay)
+        return original(task, category, delay, **kwargs)
 
-    monkeypatch.setattr(acquisition, "_reschedule_failure", interrupted)
+    monkeypatch.setattr(pipeline.catalog, "settle_collection_failure", interrupted)
     pipeline.catalog.configure_budget("tiktok_display", ACCOUNT, 1, 0.000001)
     with one_shot_pages([{"error": {"code": "rate_limit_exceeded"}}]) as (endpoint, requests):
         task_id = enqueue(pipeline, endpoint)
@@ -198,7 +198,7 @@ def test_committed_business_error_still_settles_while_source_budget_is_blocked(
         pipeline.catalog.execute(
             "SELECT block_request_budget(%s,%s,3600)", ("tiktok_display", ACCOUNT)
         )
-        monkeypatch.setattr(acquisition, "_reschedule_failure", original)
+        monkeypatch.setattr(pipeline.catalog, "settle_collection_failure", original)
         replacement = service(pipeline, "replacement")
         due(pipeline, task_id)
         recovered = advance_until_result(replacement)
@@ -213,14 +213,14 @@ def test_preexisting_committed_error_recovers_after_old_image_removed_local_rece
     pipeline, monkeypatch
 ):
     acquisition = service(pipeline)
-    original = acquisition._reschedule_failure
+    original = pipeline.catalog.settle_collection_failure
 
-    def interrupted(task, category, delay, *, error_dataset_id=None):
+    def interrupted(task, category, delay, *, error_dataset_id=None, **kwargs):
         if error_dataset_id:
             raise RuntimeError("controlled_after_error_commit_before_attempt_advance")
-        return original(task, category, delay)
+        return original(task, category, delay, **kwargs)
 
-    monkeypatch.setattr(acquisition, "_reschedule_failure", interrupted)
+    monkeypatch.setattr(pipeline.catalog, "settle_collection_failure", interrupted)
     pipeline.catalog.configure_budget("tiktok_display", ACCOUNT, 1, 0.000001)
     with one_shot_pages([{"error": {"code": "rate_limit_exceeded"}}]) as (endpoint, requests):
         task_id = enqueue(pipeline, endpoint)
@@ -228,6 +228,7 @@ def test_preexisting_committed_error_recovers_after_old_image_removed_local_rece
             "UPDATE collection_tasks SET attempts=2 WHERE task_id=%s", (task_id,)
         )
         acquisition.capture_batch(1, True)
+        monkeypatch.setattr(pipeline.catalog, "settle_collection_failure", original)
         next((pipeline.settings.spool_dir / "captures").glob("*.json")).unlink()
         pipeline.catalog.execute(
             "SELECT block_request_budget(%s,%s,3600)", ("tiktok_display", ACCOUNT)
@@ -274,18 +275,19 @@ def test_invalidation_wait_does_not_erase_prior_source_failures(pipeline, monkey
 
 def test_future_active_prefix_does_not_starve_remote_error_recovery(pipeline, monkeypatch):
     acquisition = service(pipeline)
-    original = acquisition._reschedule_failure
+    original = pipeline.catalog.settle_collection_failure
 
-    def interrupted(task, category, delay, *, error_dataset_id=None):
+    def interrupted(task, category, delay, *, error_dataset_id=None, **kwargs):
         if error_dataset_id:
             raise RuntimeError("controlled_after_error_commit_before_attempt_advance")
-        return original(task, category, delay)
+        return original(task, category, delay, **kwargs)
 
-    monkeypatch.setattr(acquisition, "_reschedule_failure", interrupted)
+    monkeypatch.setattr(pipeline.catalog, "settle_collection_failure", interrupted)
     pipeline.catalog.configure_budget("tiktok_display", ACCOUNT, 1, 0.000001)
     with one_shot_pages([{"error": {"code": "rate_limit_exceeded"}}]) as (endpoint, requests):
         task_id = enqueue(pipeline, endpoint)
         acquisition.capture_batch(1, True)
+        monkeypatch.setattr(pipeline.catalog, "settle_collection_failure", original)
         next((pipeline.settings.spool_dir / "captures").glob("*.json")).unlink()
         due(pipeline, task_id)
         pipeline.catalog.execute(
@@ -329,6 +331,12 @@ def test_receipt_backlog_leaves_normal_source_admission_available(
                 )
             )
             assert acquisition.capture_batch(1, True)["errors"]
+            # Arm all pending receipts together after seeding the entire backlog.
+            pipeline.catalog.execute(
+                "UPDATE collection_tasks SET due_at=clock_timestamp()+interval '1 day' "
+                "WHERE task_id=%s",
+                (pending[-1],),
+            )
         assert len(requests) == 6
         pipeline.catalog.execute(
             "UPDATE collection_tasks SET due_at=clock_timestamp() WHERE task_id=ANY(%s)", (pending,)

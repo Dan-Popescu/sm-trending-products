@@ -56,14 +56,14 @@ def test_archived_business_error_recovery_increments_attempt_once_without_refetc
     pipeline, monkeypatch
 ):
     acquisition = service(pipeline)
-    original = acquisition._reschedule_failure
+    original = pipeline.catalog.settle_collection_failure
 
-    def interrupted(task, category, delay, *, error_dataset_id=None):
+    def interrupted(task, category, delay, *, error_dataset_id=None, **kwargs):
         if error_dataset_id:
             raise RuntimeError("controlled_after_error_commit_before_attempt_advance")
-        return original(task, category, delay)
+        return original(task, category, delay, **kwargs)
 
-    monkeypatch.setattr(acquisition, "_reschedule_failure", interrupted)
+    monkeypatch.setattr(pipeline.catalog, "settle_collection_failure", interrupted)
     with one_shot_pages([{"error": {"code": "rate_limit_exceeded"}}, page()]) as (
         endpoint,
         requests,
@@ -77,7 +77,7 @@ def test_archived_business_error_recovery_increments_attempt_once_without_refetc
             )["capture_attempt"]
             == 0
         )
-        monkeypatch.setattr(acquisition, "_reschedule_failure", original)
+        monkeypatch.setattr(pipeline.catalog, "settle_collection_failure", original)
         retry_now(pipeline, task_id)
         assert acquisition.capture_batch(1, True)["errors"][0]["category"] == "rate_limited"
         assert len(requests) == 1
