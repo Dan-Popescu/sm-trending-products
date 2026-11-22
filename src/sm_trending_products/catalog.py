@@ -428,23 +428,109 @@ class Catalog:
         quarantine: bool = False,
         no_attempt: bool = False,
     ) -> None:
-        # Categories, never remote message text, enter persistent errors.
-        category = category if category.replace("_", "").isalnum() else "collection_error"
         with self.transaction() as connection:
             self.assert_lease(connection, task)
-            connection.execute(
-                "UPDATE collection_tasks SET state=%s,due_at=clock_timestamp()+%s*interval '1 "
-                "second',"
-                "last_error=%s,lease_owner=NULL,lease_until=NULL,attempts=GREATEST(0,attempts-%s) "
-                "WHERE task_id=%s",
-                (
-                    "quarantined" if quarantine else "pending",
-                    max(1, delay_seconds),
-                    category,
-                    int(no_attempt),
-                    task["task_id"],
-                ),
+            self._reschedule_owned_task(
+                connection,
+                task,
+                category,
+                delay_seconds,
+                quarantine=quarantine,
+                no_attempt=no_attempt,
             )
+
+    def settle_collection_failure(
+        self,
+        task: dict,
+        category: str,
+        delay_seconds: float,
+        *,
+        raw_capture: bool = False,
+        error_dataset_id: str | None = None,
+    ) -> None:
+        """Apply source failure effects and settle the owning task in one transaction."""
+        if error_dataset_id is not None and not raw_capture:
+            raise ValueError("Only raw captures can settle an archived error attempt")
+        attempt = task.get("capture_attempt", 0) if raw_capture else None
+        quarantine = category in {
+            "source_access_unverified",
+            "credentials_missing",
+            "missing_token",
+            "unauthorized",
+            "access_denied",
+            "invalid_request",
+            "schema",
+            "invalid_retry_hint",
+        } or (raw_capture and category in {"capture_retention_expired", "capture_source_removed"})
+        no_attempt = category in {"rate_limited", "quota_exhausted"}
+        with self.transaction() as connection:
+            if raw_capture:
+                self.guard_namespace(connection, task["synthetic"])
+            self.assert_lease(connection, task)
+            if error_dataset_id is not None:
+                archived = connection.execute(
+                    "SELECT 1 FROM datasets WHERE dataset_id=%s AND state='committed' "
+                    "AND task_id=%s AND manifest->>'kind'='raw_capture_error' "
+                    "AND (manifest->'capture'->>'page_index')::bigint=%s "
+                    "AND COALESCE((manifest->'capture'->>'capture_attempt')::bigint,0)=%s",
+                    (error_dataset_id, task["task_id"], task["page_index"], attempt),
+                ).fetchone()
+                if not archived:
+                    raise ValueError("Capture attempt can advance only after its error is archived")
+            if not task["synthetic"] and category == "access_denied":
+                connection.execute(
+                    "INSERT INTO source_capabilities(source,account_id,capability,state,details) "
+                    "VALUES(%s,%s,'collect','denied',%s)",
+                    (task["source"], task["account_id"], Jsonb({"category": category})),
+                )
+            if no_attempt:
+                connection.execute(
+                    "SELECT block_request_budget(%s,%s,%s)",
+                    (task["source"], task["account_id"], delay_seconds),
+                )
+            self._reschedule_owned_task(
+                connection,
+                task,
+                category,
+                delay_seconds,
+                quarantine=quarantine,
+                no_attempt=no_attempt,
+                expected_capture_attempt=attempt,
+                advance_capture_attempt=error_dataset_id is not None,
+            )
+
+    @staticmethod
+    def _reschedule_owned_task(
+        connection: psycopg.Connection[dict[str, Any]],
+        task: dict,
+        category: str,
+        delay_seconds: float,
+        *,
+        quarantine: bool,
+        no_attempt: bool,
+        expected_capture_attempt: int | None = None,
+        advance_capture_attempt: bool = False,
+    ) -> None:
+        # Categories, never remote message text, enter persistent errors.
+        category = category if category.replace("_", "").isalnum() else "collection_error"
+        updated = connection.execute(
+            "UPDATE collection_tasks SET state=%s,due_at=clock_timestamp()+%s*interval '1 second',"
+            "last_error=%s,lease_owner=NULL,lease_until=NULL,attempts=GREATEST(0,attempts-%s),"
+            "capture_attempt=capture_attempt+%s WHERE task_id=%s "
+            "AND (%s::bigint IS NULL OR capture_attempt=%s) RETURNING 1",
+            (
+                "quarantined" if quarantine else "pending",
+                max(1, delay_seconds),
+                category,
+                int(no_attempt),
+                int(advance_capture_attempt),
+                task["task_id"],
+                expected_capture_attempt,
+                expected_capture_attempt,
+            ),
+        ).fetchone()
+        if not updated:
+            raise LeaseLost("Capture attempt was superseded")
 
     def configure_budget(
         self, source: str, account_id: str, capacity: float, refill_per_second: float

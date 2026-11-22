@@ -7,8 +7,6 @@ from datetime import datetime
 from functools import partial
 from typing import Any
 
-from psycopg.types.json import Jsonb
-
 from .capture_spool import CaptureSpool
 from .catalog import InvalidationPending, LeaseLost
 from .collection import SourceCollection
@@ -186,10 +184,11 @@ class RawCaptureService:
                             "authorization": "access_denied",
                             "rate_limit": "rate_limited",
                         }.get(error["category"], "source")
-                        self._reschedule_failure(
+                        self.catalog.settle_collection_failure(
                             task,
                             category,
                             error.get("retry_after_seconds") or 60,
+                            raw_capture=True,
                             error_dataset_id=capture_id,
                         )
                     else:
@@ -228,7 +227,7 @@ class RawCaptureService:
                     else min(300, 2 ** task["attempts"])
                 )
                 try:
-                    self._reschedule_failure(task, category, delay)
+                    self.catalog.settle_collection_failure(task, category, delay, raw_capture=True)
                 except LeaseLost:
                     category = "lease_lost"
                 result["errors"].append({"task_id": task["task_id"], "category": category})
@@ -296,70 +295,6 @@ class RawCaptureService:
                 # remote storage failure must not consume source attempts.
                 continue
             yield receipt
-
-    def _reschedule_failure(
-        self, task: dict, category: str, delay: float, *, error_dataset_id: str | None = None
-    ) -> None:
-        denied = category in {
-            "source_access_unverified",
-            "credentials_missing",
-            "missing_token",
-            "unauthorized",
-            "access_denied",
-            "invalid_request",
-            "schema",
-            "invalid_retry_hint",
-            "capture_retention_expired",
-            "capture_source_removed",
-        }
-        no_attempt = category in {"rate_limited", "quota_exhausted"}
-        with self.catalog.transaction() as connection:
-            self.catalog.guard_namespace(connection, task["synthetic"])
-            self.catalog.assert_lease(connection, task)
-            if error_dataset_id:
-                archived = connection.execute(
-                    "SELECT 1 FROM datasets WHERE dataset_id=%s AND state='committed' "
-                    "AND task_id=%s AND manifest->>'kind'='raw_capture_error' "
-                    "AND (manifest->'capture'->>'page_index')::bigint=%s "
-                    "AND COALESCE((manifest->'capture'->>'capture_attempt')::bigint,0)=%s",
-                    (
-                        error_dataset_id,
-                        task["task_id"],
-                        task["page_index"],
-                        task.get("capture_attempt", 0),
-                    ),
-                ).fetchone()
-                if not archived:
-                    raise ValueError("Capture attempt can advance only after its error is archived")
-            if not task["synthetic"] and category == "access_denied":
-                connection.execute(
-                    "INSERT INTO source_capabilities(source,account_id,capability,state,details) "
-                    "VALUES(%s,%s,'collect','denied',%s)",
-                    (task["source"], task["account_id"], Jsonb({"category": category})),
-                )
-            if no_attempt:
-                connection.execute(
-                    "SELECT block_request_budget(%s,%s,%s)",
-                    (task["source"], task["account_id"], delay),
-                )
-            updated = connection.execute(
-                "UPDATE collection_tasks SET state=%s,"
-                "due_at=clock_timestamp()+%s*interval '1 second',"
-                "last_error=%s,lease_owner=NULL,lease_until=NULL,attempts=GREATEST(0,attempts-%s),"
-                "capture_attempt=capture_attempt+%s WHERE task_id=%s "
-                "AND capture_attempt=%s RETURNING 1",
-                (
-                    "quarantined" if denied else "pending",
-                    max(1, delay),
-                    category,
-                    int(no_attempt),
-                    int(error_dataset_id is not None),
-                    task["task_id"],
-                    task.get("capture_attempt", 0),
-                ),
-            ).fetchone()
-            if not updated:
-                raise LeaseLost("Capture attempt was superseded")
 
     def _validate_receipt(self, receipt: dict, request: dict, task: dict) -> None:
         capture = receipt.get("capture", {})

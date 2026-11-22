@@ -240,33 +240,8 @@ class SourceCollection:
                         result.setdefault("quarantine_datasets", []).append(artifact_id)
                     except LeaseLost:
                         category = "lease_lost"
-                denied = category in {
-                    "source_access_unverified",
-                    "credentials_missing",
-                    "missing_token",
-                    "unauthorized",
-                    "access_denied",
-                    "invalid_request",
-                    "schema",
-                    "invalid_retry_hint",
-                }
-                if not synthetic and category == "access_denied":
-                    self.catalog.execute(
-                        "INSERT INTO "
-                        "source_capabilities(source,account_id,capability,state,details) "
-                        "VALUES(%s,%s,'collect','denied',%s)",
-                        (task["source"], task["account_id"], Jsonb({"category": category})),
-                    )
-                if category in {"rate_limited", "quota_exhausted"}:
-                    self.catalog.block_budget(task["source"], task["account_id"], delay)
                 try:
-                    self.catalog.reschedule(
-                        task,
-                        category,
-                        delay,
-                        quarantine=denied,
-                        no_attempt=category in {"rate_limited", "quota_exhausted"},
-                    )
+                    self.catalog.settle_collection_failure(task, category, delay)
                 except LeaseLost:
                     category = "lease_lost"
                 result["errors"].append({"task_id": task["task_id"], "category": category})
