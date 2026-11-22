@@ -200,6 +200,36 @@ def test_plan_replay_preserves_unresolved_state_until_actual_completion_cutoff(p
     assert choice.preview(["p"], synthetic=True, as_of=cutoff) == before
 
 
+def test_newest_visible_attempt_and_eligible_cache_have_distinct_roles(pipeline):
+    service, value = selected(pipeline)
+    transcript = import_selected(service, value)
+    original = analyze(service, transcript)
+    cutoff = now()
+    choice = selector(pipeline)
+    completed_plan = choice.preview(["p"], synthetic=True, as_of=cutoff)
+    assert completed_plan["decisions"][0]["reason"] == "analysis_completed"
+
+    # A later completed generation with unavailable result provenance can sit
+    # beside a still-eligible historical result. It was unresolved while its
+    # completion was in the future, even though the older result was eligible.
+    pipeline.catalog.execute(
+        "INSERT INTO enrichment_analyses(analysis_id,cache_key,transcript_id,synthetic,"
+        "provider_id,provider_version,state,run_token,reserved_cost,currency,"
+        "created_at,finished_at) SELECT 'newer-generation',cache_key,transcript_id,"
+        "synthetic,provider_id,provider_version,state,run_token,reserved_cost,currency,%s,%s "
+        "FROM enrichment_analyses WHERE analysis_id=%s",
+        (cutoff, cutoff + timedelta(seconds=1), original["analysis_id"]),
+    )
+    unresolved = choice.preview(["p"], synthetic=True, as_of=cutoff)
+    assert unresolved["decisions"][0]["reason"] == "analysis_unresolved"
+    assert unresolved["items"] == []
+    pipeline.catalog.execute(
+        "UPDATE enrichment_analyses SET finished_at=%s WHERE analysis_id='newer-generation'",
+        (cutoff,),
+    )
+    assert choice.preview(["p"], synthetic=True, as_of=cutoff) == completed_plan
+
+
 def test_free_selection_leaves_unknown_paid_outcome_and_its_barrier_untouched(pipeline):
     from test_transcript_insights import ControlledAdapter, external_budget
 
