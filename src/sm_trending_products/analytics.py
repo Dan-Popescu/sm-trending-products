@@ -8,12 +8,14 @@ All work remains bounded by the caller's observation and product partitions.
 from __future__ import annotations
 
 import math
+from bisect import bisect_left
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from operator import itemgetter
 from types import MappingProxyType
 from typing import Any
 
@@ -114,6 +116,24 @@ class _CounterWindow:
     rows: tuple[dict[str, Any], ...] = ()
 
 
+_COUNTER_ORIGIN = {
+    "previous_lower": None,
+    "previous_upper": None,
+    "previous_semantics": None,
+    "previous_precision": None,
+    "previous_unit": None,
+    "previous_scope": None,
+    "previous_period": None,
+    "interval_hours": None,
+    "valid_interval": False,
+    "counter_correction": False,
+    "delta_lower": None,
+    "delta_upper": None,
+    "growth_per_hour": None,
+    "growth_upper_per_hour": None,
+}
+
+
 def _counter_row(
     entity_key: str,
     point: _CounterPoint,
@@ -122,11 +142,29 @@ def _counter_row(
     valid: bool,
     correction: bool,
 ) -> dict[str, Any]:
-    # Polars' literal true-division compiles to multiplication by its reciprocal.
-    # Retain that rounding, including truncation before division, for old hashes.
-    hours = milliseconds * (1.0 / 3_600_000) if milliseconds is not None else None
-    lower = max(0, point.value.lower - previous.value.upper) if valid and previous else None
-    upper = max(0, point.value.upper - previous.value.lower) if valid and previous else None
+    interval: dict[str, Any] = _COUNTER_ORIGIN
+    if previous is not None:
+        # Polars' literal true-division compiles to multiplication by its reciprocal.
+        # Retain that rounding, including truncation before division, for old hashes.
+        hours = milliseconds * (1.0 / 3_600_000) if milliseconds is not None else None
+        lower = max(0, point.value.lower - previous.value.upper) if valid else None
+        upper = max(0, point.value.upper - previous.value.lower) if valid else None
+        interval = {
+            "previous_lower": previous.value.lower,
+            "previous_upper": previous.value.upper,
+            "previous_semantics": previous.value.semantics,
+            "previous_precision": previous.value.precision,
+            "previous_unit": previous.value.unit,
+            "previous_scope": previous.scope,
+            "previous_period": previous.period,
+            "interval_hours": hours,
+            "valid_interval": valid,
+            "counter_correction": correction,
+            "delta_lower": lower,
+            "delta_upper": upper,
+            "growth_per_hour": float(lower) / hours if lower is not None and hours else None,
+            "growth_upper_per_hour": float(upper) / hours if upper is not None and hours else None,
+        }
     return {
         "entity_key": entity_key,
         "observation_id": point.observation.observation_id,
@@ -139,19 +177,7 @@ def _counter_row(
         "counter_scope": point.scope,
         "counter_period": point.period,
         "unit": point.value.unit,
-        **{
-            "previous_" + name: getattr(previous.value, name) if previous else None
-            for name in ("lower", "upper", "semantics", "precision", "unit")
-        },
-        "previous_scope": previous.scope if previous else None,
-        "previous_period": previous.period if previous else None,
-        "interval_hours": hours,
-        "valid_interval": valid,
-        "counter_correction": correction,
-        "delta_lower": lower,
-        "delta_upper": upper,
-        "growth_per_hour": float(lower) / hours if lower is not None and hours else None,
-        "growth_upper_per_hour": float(upper) / hours if upper is not None and hours else None,
+        **interval,
     }
 
 
@@ -246,6 +272,22 @@ def _counter_windows(
             tuple(last_rows) if retain_rows else (),
         )
     return output
+
+
+def _counter_rows_since(
+    timelines: Mapping[str, _CounterWindow], since: datetime
+) -> dict[str, tuple[dict[str, Any], ...]]:
+    """Project retained rows as if their observations started at this bound."""
+    visible = {}
+    for key, timeline in timelines.items():
+        rows = timeline.rows
+        start = bisect_left(rows, since, key=itemgetter("observed_at"))
+        if start == len(rows):
+            continue
+        # Revision selection is per timestamp. Only the first surviving row
+        # changes when its predecessor lies outside the shorter window.
+        visible[key] = (rows[start] | _COUNTER_ORIGIN, *rows[start + 1 :]) if start else rows
+    return visible
 
 
 def _metric_windows(

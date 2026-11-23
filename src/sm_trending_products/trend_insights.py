@@ -8,18 +8,18 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
-from .analytics import _counter_windows, _CounterWindow
+from .analytics import _counter_rows_since, _counter_windows
 from .catalog import Catalog
 from .contracts import Capability, Observation, digest, utc
 from .creator_identity import CreatorIdentity, creator_identity
 from .evaluation import eligible_evidence
 from .history import History
 from .identity_rules import LINK_STATE_CTES
-from .opportunity_trends import _context, describe_diagnostics
+from .opportunity_trends import _context, _describe_prepared_diagnostics
 
 MAX_METADATA_ROWS = 10000
 EVIDENCE_PREVIEW_LIMIT = 200
@@ -43,7 +43,7 @@ def _video_context(observation: Observation) -> dict[str, Any]:
 
 
 def _window(
-    timelines: dict[str, _CounterWindow],
+    timelines: Mapping[str, Sequence[dict[str, Any]]],
     observations: dict[str, Observation],
     known_entities: set[str],
     cutoff: datetime,
@@ -67,20 +67,20 @@ def _window(
     ]
     entity_peaks: dict[str, float] = {}
     adequately_sampled: set[str] = set()
-    for key, timeline in timelines.items():
+    for key, points in timelines.items():
         captured = 0.0
         gain = 0
         entity_intervals = 0
         rates: list[float] = []
-        latest = observations[timeline.latest["observation_id"]]
+        latest = observations[points[-1]["observation_id"]]
         if cutoff - utc(latest.observed_at) > max_gap:
             if len(exclusions) < 20:
                 exclusions.append({"entity_key": key, "reason": "stale_latest_capture"})
             continue
-        for index, row in enumerate(timeline.rows):
+        for index, row in enumerate(points):
             if not index or not start <= row["observed_at"] <= cutoff:
                 continue
-            previous = timeline.rows[index - 1]
+            previous = points[index - 1]
             corrections += int(row["counter_correction"])
             if (
                 previous["observed_at"] < start
@@ -415,14 +415,21 @@ class TrendInsights:
         )
         videos = [row for row in eligible if row.entity_type == "video"]
         timelines = _counter_windows(
-            [row for row in videos if utc(row.observed_at) >= legacy_since],
+            videos
+            if diagnostics
+            else [row for row in videos if utc(row.observed_at) >= legacy_since],
             "view_count",
             retain_rows=True,
         )
+        short_rows = (
+            _counter_rows_since(timelines, legacy_since)
+            if diagnostics
+            else {key: timeline.rows for key, timeline in timelines.items()}
+        )
         by_id = {row.observation_id: row for row in videos}
+        durations = sorted(windows_hours)
         reports = [
-            _window(timelines, by_id, video_keys, cutoff, hours, gap)
-            for hours in sorted(windows_hours)
+            _window(short_rows, by_id, video_keys, cutoff, hours, gap) for hours in durations
         ]
         result = {
             "version": "descriptive-trends-v1",
@@ -446,9 +453,10 @@ class TrendInsights:
         }
         if diagnostics:
             result["version"] = "descriptive-trends-v2"
-            result["diagnostics"] = describe_diagnostics(
-                eligible, video_keys, cutoff, sorted(windows_hours), gap
+            result["diagnostics"] = _describe_prepared_diagnostics(
+                eligible, video_keys, cutoff, durations, gap, timelines=timelines, by_id=by_id
             )
+        del timelines  # Do not retain the long prefix while expanding detailed video output.
         if include_video_intervals:
             # Full bounded kernel rows, never the evidence preview. Restrict the
             # history read with video_entity_keys when composing text reports.
@@ -487,11 +495,11 @@ class TrendInsights:
                             "system_available_at": availability[point["observation_id"]],
                             "context": _video_context(observation),
                         }
-                        for point in timeline.rows
+                        for point in points
                         for observation in (by_id[point["observation_id"]],)
                     ],
                 }
-                for key, timeline in sorted(timelines.items())
+                for key, points in sorted(short_rows.items())
             ]
         result["report_id"] = digest(result)
         return result

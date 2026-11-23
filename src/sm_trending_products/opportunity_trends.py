@@ -398,11 +398,27 @@ def describe_diagnostics(
     videos = [row for row in observations if row.entity_type == "video"]
     timelines = _counter_windows(videos, "view_count", retain_rows=True)
     by_id = {row.observation_id: row for row in videos}
+    return _describe_prepared_diagnostics(
+        observations, known_video_keys, cutoff, windows_hours, gap, timelines=timelines, by_id=by_id
+    )
+
+
+def _describe_prepared_diagnostics(
+    observations: Sequence[Observation],
+    known_video_keys: set[str],
+    cutoff: datetime,
+    windows_hours: Sequence[int],
+    gap: timedelta,
+    *,
+    timelines: dict[str, _CounterWindow],
+    by_id: dict[str, Observation],
+) -> dict[str, Any]:
     first_seen: dict[str, datetime] = {}
-    for row in videos:
-        first_seen[row.entity_key] = min(
-            first_seen.get(row.entity_key, utc(row.observed_at)), utc(row.observed_at)
-        )
+    for row in observations:
+        if row.entity_type != "video":
+            continue
+        observed = utc(row.observed_at)
+        first_seen[row.entity_key] = min(first_seen.get(row.entity_key, observed), observed)
     comparisons = []
     for hours in windows_hours:
         boundary = cutoff - timedelta(hours=hours)
