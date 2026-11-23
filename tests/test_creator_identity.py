@@ -45,7 +45,7 @@ def complete_outputs(identities):
     return {
         "assessment": analytics.assess(rows, [product], links, cutoff, True),
         "trend": _window(
-            analytics._counter_windows(rows, "view_count", retain_rows=True),
+            analytics._metric_windows(rows, "view_count"),
             {row.observation_id: row for row in rows},
             keys,
             cutoff,

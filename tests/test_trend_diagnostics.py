@@ -5,6 +5,8 @@ from datetime import timedelta
 import pytest
 from test_evaluation_integration import record
 
+from sm_trending_products import opportunity_trends, trend_insights
+from sm_trending_products.analytics import _counter_windows
 from sm_trending_products.contracts import now
 from sm_trending_products.history import RowBudgetExceeded
 from sm_trending_products.trend_insights import TrendInsights
@@ -50,6 +52,36 @@ def test_newly_observed_old_video_does_not_manufacture_continuing_traction(pipel
     assert comparison["newly_observed"]["observed_growth_lower"] == 120
     assert comparison["newly_observed"]["measured_entity_hours"] == 12
     assert insights.describe("trend", cutoff, True, windows_hours=(24,)) == legacy
+
+
+def test_shared_preparation_keeps_the_short_timeline_origin(pipeline, monkeypatch):
+    cutoff = now() + timedelta(days=4)
+    pipeline.create_product("trend", "Trend", synthetic=True)
+    # At the short view's inclusive start, the long view has a predecessor
+    # with a higher counter. That predecessor must not leak into short output.
+    add_series(pipeline, cutoff, "continuing", [(-60, 900), (-48, 100), (-24, 124), (0, 148)])
+    add_series(pipeline, cutoff, "old-only", [(-72, 10), (-50, 20)])
+    insights = TrendInsights(pipeline.catalog, pipeline.history)
+    args = {"windows_hours": (24,), "include_video_intervals": True}
+    short = insights.describe("trend", cutoff, True, **args)
+    preparations = []
+
+    def count_preparation(rows, *args, **kwargs):
+        preparations.append(len(rows))
+        return _counter_windows(rows, *args, **kwargs)
+
+    monkeypatch.setattr(trend_insights, "_counter_windows", count_preparation)
+    monkeypatch.setattr(opportunity_trends, "_counter_windows", count_preparation)
+    both = insights.describe("trend", cutoff, True, diagnostics=True, **args)
+    assert both["windows"] == short["windows"]
+    assert both["video_timelines"] == short["video_timelines"]
+    (timeline,) = both["video_timelines"]
+    assert timeline["entity_key"] == "fixture_import:video:continuing"
+    first = timeline["points"][0]
+    assert first["observed_at"] == cutoff - timedelta(hours=48)
+    assert first["previous_lower"] is None and not first["counter_correction"]
+    assert both["diagnostics"]["comparisons"][0]["continuing_panel"]["pace_ratio_lower"] == 1
+    assert preparations == [6]
 
 
 def test_capture_gaps_use_measured_hours_and_missing_entities_stay_unknown(pipeline):
