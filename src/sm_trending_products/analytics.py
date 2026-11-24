@@ -724,7 +724,8 @@ def _price_quote(observation: Observation) -> tuple[dict[str, Any] | None, str |
     }, None
 
 
-def _price_change(first: dict[str, Any], latest: dict[str, Any]) -> dict[str, Any]:
+def _price_movement(first: dict[str, Any], latest: dict[str, Any]) -> tuple[Decimal, Decimal, str]:
+    """Measure an exact bounded price change before constructing any display details."""
     lower = latest["lower"] - first["upper"]
     upper = latest["upper"] - first["lower"]
     direction = (
@@ -736,6 +737,11 @@ def _price_change(first: dict[str, Any], latest: dict[str, Any]) -> dict[str, An
         if lower == upper == 0
         else "uncertain"
     )
+    return lower, upper, direction
+
+
+def _price_change(first: dict[str, Any], latest: dict[str, Any]) -> dict[str, Any]:
+    lower, upper, direction = _price_movement(first, latest)
     return {
         "change_lower": str(lower),
         "change_upper": str(upper),

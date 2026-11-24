@@ -13,7 +13,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from typing import Any
 
-from .analytics import _price_change, _price_quote
+from .analytics import _price_change, _price_movement, _price_quote
 from .catalog import Catalog
 from .contracts import Capability, Observation, digest, utc
 from .evaluation import eligible_evidence
@@ -323,13 +323,19 @@ def _resolved_points(
     revisions = 0
     conflicts: set[str] = set()
     for rows in groups.values():
+        if len(rows) == 1:
+            result.append(rows[0])
+            continue
         newest = max(utc(row.available_at) for row in rows)
         latest = [row for row in rows if utc(row.available_at) == newest]
-        # Observation-ID order cannot resolve two simultaneous competing facts.
+        revisions += len(rows) - 1
+        if len(latest) == 1:
+            result.append(latest[0])
+            continue
+        # Hash facts only when competing revisions share the latest availability time.
         signatures = {
             digest(row.model_dump(exclude={"observation_id", "raw_dataset_id"})) for row in latest
         }
-        revisions += len(rows) - 1
         if len(signatures) > 1:
             conflicts.add(rows[0].entity_key)
             continue
@@ -367,15 +373,20 @@ def _describe(observations, cutoff, since, country, source, query_scope, max_age
             groups.items(), key=lambda item: tuple(value or "" for value in item[0])
         )
     ]
-    changes = []
+    changes: list[dict[str, Any]] = []
+    change_count = 0
     for entity_key, rows in sorted(entity_timelines.items()):
         for previous, latest in zip(rows, rows[1:], strict=False):
-            if _scope(previous) != _scope(latest):
+            before, after = _scope(previous), _scope(latest)
+            if before == after:
+                continue
+            change_count += 1
+            if len(changes) < PREVIEW_LIMIT:
                 changes.append(
                     {
                         "entity_key": entity_key,
-                        "from": _scope_report(_scope(previous)),
-                        "to": _scope_report(_scope(latest)),
+                        "from": _scope_report(before),
+                        "to": _scope_report(after),
                         "evidence_refs": [previous.observation_id, latest.observation_id],
                         "reason": "changed_scope_is_not_competition_growth",
                     }
@@ -389,9 +400,9 @@ def _describe(observations, cutoff, since, country, source, query_scope, max_age
         "revision_count": revisions,
         "conflicting_entity_count": len(conflicts),
         "excluded_observations": dict(sorted(excluded.items())),
-        "scope_change_count": len(changes),
-        "scope_changes_preview": changes[:PREVIEW_LIMIT],
-        "scope_changes_preview_truncated": len(changes) > PREVIEW_LIMIT,
+        "scope_change_count": change_count,
+        "scope_changes_preview": changes,
+        "scope_changes_preview_truncated": change_count > PREVIEW_LIMIT,
         "market_saturation_percent": None,
         "competition_growth": None,
         "limitations": [
@@ -410,7 +421,8 @@ def _describe(observations, cutoff, since, country, source, query_scope, max_age
 
 
 def _timeline(scope, rows, cutoff, max_age, all_timelines, conflicting_entities):
-    reason = _scope_reason(scope)
+    scope_reason = _scope_reason(scope)
+    reason = scope_reason
     events: dict[datetime, list[Observation]] = defaultdict(list)
     entities: dict[str, list[Observation]] = defaultdict(list)
     for row in rows:
@@ -429,7 +441,8 @@ def _timeline(scope, rows, cutoff, max_age, all_timelines, conflicting_entities)
     seen_advertisers: set[str] = set()
     seen_offers: set[str] = set()
     seen_ads: set[str] = set()
-    timeline = []
+    timeline: list[dict[str, Any]] = []
+    comparable_intervals = 0
     previous_at = None
     interruptions = sorted(
         {
@@ -440,8 +453,6 @@ def _timeline(scope, rows, cutoff, max_age, all_timelines, conflicting_entities)
         }
     )
     for timestamp, observations in sorted(events.items()):
-        offers = {row.entity_key for row in observations if row.entity_type == "offer"}
-        ads = {row.entity_key for row in observations if row.entity_type != "offer"}
         sellers = {
             value
             for row in observations
@@ -462,71 +473,71 @@ def _timeline(scope, rows, cutoff, max_age, all_timelines, conflicting_entities)
             if previous_at is None
             else "capture_gap"
             if gap_hours > max_age
-            else _scope_reason(scope)
+            else scope_reason
         )
         if previous_at is not None:
             position = bisect_right(interruptions, previous_at)
             if position < len(interruptions) and interruptions[position] < timestamp:
                 interval_reason = "coverage_context_interrupted"
-        known_scope = _scope_reason(scope) is None
-        item = {
-            "observed_at": timestamp.isoformat(),
-            "observation_age_hours": (cutoff - timestamp).total_seconds() / 3600,
-            "gap_hours": gap_hours,
-            "interval_status": "not_comparable" if interval_reason else "observed",
-            "interval_reason": interval_reason,
-            "observed_offer_count": len(offers),
-            "observed_ad_count": len(ads),
-            "observed_named_seller_count": len(sellers),
-            "observed_named_advertiser_count": len(advertisers),
-            "unknown_seller_offer_count": len(offers)
-            - sum(
-                bool(_declared(row.attributes.get("seller_id")))
-                for row in observations
-                if row.entity_type == "offer"
-            ),
-            "unknown_advertiser_ad_count": len(ads)
-            - sum(
-                bool(_declared(row.attributes.get("advertiser_id")))
-                for row in observations
-                if row.entity_type != "offer"
-            ),
-            "newly_observed_seller_count": len(sellers - seen_sellers) if known_scope else None,
-            "continuing_observed_seller_count": len(sellers & seen_sellers)
-            if known_scope
-            else None,
-            "newly_observed_advertiser_count": (
-                len(advertisers - seen_advertisers) if known_scope else None
-            ),
-            "continuing_observed_advertiser_count": (
-                len(advertisers & seen_advertisers) if known_scope else None
-            ),
-            "newly_observed_offer_count": len(offers - seen_offers) if known_scope else None,
-            "continuing_observed_offer_count": len(offers & seen_offers) if known_scope else None,
-            "newly_observed_ad_count": len(ads - seen_ads) if known_scope else None,
-            "continuing_observed_ad_count": len(ads & seen_ads) if known_scope else None,
-            "evidence_refs_preview": sorted(row.observation_id for row in observations)[
-                :PREVIEW_LIMIT
-            ],
-            "evidence_count": len(observations),
-            "evidence_preview_truncated": len(observations) > PREVIEW_LIMIT,
-        }
-        timeline.append(item)
+        comparable_intervals += interval_reason is None
+        if len(timeline) < PREVIEW_LIMIT:
+            offers = {row.entity_key for row in observations if row.entity_type == "offer"}
+            ads = {row.entity_key for row in observations if row.entity_type != "offer"}
+            known_scope = scope_reason is None
+            item = {
+                "observed_at": timestamp.isoformat(),
+                "observation_age_hours": (cutoff - timestamp).total_seconds() / 3600,
+                "gap_hours": gap_hours,
+                "interval_status": "not_comparable" if interval_reason else "observed",
+                "interval_reason": interval_reason,
+                "observed_offer_count": len(offers),
+                "observed_ad_count": len(ads),
+                "observed_named_seller_count": len(sellers),
+                "observed_named_advertiser_count": len(advertisers),
+                "unknown_seller_offer_count": len(offers)
+                - sum(
+                    bool(_declared(row.attributes.get("seller_id")))
+                    for row in observations
+                    if row.entity_type == "offer"
+                ),
+                "unknown_advertiser_ad_count": len(ads)
+                - sum(
+                    bool(_declared(row.attributes.get("advertiser_id")))
+                    for row in observations
+                    if row.entity_type != "offer"
+                ),
+                "newly_observed_seller_count": len(sellers - seen_sellers) if known_scope else None,
+                "continuing_observed_seller_count": len(sellers & seen_sellers)
+                if known_scope
+                else None,
+                "newly_observed_advertiser_count": (
+                    len(advertisers - seen_advertisers) if known_scope else None
+                ),
+                "continuing_observed_advertiser_count": (
+                    len(advertisers & seen_advertisers) if known_scope else None
+                ),
+                "newly_observed_offer_count": len(offers - seen_offers) if known_scope else None,
+                "continuing_observed_offer_count": len(offers & seen_offers)
+                if known_scope
+                else None,
+                "newly_observed_ad_count": len(ads - seen_ads) if known_scope else None,
+                "continuing_observed_ad_count": len(ads & seen_ads) if known_scope else None,
+                "evidence_refs_preview": sorted(row.observation_id for row in observations)[
+                    :PREVIEW_LIMIT
+                ],
+                "evidence_count": len(observations),
+                "evidence_preview_truncated": len(observations) > PREVIEW_LIMIT,
+            }
+            timeline.append(item)
+            seen_offers.update(offers)
+            seen_ads.update(ads)
         seen_sellers.update(sellers)
         seen_advertisers.update(advertisers)
-        seen_offers.update(offers)
-        seen_ads.update(ads)
         previous_at = timestamp
-    prices = [
-        _prices(key, all_timelines[key], cutoff, scope, key in conflicting_entities)
-        for key, observations in sorted(entities.items())
-        if observations[0].entity_type == "offer"
-    ]
     fresh_entities = sum(
         (cutoff - utc(observations[-1].observed_at)).total_seconds() <= max_age * 3600
         for observations in entities.values()
     )
-    comparable_intervals = sum(row["interval_status"] == "observed" for row in timeline)
     reason = reason or ("no_comparable_capture_interval" if not comparable_intervals else None)
     return {
         **_scope_report(scope),
@@ -542,27 +553,51 @@ def _timeline(scope, rows, cutoff, max_age, all_timelines, conflicting_entities)
         "observed_entity_count": len(entities),
         "fresh_entity_count": fresh_entities,
         "stale_entity_count": len(entities) - fresh_entities,
-        "observed_seller_count": len(seen_sellers) if _scope_reason(scope) is None else None,
-        "observed_advertiser_count": len(seen_advertisers)
-        if _scope_reason(scope) is None
-        else None,
-        "timeline_preview": timeline[:PREVIEW_LIMIT],
-        "timeline_preview_truncated": len(timeline) > PREVIEW_LIMIT,
+        "observed_seller_count": len(seen_sellers) if scope_reason is None else None,
+        "observed_advertiser_count": len(seen_advertisers) if scope_reason is None else None,
+        "timeline_preview": timeline,
+        "timeline_preview_truncated": len(events) > PREVIEW_LIMIT,
         "comparable_interval_count": comparable_intervals,
-        "price_offers_preview": prices[:PREVIEW_LIMIT],
-        "price_offer_count": len(prices),
-        "price_preview_truncated": len(prices) > PREVIEW_LIMIT,
-        "price_interval_count": sum(row["comparable_interval_count"] for row in prices),
-        "observed_price_decrease_count": sum(row["observed_decrease_count"] for row in prices),
-        "observed_price_increase_count": sum(row["observed_increase_count"] for row in prices),
+        **_scope_prices(scope, entities, all_timelines, cutoff, conflicting_entities),
     }
 
 
-def _quote(row: Observation):
+def _scope_prices(scope, entities, timelines, cutoff, conflicting_entities):
+    preview: list[dict[str, Any]] = []
+    offer_count = interval_count = decreases = increases = 0
+    for key, observations in sorted(entities.items()):
+        if observations[0].entity_type != "offer":
+            continue
+        include_preview = len(preview) < PREVIEW_LIMIT
+        price = _prices(
+            key,
+            timelines[key],
+            cutoff,
+            scope,
+            key in conflicting_entities,
+            include_preview=include_preview,
+        )
+        offer_count += 1
+        interval_count += price["comparable_interval_count"]
+        decreases += price["observed_decrease_count"]
+        increases += price["observed_increase_count"]
+        if include_preview:
+            preview.append(price)
+    return {
+        "price_offers_preview": preview,
+        "price_offer_count": offer_count,
+        "price_preview_truncated": offer_count > PREVIEW_LIMIT,
+        "price_interval_count": interval_count,
+        "observed_price_decrease_count": decreases,
+        "observed_price_increase_count": increases,
+    }
+
+
+def _quote(row: Observation, scope: tuple):
     quote, reason = _price_quote(row)
     if quote is None:
         return None, reason
-    scope_reason = _scope_reason(_scope(row))
+    scope_reason = _scope_reason(scope)
     if scope_reason is not None:
         return None, scope_reason
     if _declared(quote["variant_id"]) is None:
@@ -576,7 +611,7 @@ def _quote(row: Observation):
     if shipping not in ("shipping_included", "shipping_excluded", "not_applicable"):
         return None, "unknown_shipping_basis"
     quote["signature"] = (
-        _scope(row),
+        scope,
         quote["currency"],
         quote["variant_id"],
         quote["price_basis"],
@@ -586,61 +621,80 @@ def _quote(row: Observation):
     return quote, None
 
 
-def _prices(entity_key, observations, cutoff, selected_scope, conflicting):
+def _price_context(row: Observation, quote: dict) -> dict:
+    return {
+        "currency": quote["currency"],
+        "variant_id": quote["variant_id"],
+        "price_basis": quote["price_basis"],
+        "tax_basis": row.attributes["tax_basis"],
+        "shipping_basis": row.attributes["shipping_basis"],
+    }
+
+
+def _prices(entity_key, observations, cutoff, selected_scope, conflicting, *, include_preview):
     previous = None
-    changes = []
+    changes: list[dict[str, Any]] = []
+    directions: Counter[str] = Counter()
     exclusions: Counter[str] = Counter()
-    matching = [row for row in observations if _scope(row) == selected_scope]
-    context = None
-    collection_scope_id = digest(selected_scope)
+    matching_count = 0
+    last_matching = None
+    last_valid = None
+    collection_scope_id = digest(selected_scope) if include_preview else None
     for row in observations:
         if _scope(row) != selected_scope:
             previous = None
             exclusions["other_scope_breaks_price_history"] += 1
             continue
-        quote, reason = _quote(row)
+        matching_count += 1
+        last_matching = row
+        quote, reason = _quote(row, selected_scope)
         if quote is None:
             exclusions[reason] += 1
             previous = None
             continue
-        context = {
-            "currency": quote["currency"],
-            "variant_id": quote["variant_id"],
-            "price_basis": quote["price_basis"],
-            "tax_basis": row.attributes["tax_basis"],
-            "shipping_basis": row.attributes["shipping_basis"],
-        }
+        last_valid = (row, quote)
         if previous is not None:
             if previous["signature"] != quote["signature"]:
                 exclusions["changed_variant_currency_tax_shipping_or_price_basis"] += 1
-            else:
+            elif not conflicting and include_preview and len(changes) < PREVIEW_LIMIT:
+                change = _price_change(previous, quote)
+                directions[change["direction"]] += 1
                 changes.append(
                     {
-                        **_price_change(previous, quote),
-                        "price_context": context,
+                        **change,
+                        "price_context": _price_context(row, quote),
                         "collection_scope_id": collection_scope_id,
                     }
                 )
+            elif not conflicting:
+                _, _, direction = _price_movement(previous, quote)
+                directions[direction] += 1
         previous = quote
+    interval_count = directions.total()
+    totals = {
+        "comparable_interval_count": interval_count,
+        "observed_decrease_count": directions["decrease"],
+        "observed_increase_count": directions["increase"],
+    }
+    if not include_preview:
+        return totals
     if conflicting:
         exclusions["conflicting_revision_history"] += 1
-        changes = []
+    assert last_matching is not None  # This entity has a row in the selected scope.
     return {
         "entity_key": entity_key,
-        "status": "observed" if changes else "not_comparable",
-        "reason": None if changes else "insufficient_compatible_price_history",
-        "price_context": context,
+        "status": "observed" if interval_count else "not_comparable",
+        "reason": None if interval_count else "insufficient_compatible_price_history",
+        "price_context": _price_context(*last_valid) if last_valid is not None else None,
         "price_context_scope": "latest_valid_quote",
-        "last_observation_age_hours": (cutoff - utc(matching[-1].observed_at)).total_seconds()
+        "last_observation_age_hours": (cutoff - utc(last_matching.observed_at)).total_seconds()
         / 3600,
-        "quote_count": len(matching),
-        "comparable_interval_count": len(changes),
-        "observed_decrease_count": sum(row["direction"] == "decrease" for row in changes),
-        "observed_increase_count": sum(row["direction"] == "increase" for row in changes),
-        "uncertain_change_count": sum(row["direction"] == "uncertain" for row in changes),
+        "quote_count": matching_count,
+        **totals,
+        "uncertain_change_count": directions["uncertain"],
         "excluded_quotes_or_intervals": dict(sorted(exclusions.items())),
-        "intervals_preview": changes[:PREVIEW_LIMIT],
-        "intervals_preview_truncated": len(changes) > PREVIEW_LIMIT,
+        "intervals_preview": changes,
+        "intervals_preview_truncated": interval_count > PREVIEW_LIMIT,
         "interpretation": "Displayed retail price on declared tax/shipping basis; "
         "no margin inference",
     }
