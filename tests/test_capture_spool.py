@@ -5,14 +5,16 @@ from __future__ import annotations
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import timedelta
 from functools import partial
+from types import SimpleNamespace
 
 import pytest
 from test_raw_capture import ACCOUNT, datasets, enqueue, one_shot_pages, page, service
 
 from sm_trending_products.collector import CollectionError
-from sm_trending_products.contracts import now
+from sm_trending_products.contracts import now, utc
 
 pytestmark = pytest.mark.integration
 
@@ -22,6 +24,30 @@ def local_capture(pipeline):
     receipt = pipeline.collector.capture(service(pipeline).collection._request(task), task)
     path = pipeline.settings.spool_dir / "captures" / f"{receipt['capture']['capture_id']}.json"
     return task, receipt, path
+
+
+def restore_reservation(task, receipt, path):
+    capture = receipt["capture"]
+    reserve = path.with_suffix(".reserve")
+    reserve.write_text(
+        json.dumps(
+            {
+                "reservation_version": "1",
+                "capture": {
+                    key: capture[key]
+                    for key in (
+                        "capture_id",
+                        "task_id",
+                        "page_index",
+                        "capture_attempt",
+                        "started_at",
+                    )
+                },
+                "request": {key: task[key] for key in ("source", "account_id", "synthetic")},
+            }
+        )
+    )
+    return reserve
 
 
 def test_verified_expiry_previews_then_retires_unshipped_receipt_and_fences_task(pipeline):
@@ -141,6 +167,83 @@ def test_explicit_revocation_purges_partial_file_using_durable_prefetch_scope(pi
     result = acquisition.maintain_spool(1000, apply=True)
     assert result["retired"] == 1 and not partial.exists() and not reservation.exists()
     assert receipt["capture"]["capture_id"] == partial.stem
+
+
+def test_maintenance_preserves_reservation_when_writer_leaves_partial_before_lock(
+    pipeline, monkeypatch
+):
+    acquisition = service(pipeline)
+    spool = acquisition.spool
+    with one_shot_pages([page()]) as (endpoint, _):
+        enqueue(pipeline, endpoint)
+        task, receipt, final = local_capture(pipeline)
+    partial_body = final.read_bytes()[:120]
+    final.unlink()
+    reservation = restore_reservation(task, receipt, final)
+    partial_file = final.with_suffix(".part")
+    writer_locked, finish_partial = threading.Event(), threading.Event()
+    lock = spool._lock
+
+    def interrupted_writer():
+        with lock(final.stem):
+            writer_locked.set()
+            assert finish_partial.wait(5)
+            partial_file.write_bytes(partial_body)
+
+    with ThreadPoolExecutor(1) as pool:
+        writer = pool.submit(interrupted_writer)
+
+        @contextmanager
+        def wait_until_partial_exists(capture_id):
+            finish_partial.set()
+            writer.result(timeout=5)
+            with lock(capture_id):
+                yield
+
+        try:
+            assert writer_locked.wait(5)
+            with monkeypatch.context() as controlled:
+                controlled.setattr(spool, "_entries", iter([SimpleNamespace(path=reservation)]))
+                controlled.setattr(spool, "_lock", wait_until_partial_exists)
+                result = acquisition.maintain_spool(1, apply=True)
+        finally:
+            finish_partial.set()
+
+    assert result["released"] == 0 and result["protected"] == 1
+    assert reservation.exists() and partial_file.exists()
+    acquisition.request_spool_removal("tiktok_display", ACCOUNT, True, "source_opt_out")
+    result = acquisition.maintain_spool(1000, apply=True)
+    assert result["retired"] == 1 and not reservation.exists() and not partial_file.exists()
+
+
+@pytest.mark.parametrize("suffix", [".json", ".part"])
+def test_retirement_uses_verified_capture_when_reservation_is_scanned_first(
+    pipeline, monkeypatch, suffix
+):
+    acquisition = service(pipeline)
+    with one_shot_pages([page()]) as (endpoint, _):
+        enqueue(pipeline, endpoint)
+        task, receipt, final = local_capture(pipeline)
+    reservation = restore_reservation(task, receipt, final)
+    body = final if suffix == ".json" else final.rename(final.with_suffix(suffix))
+    acquisition.request_spool_removal("tiktok_display", ACCOUNT, True, "source_opt_out")
+
+    for apply in (False, True):
+        with monkeypatch.context() as controlled:
+            controlled.setattr(
+                acquisition.spool, "_entries", iter([SimpleNamespace(path=reservation)])
+            )
+            assert acquisition.maintain_spool(1, apply=apply)["retired"] == 1
+        assert reservation.exists() is (not apply)
+        assert body.exists() is (not apply)
+    certificate = pipeline.catalog.one(
+        "SELECT complete_receipt,captured_at FROM capture_spool_retirements WHERE capture_id=%s",
+        (reservation.stem,),
+    )
+    assert certificate == {
+        "complete_receipt": True,
+        "captured_at": utc(receipt["capture"]["captured_at"]),
+    }
 
 
 def test_inflight_revoked_request_finishes_durably_but_cannot_publish(pipeline):
