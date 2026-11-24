@@ -4,8 +4,9 @@ from datetime import timedelta
 
 import pytest
 
+from sm_trending_products import competition_insights
 from sm_trending_products.competition_insights import CompetitionInsights
-from sm_trending_products.contracts import now
+from sm_trending_products.contracts import digest, now, utc
 from sm_trending_products.history import RowBudgetExceeded
 
 pytestmark = pytest.mark.integration
@@ -109,6 +110,86 @@ def test_single_bounded_read_reused_for_offers_ads_and_exact_decimal_prices(pipe
     assert insights.describe("competitive", cutoff, True)["report_id"] == report["report_id"]
     with pytest.raises(RowBudgetExceeded):
         insights.describe("competitive", cutoff, True, max_rows=2)
+
+
+def test_bounded_previews_keep_full_totals_and_canonical_prefixes(pipeline, monkeypatch):
+    cutoff = utc("2040-01-02T00:00:00Z")
+    start = cutoff - timedelta(minutes=210)
+    times = [start + timedelta(minutes=index) for index in range(205)]
+    dense = [
+        observation("dense", stamp, price=str(500 - index)) for index, stamp in enumerate(times)
+    ]
+    offers = [
+        observation(
+            f"offer-{index:03}",
+            stamp,
+            price=price,
+            seller="seller-tail" if index == 200 and price == "6" else f"seller-{index:03}",
+        )
+        for index in range(201)
+        for stamp, price in ((times[0], "5"), (times[-1], "6"))
+    ]
+    changed_scope = [
+        observation("switch", stamp, market="DE", query=f"query-{index % 2}")
+        for index, stamp in enumerate(times)
+    ]
+    records = dense + offers + changed_scope
+    pipeline.create_product("competitive", "Competitive product", synthetic=True, market="FR")
+    pipeline.import_records(records, synthetic=True)
+    for entity in sorted({row["entity_id"] for row in records}):
+        pipeline.review_link("competitive", f"competition_fixture:offer:{entity}")
+
+    formatted = 0
+    original = competition_insights._price_change
+
+    def count_formatted(first, latest):
+        nonlocal formatted
+        formatted += 1
+        return original(first, latest)
+
+    monkeypatch.setattr(competition_insights, "_price_change", count_formatted)
+    report = pipeline.competition_insights().describe("competitive", cutoff, True, country="FR")
+    (scope,) = report["scopes"]
+    events = scope["timeline_preview"]
+    assert scope["capture_count"] == 205 and scope["comparable_interval_count"] == 204
+    assert scope["timeline_preview_truncated"]
+    assert [event["observed_at"] for event in events] == [t.isoformat() for t in times[:200]]
+    assert events[0]["evidence_count"] == 202 and events[0]["evidence_preview_truncated"]
+    assert (
+        events[0]["evidence_refs_preview"]
+        == sorted([dense[0]["observation_id"], *(row["observation_id"] for row in offers[::2])])[
+            :200
+        ]
+    )
+    assert scope["observed_seller_count"] == 203
+
+    prices = scope["price_offers_preview"]
+    assert scope["price_offer_count"] == 202 and scope["price_preview_truncated"]
+    prefix = ["dense", *(f"offer-{index:03}" for index in range(199))]
+    assert [p["entity_key"] for p in prices] == [
+        f"competition_fixture:offer:{entity}" for entity in prefix
+    ]
+    assert scope["price_interval_count"] == 405
+    assert scope["observed_price_decrease_count"] == 204
+    assert scope["observed_price_increase_count"] == 201
+    assert prices[0]["comparable_interval_count"] == 204
+    assert prices[0]["intervals_preview_truncated"]
+    assert [i["evidence_refs"] for i in prices[0]["intervals_preview"]] == [
+        [first["observation_id"], second["observation_id"]]
+        for first, second in zip(dense[:200], dense[1:201], strict=True)
+    ]
+    assert report["scope_change_count"] == 204 and report["scope_changes_preview_truncated"]
+    assert [change["evidence_refs"] for change in report["scope_changes_preview"]] == [
+        [first["observation_id"], second["observation_id"]]
+        for first, second in zip(changed_scope[:200], changed_scope[1:201], strict=True)
+    ]
+    # The fixed source observations and cutoff have a compact reference digest.
+    # Product link decisions include the actual creation time and vary by run.
+    assert digest({k: v for k, v in report.items() if k not in {"identity", "report_id"}}) == (
+        "151d3dc8a777b25ed3ec1ccb6246747ed6a6a710030c626609f8971c9d6e2fcb"
+    )
+    assert report["report_id"] == digest({k: v for k, v in report.items() if k != "report_id"})
+    assert formatted == 399
 
 
 def test_unknown_country_query_and_coverage_never_become_zero_competition(pipeline):
