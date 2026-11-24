@@ -564,12 +564,42 @@ def test_row_and_output_budgets_refuse_the_report(pipeline, monkeypatch):
         describe(pipeline, cutoff)
 
 
+def test_progression_matches_full_trend_report_without_building_it(pipeline, monkeypatch):
+    _, _, _, cutoff = seed(pipeline)
+    service = ContentProgression(pipeline.catalog, pipeline.history, pipeline.provenance)
+
+    def full_report(product_id, cutoff, synthetic, *, window_hours, max_rows, video_entity_keys):
+        result = service.trends.describe(
+            product_id,
+            cutoff,
+            synthetic,
+            windows_hours=(window_hours,),
+            max_rows=max_rows,
+            include_video_intervals=True,
+            video_entity_keys=video_entity_keys,
+        )
+        return result["input_observation_count"], result["video_timelines"]
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(service.trends, "_video_intervals", full_report)
+        expected = service.describe("patterns", cutoff, True, window_hours=12)
+
+    def unused(*args, **kwargs):
+        pytest.fail("Content progression must not build a trend summary or trend report digest")
+
+    monkeypatch.setattr("sm_trending_products.trend_insights._window", unused)
+    monkeypatch.setattr("sm_trending_products.trend_insights.digest", unused)
+    actual = service.describe("patterns", cutoff, True, window_hours=12)
+    assert actual["outcomes"]
+    assert canonical(actual) == canonical(expected)
+
+
 def test_source_retirement_between_composed_reads_never_returns_earlier_quotes(
     pipeline, monkeypatch
 ):
     _, _, datasets, cutoff = seed(pipeline)
     service = ContentProgression(pipeline.catalog, pipeline.history, pipeline.provenance)
-    read = service.trends.describe
+    read = service.trends._video_intervals
 
     def withdrawn(*args, **kwargs):
         result = read(*args, **kwargs)
@@ -577,7 +607,7 @@ def test_source_retirement_between_composed_reads_never_returns_earlier_quotes(
         pipeline.catalog.resume_invalidations(max_batches=100, max_seconds=10, synthetic=True)
         return result
 
-    monkeypatch.setattr(service.trends, "describe", withdrawn)
+    monkeypatch.setattr(service.trends, "_video_intervals", withdrawn)
     with pytest.raises(ValueError, match="changed during"):
         service.describe("patterns", cutoff, True, window_hours=12)
 

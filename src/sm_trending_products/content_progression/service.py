@@ -87,18 +87,18 @@ class ContentProgression:
         if content["next_cursor"]:
             raise ValueError("Complete text population exceeds the bounded candidate budget")
         texts = content["texts"]
-        trend = self.trends.describe(
+        input_observation_count, video_timelines = self.trends._video_intervals(
             product_id,
             cutoff,
             synthetic,
-            windows_hours=(window_hours,),
+            window_hours=window_hours,
             max_rows=max_rows,
-            include_video_intervals=True,
             video_entity_keys=sorted({t["entity_key"] for t in texts}),
         )
         selected, exclusions, exclusion_details = outcomes(
-            trend["video_timelines"], texts, cutoff - timedelta(hours=window_hours), cutoff
+            video_timelines, texts, cutoff - timedelta(hours=window_hours), cutoff
         )
+        del video_timelines
         for outcome in selected:
             outcome["taxonomy_timing_scope"] = (
                 "reviewed_by_interval_start"
@@ -155,7 +155,7 @@ class ContentProgression:
             "distinct_text_count": len(texts),
             "candidate_rows_scanned": content["scanned"],
             "eligible_video_count": len({r["entity_key"] for r in selected}),
-            "input_observation_count": trend["input_observation_count"],
+            "input_observation_count": input_observation_count,
             "stratum_count": len(grouped),
             "texts": texts,
             "outcomes": [
