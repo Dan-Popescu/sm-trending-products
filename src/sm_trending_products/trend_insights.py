@@ -9,10 +9,11 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from .analytics import _counter_rows_since, _counter_windows
+from .analytics import _counter_rows_since, _counter_windows, _CounterWindow
 from .catalog import Catalog
 from .contracts import Capability, Observation, digest, utc
 from .creator_identity import CreatorIdentity, creator_identity
@@ -23,6 +24,8 @@ from .opportunity_trends import _context, _describe_prepared_diagnostics
 
 MAX_METADATA_ROWS = 10000
 EVIDENCE_PREVIEW_LIMIT = 200
+_DEFAULT_BOUNDARY_GAP_HOURS = 24
+_DEFAULT_LINK_CONFIDENCE = 0.9
 
 
 def _video_context(observation: Observation) -> dict[str, Any]:
@@ -235,6 +238,20 @@ def _window(
     }
 
 
+@dataclass(slots=True)
+class _PreparedTrend:
+    product: dict[str, Any]
+    links: list[dict[str, Any]]
+    video_keys: set[str]
+    gap: timedelta
+    legacy_since: datetime
+    input_observation_count: int
+    eligible_video_observation_count: int
+    eligible: list[Observation]
+    timelines: dict[str, _CounterWindow]
+    by_id: dict[str, Observation]
+
+
 class TrendInsights:
     """Describe one product with one bounded source read reused across windows."""
 
@@ -248,14 +265,121 @@ class TrendInsights:
         synthetic: bool = False,
         *,
         windows_hours: Sequence[int] = (24, 72, 168),
-        max_boundary_gap_hours: float = 24,
-        min_link_confidence: float = 0.9,
+        max_boundary_gap_hours: float = _DEFAULT_BOUNDARY_GAP_HOURS,
+        min_link_confidence: float = _DEFAULT_LINK_CONFIDENCE,
         max_rows: int = 50000,
         diagnostics: bool = False,
         include_video_intervals: bool = False,
         video_entity_keys: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         cutoff = utc(as_of)
+        prepared = self._prepare(
+            product_id,
+            cutoff,
+            synthetic,
+            windows_hours=windows_hours,
+            max_boundary_gap_hours=max_boundary_gap_hours,
+            min_link_confidence=min_link_confidence,
+            max_rows=max_rows,
+            diagnostics=diagnostics,
+            include_video_intervals=include_video_intervals,
+            video_entity_keys=video_entity_keys,
+        )
+        short_rows = (
+            _counter_rows_since(prepared.timelines, prepared.legacy_since)
+            if diagnostics
+            else {key: timeline.rows for key, timeline in prepared.timelines.items()}
+        )
+        by_id = prepared.by_id
+        links = prepared.links
+        durations = sorted(windows_hours)
+        reports = [
+            _window(short_rows, by_id, prepared.video_keys, cutoff, hours, prepared.gap)
+            for hours in durations
+        ]
+        result = {
+            "version": "descriptive-trends-v1",
+            "product_id": product_id,
+            "name": prepared.product["name"],
+            "market": prepared.product["market"],
+            "as_of": cutoff.isoformat(),
+            "synthetic": synthetic,
+            "input_observation_count": prepared.input_observation_count,
+            "eligible_video_observation_count": prepared.eligible_video_observation_count,
+            "identity": {
+                "version": digest(links),
+                "decision_count": len(links),
+                "decision_refs_preview": [
+                    row["decision_id"] for row in links[:EVIDENCE_PREVIEW_LIMIT]
+                ],
+                "preview_truncated": len(links) > EVIDENCE_PREVIEW_LIMIT,
+            },
+            "windows": reports,
+            "interpretation": "Observed attention patterns; no sales or profitability prediction",
+        }
+        if diagnostics:
+            result["version"] = "descriptive-trends-v2"
+            result["diagnostics"] = _describe_prepared_diagnostics(
+                prepared.eligible,
+                prepared.video_keys,
+                cutoff,
+                durations,
+                prepared.gap,
+                timelines=prepared.timelines,
+                by_id=by_id,
+            )
+        del prepared  # Release the long diagnostic prefix before expanding intervals.
+        if include_video_intervals:
+            result["video_timelines"] = self._enrich_video_intervals(
+                short_rows, by_id, cutoff, synthetic
+            )
+        result["report_id"] = digest(result)
+        return result
+
+    def _video_intervals(
+        self,
+        product_id: str,
+        cutoff: datetime,
+        synthetic: bool,
+        *,
+        window_hours: int,
+        max_rows: int,
+        video_entity_keys: Sequence[str],
+    ) -> tuple[int, list[dict[str, Any]]]:
+        """Provide complete guarded video interval inputs for content progression."""
+        prepared = self._prepare(
+            product_id,
+            cutoff,
+            synthetic,
+            windows_hours=(window_hours,),
+            max_boundary_gap_hours=_DEFAULT_BOUNDARY_GAP_HOURS,
+            min_link_confidence=_DEFAULT_LINK_CONFIDENCE,
+            max_rows=max_rows,
+            diagnostics=False,
+            include_video_intervals=True,
+            video_entity_keys=video_entity_keys,
+        )
+        return prepared.input_observation_count, self._enrich_video_intervals(
+            {key: timeline.rows for key, timeline in prepared.timelines.items()},
+            prepared.by_id,
+            cutoff,
+            synthetic,
+        )
+
+    def _prepare(
+        self,
+        product_id: str,
+        cutoff: datetime,
+        synthetic: bool,
+        *,
+        windows_hours: Sequence[int],
+        max_boundary_gap_hours: float,
+        min_link_confidence: float,
+        max_rows: int,
+        diagnostics: bool,
+        include_video_intervals: bool,
+        video_entity_keys: Sequence[str] | None,
+    ) -> _PreparedTrend:
         if (
             not 1 <= len(windows_hours) <= 8
             or any(
@@ -421,85 +545,65 @@ class TrendInsights:
             "view_count",
             retain_rows=True,
         )
-        short_rows = (
-            _counter_rows_since(timelines, legacy_since)
-            if diagnostics
-            else {key: timeline.rows for key, timeline in timelines.items()}
+        return _PreparedTrend(
+            product=product,
+            links=links,
+            video_keys=video_keys,
+            gap=gap,
+            legacy_since=legacy_since,
+            input_observation_count=len(observations),
+            eligible_video_observation_count=len(videos),
+            eligible=eligible,
+            timelines=timelines,
+            by_id={row.observation_id: row for row in videos},
         )
-        by_id = {row.observation_id: row for row in videos}
-        durations = sorted(windows_hours)
-        reports = [
-            _window(short_rows, by_id, video_keys, cutoff, hours, gap) for hours in durations
-        ]
-        result = {
-            "version": "descriptive-trends-v1",
-            "product_id": product_id,
-            "name": product["name"],
-            "market": product["market"],
-            "as_of": cutoff.isoformat(),
-            "synthetic": synthetic,
-            "input_observation_count": len(observations),
-            "eligible_video_observation_count": len(videos),
-            "identity": {
-                "version": digest(links),
-                "decision_count": len(links),
-                "decision_refs_preview": [
-                    row["decision_id"] for row in links[:EVIDENCE_PREVIEW_LIMIT]
+
+    def _enrich_video_intervals(
+        self,
+        rows: Mapping[str, Sequence[dict[str, Any]]],
+        by_id: dict[str, Observation],
+        cutoff: datetime,
+        synthetic: bool,
+    ) -> list[dict[str, Any]]:
+        # Guard all eligible references to recover their earliest committed delivery.
+        references = sorted(by_id)
+        availability = (
+            {
+                row["observation_id"]: row["available_at"]
+                for row in self.catalog.evidence_all(
+                    "SELECT o.observation_id,min(o.available_at) AS available_at "
+                    "FROM unnest(%s::text[],%s::text[]) selected(observation_id,entity_key) "
+                    "JOIN observation_deliveries o USING(observation_id,entity_key) "
+                    "JOIN normalized_objects n USING(object_id) "
+                    "JOIN datasets d USING(dataset_id) "
+                    "WHERE d.synthetic=%s "
+                    "AND o.available_at<=%s AND d.state='committed' GROUP BY o.observation_id",
+                    (
+                        references,
+                        [by_id[ref].entity_key for ref in references],
+                        synthetic,
+                        cutoff,
+                    ),
+                    synthetic=synthetic,
+                )
+            }
+            if references
+            else {}
+        )
+        if set(availability) != set(references):
+            raise ValueError("Video evidence changed during timeline composition")
+        return [
+            {
+                "entity_key": key,
+                "points": [
+                    {
+                        **point,
+                        "system_available_at": availability[point["observation_id"]],
+                        "context": _video_context(observation),
+                    }
+                    for point in points
+                    for observation in (by_id[point["observation_id"]],)
                 ],
-                "preview_truncated": len(links) > EVIDENCE_PREVIEW_LIMIT,
-            },
-            "windows": reports,
-            "interpretation": "Observed attention patterns; no sales or profitability prediction",
-        }
-        if diagnostics:
-            result["version"] = "descriptive-trends-v2"
-            result["diagnostics"] = _describe_prepared_diagnostics(
-                eligible, video_keys, cutoff, durations, gap, timelines=timelines, by_id=by_id
-            )
-        del timelines  # Do not retain the long prefix while expanding detailed video output.
-        if include_video_intervals:
-            # Full bounded kernel rows, never the evidence preview. Restrict the
-            # history read with video_entity_keys when composing text reports.
-            references = sorted(by_id)
-            availability = (
-                {
-                    row["observation_id"]: row["available_at"]
-                    for row in self.catalog.evidence_all(
-                        "SELECT o.observation_id,min(o.available_at) AS available_at "
-                        "FROM unnest(%s::text[],%s::text[]) selected(observation_id,entity_key) "
-                        "JOIN observation_deliveries o USING(observation_id,entity_key) "
-                        "JOIN normalized_objects n USING(object_id) "
-                        "JOIN datasets d USING(dataset_id) "
-                        "WHERE d.synthetic=%s "
-                        "AND o.available_at<=%s AND d.state='committed' GROUP BY o.observation_id",
-                        (
-                            references,
-                            [by_id[ref].entity_key for ref in references],
-                            synthetic,
-                            cutoff,
-                        ),
-                        synthetic=synthetic,
-                    )
-                }
-                if references
-                else {}
-            )
-            if set(availability) != set(references):
-                raise ValueError("Video evidence changed during timeline composition")
-            result["video_timelines"] = [
-                {
-                    "entity_key": key,
-                    "points": [
-                        {
-                            **point,
-                            "system_available_at": availability[point["observation_id"]],
-                            "context": _video_context(observation),
-                        }
-                        for point in points
-                        for observation in (by_id[point["observation_id"]],)
-                    ],
-                }
-                for key, points in sorted(short_rows.items())
-            ]
-        result["report_id"] = digest(result)
-        return result
+            }
+            for key, points in sorted(rows.items())
+        ]

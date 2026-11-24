@@ -63,13 +63,13 @@ the ambiguity is resolved. Different languages and source kinds remain separate.
 Counts are unique videos within each stratum; strata are never pooled into a
 single uplift. The same video can appear in distinct source-kind/language strata.
 
-TrendInsights has an additive `include_video_intervals=True` seam. Passing
-`video_entity_keys` restricts its one longest-window history read to at most 200
-text-selected linked videos. Complete retained rows come from the existing
-counter kernel, including revision resolution, bounded differences, corrections,
-units, counter scope and period. Existing default TrendInsights output and IDs
-are unchanged. Evidence previews never supply the report population. History is
-bounded by `max_rows` (at most 100,000 and the existing batch setting).
+Content progression uses the same guarded video interval preparation as the
+public TrendInsights report and requests the observation count and interval
+rows directly. Its history read covers at most 200 text-selected linked videos.
+Complete rows come from the existing counter kernel, including revision
+resolution, bounded differences, corrections, units, counter scope and period.
+Evidence previews never supply the report population. History is bounded by
+`max_rows` (at most 100,000 and the existing batch setting).
 The final canonical report is limited to 4 MB; excessive output is refused.
 Observation references are stored once per video in `video_evidence`, rather
 than copied into every language/source-kind outcome.
