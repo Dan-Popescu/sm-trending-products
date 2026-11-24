@@ -352,9 +352,44 @@ class CaptureSpool:
             if not row or row["state"] != "available" or not policy or not policy["verified"]:
                 raise CollectionError("source_access_unverified", 3600)
 
-    def _retire(self, path: Path) -> bool:
-        with self._lock(path.stem):
-            receipt = read_receipt(path)
+    def _maintenance_receipt(self, capture_id: str) -> tuple[Path, dict] | None:
+        """Inspect a capture under its shard lock. None means an empty reservation."""
+        body_error: Exception | None = None
+        for suffix in (".json", ".part"):
+            path = self.directory / f"{capture_id}{suffix}"
+            try:
+                receipt = read_receipt(path)
+                captured_at = receipt["capture"].get("captured_at")
+                if receipt.get("capture_version") != "1" or not isinstance(captured_at, str):
+                    raise ValueError("Invalid complete capture")
+                utc(captured_at)
+                return path, receipt
+            except FileNotFoundError:
+                continue
+            except (ValueError, KeyError, TypeError, IndexError, AttributeError) as error:
+                if not stat.S_ISREG(path.lstat().st_mode):
+                    raise
+                body_error = error
+
+        reservation = self.directory / f"{capture_id}.reserve"
+        if body_error is None:
+            if not stat.S_ISREG(reservation.lstat().st_mode):
+                raise ValueError("Invalid spool reservation")
+            return None
+        try:
+            receipt = read_receipt(reservation)
+        except FileNotFoundError:
+            raise body_error from None
+        if receipt.get("reservation_version") != "1" or "capture_version" in receipt:
+            raise ValueError("Invalid spool reservation")
+        return reservation, receipt
+
+    def _retire(self, capture_id: str) -> bool:
+        with self._lock(capture_id):
+            selected = self._maintenance_receipt(capture_id)
+            if selected is None:
+                return False
+            _, receipt = selected
             with self.catalog.transaction() as connection:
                 self.catalog.guard_retention(connection, exclusive=True)
                 reason = self._authority(connection, receipt)
@@ -372,7 +407,7 @@ class CaptureSpool:
                         "complete_receipt,reason,authority_kind,authority_ref) "
                         "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                         (
-                            path.stem,
+                            capture_id,
                             capture["task_id"],
                             capture["page_index"],
                             capture.get("capture_attempt", 0),
@@ -400,13 +435,13 @@ class CaptureSpool:
                     ),
                 )
                 dataset = connection.execute(
-                    "SELECT state FROM datasets WHERE dataset_id=%s", (path.stem,)
+                    "SELECT state FROM datasets WHERE dataset_id=%s", (capture_id,)
                 ).fetchone()
             # Cancellation is durable before touching files. A stale publisher
             # is fenced by task ownership and the publication-time policy guard.
             if dataset and dataset["state"] in {"staged", "committed"}:
-                self.catalog.invalidate_dataset(path.stem, reason["category"])
-            self._remove_files(path.stem, (".json", ".part", ".reserve"))
+                self.catalog.invalidate_dataset(capture_id, reason["category"])
+            self._remove_files(capture_id, (".json", ".part", ".reserve"))
             return True
 
     def scan(
@@ -427,6 +462,7 @@ class CaptureSpool:
         if not self.directory.exists():
             result["complete"] = True
             return result
+        seen: set[str] = set()
         with self._scan_lock:
             if self._entries is None:
                 self._entries = os.scandir(self.directory)
@@ -439,36 +475,48 @@ class CaptureSpool:
                     break
                 result["scanned"] += 1
                 path = Path(entry.path)
-                if path.suffix not in {".json", ".part", ".reserve"} or not re.fullmatch(
-                    "[0-9a-f]{64}", path.stem
+                capture_id = path.stem
+                if (
+                    path.suffix not in {".json", ".part", ".reserve"}
+                    or not re.fullmatch("[0-9a-f]{64}", capture_id)
+                    or capture_id in seen
                 ):
                     continue
+                seen.add(capture_id)
                 try:
-                    if path.suffix == ".reserve" and not any(
-                        path.with_suffix(suffix).exists() for suffix in (".json", ".part")
-                    ):
-                        with self._lock(path.stem):
+                    # A writer can leave partial or complete bytes before we
+                    # acquire the shard. Neither freshness nor scope comes
+                    # from the directory entry seen before taking the lock.
+                    with self._lock(capture_id):
+                        selected = self._maintenance_receipt(capture_id)
+                        if selected is None:
                             if apply:
-                                self._remove_files(path.stem, (".reserve",))
+                                self._remove_files(capture_id, (".reserve",))
                             result["released"] += 1
-                        continue
-                    receipt = read_receipt(path)
+                            continue
+                        receipt_path, receipt = selected
                     dataset = self.catalog.one(
-                        "SELECT * FROM datasets WHERE dataset_id=%s", (path.stem,)
+                        "SELECT * FROM datasets WHERE dataset_id=%s", (capture_id,)
                     )
                     with self.catalog.transaction() as connection:
                         self.catalog.guard_retention(connection)
                         reason = self._authority(connection, receipt) if retention else None
                     if reason:
-                        if not apply or self._retire(path):
+                        if not apply or self._retire(capture_id):
                             result["retired"] += 1
+                        else:
+                            result["protected"] += 1
                         continue
-                    if path.suffix == ".json" and dataset and dataset["state"] == "committed":
+                    if (
+                        receipt_path.suffix == ".json"
+                        and dataset
+                        and dataset["state"] == "committed"
+                    ):
                         remote = self.history.raw(dataset)
                         if receipt != remote:
                             raise ValueError("Committed receipt differs from local input")
                         if apply:
-                            (remove_committed or self.remove_committed)(path.stem, remote)
+                            (remove_committed or self.remove_committed)(capture_id, remote)
                         result["committed"] += 1
                         continue
                     result["protected"] += 1
